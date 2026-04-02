@@ -16,7 +16,7 @@ DEFINE_PATTERN = re.compile(
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Toggle RP2040CAN.ino board, vehicle, and optional feature defines."
+        description="Toggle the shared sketch_config.h board, vehicle, and optional feature defines."
     )
     parser.add_argument("--driver", choices=DRIVER_DEFINES, required=True)
     parser.add_argument("--vehicle", choices=VEHICLE_DEFINES, required=True)
@@ -29,8 +29,8 @@ def parse_args():
     )
     parser.add_argument(
         "--file",
-        default="RP2040CAN.ino",
-        help="Path to the sketch file to update.",
+        default="RP2040CAN/sketch_config.h",
+        help="Path to the shared sketch config file to update.",
     )
     return parser.parse_args()
 

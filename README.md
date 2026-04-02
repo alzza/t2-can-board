@@ -56,7 +56,7 @@ HW4 - FSD V14 Features
 
 ### Supported Hardware Variants
 
-Select your vehicle hardware variant in `RP2040CAN.ino` via the `#define` directive. Arduino IDE and PlatformIO both use the same vehicle and feature defines from that file.
+Select your vehicle hardware variant in `RP2040CAN/sketch_config.h` via the `#define` directive. Arduino IDE and PlatformIO both use the same board, vehicle, and feature defines from that file.
 
 | Define   | Target           | Listens on CAN IDs | Notes |
 |----------|------------------|---------------------|-------|
@@ -201,9 +201,13 @@ Install via **Sketch → Include Library → Manage Libraries…**:
 - **Feather M4 CAN Express:** Adafruit CAN
 - **ESP32:** No additional libraries needed — the TWAI driver is built into the ESP32 Arduino core.
 
-#### 4. Select Your Board and Vehicle
+#### 4. Open the Arduino Sketch
 
-Near the top of `RP2040CAN.ino`, uncomment the line that matches your **board**:
+Open `RP2040CAN/RP2040CAN.ino` in Arduino IDE. The sketch folder name now matches the primary `.ino`, which keeps Arduino IDE happy without changing the PlatformIO repository layout.
+
+#### 5. Select Your Board and Vehicle
+
+In the `sketch_config.h` tab, uncomment the line that matches your **board**:
 
 ```cpp
 #define DRIVER_MCP2515   // Adafruit Feather RP2040 CAN (MCP2515 over SPI)
@@ -219,7 +223,15 @@ Then uncomment the line that matches your **vehicle**:
 //#define HW4
 ```
 
-#### 5. Upload
+You can also enable optional features in the same file:
+
+```cpp
+// #define ISA_SPEED_CHIME_SUPPRESS
+// #define EMERGENCY_VEHICLE_DETECTION
+// #define FORCE_FSD
+```
+
+#### 6. Upload
 
 1. Connect the Feather via USB.
 2. Select the correct board and port under **Tools**.
@@ -242,14 +254,14 @@ Then uncomment the line that matches your **vehicle**:
 
 #### Build
 
-1. Select your board, vehicle, and optional features near the top of `RP2040CAN.ino`:
+1. Select your board, vehicle, and optional features in `RP2040CAN/sketch_config.h`:
    ```cpp
    #define DRIVER_MCP2515  // Change to DRIVER_SAME51 or DRIVER_TWAI for other boards
    #define LEGACY          // Change to HW4, HW3, or LEGACY
    #define EMERGENCY_VEHICLE_DETECTION  // Optional
    ```
-   PlatformIO reads the active vehicle and optional feature defines from `RP2040CAN.ino`.
-   The `-e` environment still selects the board, so it must match the uncommented driver define in the sketch. If they do not match, the build stops with a clear error.
+   PlatformIO reads the active board, vehicle, and optional feature defines from `RP2040CAN/sketch_config.h`.
+   The `-e` environment still selects the board, so it must match the uncommented driver define in the shared config. If they do not match, the build stops with a clear error.
 
 2. Build for your board:
    ```bash
@@ -363,11 +375,15 @@ include/
   can_helpers.h           # setBit, readMuxID, isFSDSelectedInUI, setSpeedProfileV12V13
   handlers.h              # CarManagerBase, LegacyHandler, HW3Handler, HW4Handler
   app.h                   # Shared setup/loop logic for all entry points
+  arduino_entrypoint.h    # Shared Arduino setup/loop entry point
   drivers/
     mcp2515_driver.h      # MCP2515 driver (Feather RP2040 CAN)
     same51_driver.h       # CANSAME5x driver (Feather M4 CAN Express)
     twai_driver.h         # ESP32 TWAI driver
     mock_driver.h         # Mock driver for unit tests
+RP2040CAN/
+  RP2040CAN.ino           # Arduino IDE sketch entry point
+  sketch_config.h         # Shared board, vehicle, and feature defines
 src/
   main.cpp                # PlatformIO entry point
 test/
@@ -376,7 +392,7 @@ test/
   test_native_hw3/        # HW3Handler tests
   test_native_hw4/        # HW4Handler tests
   test_native_twai/       # TWAI filter computation tests
-RP2040CAN.ino             # Arduino IDE entry point (uses same headers)
+RP2040CAN.ino             # Repository-root compatibility entry point
 ```
 
 ### Running Tests
