@@ -2,6 +2,11 @@
 
 [Community Discord](https://discord.gg/ZTQKAUTd2F)
 
+> [!WARNING] Update 
+> **do not update to 2026.2.9.x & 2026.8.6 FSD is not Working on HW4.**
+
+
+
 An open-source general-purpose CAN bus modification tool for Tesla vehicles. While FSD enablement was the starting point, the goal is to expose and control everything accessible via CAN — as a fully open project.
 
 Some sellers charge up to 500 € for a solution like this. The hardware costs around 20 €, and even with labor factored in, a fair price is no more than 50 €. This project exists so nobody has to overpay.
