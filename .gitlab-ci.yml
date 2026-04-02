@@ -47,3 +47,22 @@ tests:
       junit: test-results/junit.xml
     paths:
       - test-results/junit.xml
+
+builds:
+  stage: verify
+  image: python:3.12-slim
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends build-essential git
+    - pip install "platformio==${PLATFORMIO_VERSION}"
+  script:
+    - mkdir -p .tests
+    - cp RP2040CAN.ino .tests/RP2040CAN.ino.ci.bak
+    - trap 'mv .tests/RP2040CAN.ino.ci.bak RP2040CAN.ino' EXIT
+    - python scripts/platformio_set_ino_profile.py --driver DRIVER_MCP2515 --vehicle HW3 --enable EMERGENCY_VEHICLE_DETECTION
+    - pio run -e feather_rp2040_can
+    - python scripts/platformio_set_ino_profile.py --driver DRIVER_SAME51 --vehicle HW3 --enable EMERGENCY_VEHICLE_DETECTION
+    - pio run -e feather_m4_can
+    - python scripts/platformio_set_ino_profile.py --driver DRIVER_TWAI --vehicle HW3 --enable EMERGENCY_VEHICLE_DETECTION
+    - pio run -e esp32_twai
+    - pio run -e m5stack-atomic-can-base

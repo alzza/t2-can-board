@@ -8,7 +8,8 @@ Import("env")
 
 DRIVER_DEFINES = ("DRIVER_MCP2515", "DRIVER_SAME51", "DRIVER_TWAI")
 VEHICLE_DEFINES = ("LEGACY", "HW3", "HW4")
-OPTIONAL_DEFINES = ("ISA_SPEED_CHIME_SUPPRESS", "EMERGENCY_VEHICLE_DETECTION")
+OPTIONAL_DEFINES = ("ISA_SPEED_CHIME_SUPPRESS", "EMERGENCY_VEHICLE_DETECTION", "FORCE_FSD")
+CONFIG_RELATIVE_PATH = Path("RP2040CAN") / "sketch_config.h"
 
 
 def _active_defines(text):
@@ -27,7 +28,7 @@ def _pick_one(active, choices, label):
     selected = [name for name in choices if name in active]
     if len(selected) != 1:
         raise UserError(
-            f"RP2040CAN.ino must enable exactly one {label}: {', '.join(choices)}."
+            f"{CONFIG_RELATIVE_PATH.as_posix()} must enable exactly one {label}: {', '.join(choices)}."
         )
     return selected[0]
 
@@ -64,8 +65,8 @@ def _project_option_defines(env_obj):
 
 
 project_dir = Path(env["PROJECT_DIR"])
-sketch_path = project_dir / "RP2040CAN.ino"
-active = _active_defines(sketch_path.read_text(encoding="utf-8"))
+config_path = project_dir / CONFIG_RELATIVE_PATH
+active = _active_defines(config_path.read_text(encoding="utf-8"))
 
 selected_driver = _pick_one(active, DRIVER_DEFINES, "driver define")
 selected_vehicle = _pick_one(active, VEHICLE_DEFINES, "vehicle define")
@@ -84,15 +85,15 @@ if len(env_driver) != 1:
 
 if env_driver[0] != selected_driver:
     raise UserError(
-        f"RP2040CAN.ino selects {selected_driver}, but PlatformIO env "
+        f"{CONFIG_RELATIVE_PATH.as_posix()} selects {selected_driver}, but PlatformIO env "
         f"'{env['PIOENV']}' is configured for {env_driver[0]}. Pick the matching "
-        f"'pio run -e ...' environment or update RP2040CAN.ino."
+        f"'pio run -e ...' environment or update {CONFIG_RELATIVE_PATH.as_posix()}."
     )
 
 if env_vehicle and env_vehicle != [selected_vehicle]:
     raise UserError(
         f"PlatformIO env '{env['PIOENV']}' already defines {env_vehicle[0]}, but "
-        f"RP2040CAN.ino selects {selected_vehicle}. Remove the conflicting build flag."
+        f"{CONFIG_RELATIVE_PATH.as_posix()} selects {selected_vehicle}. Remove the conflicting build flag."
     )
 
 sync_defines = [selected_vehicle, *selected_options]
@@ -101,7 +102,7 @@ if missing_defines:
     env.Append(CPPDEFINES=missing_defines)
 
 print(
-    f"Synced RP2040CAN.ino defines for {env['PIOENV']}: "
+    f"Synced {CONFIG_RELATIVE_PATH.as_posix()} defines for {env['PIOENV']}: "
     f"{selected_vehicle}"
     + (f", {', '.join(selected_options)}" if selected_options else "")
 )

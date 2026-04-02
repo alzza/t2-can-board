@@ -1,14 +1,15 @@
+#pragma once
+
 /*
-    PlatformIO entry point.
-    Shared sketch settings live in RP2040CAN/sketch_config.h.
-    Logic is in the shared headers under include/.
+    Shared Arduino sketch entry point.
+    Include this after selecting the board, vehicle, and feature defines.
 */
 
-#include <Arduino.h>
 #include "app.h"
 
-#ifdef DRIVER_MCP2515
+#if defined(DRIVER_MCP2515)
 #include <SPI.h>
+#include <mcp2515.h>
 #include "drivers/mcp2515_driver.h"
 #elif defined(DRIVER_SAME51)
 #include "drivers/same51_driver.h"
@@ -21,12 +22,12 @@
 #define TWAI_RX_PIN GPIO_NUM_4
 #endif
 #else
-#error "Define DRIVER_MCP2515, DRIVER_SAME51, or DRIVER_TWAI in build_flags"
+#error "Define DRIVER_MCP2515, DRIVER_SAME51, or DRIVER_TWAI in sketch_config.h"
 #endif
 
 void setup()
 {
-#ifdef DRIVER_MCP2515
+#if defined(DRIVER_MCP2515)
     appSetup<MCP2515Driver>(std::make_unique<MCP2515Driver>(PIN_CAN_CS), "MCP25625 ready @ 500k");
 #elif defined(DRIVER_SAME51)
     appSetup<SAME51Driver>(std::make_unique<SAME51Driver>(), "SAME51 CAN ready @ 500k");
@@ -35,9 +36,9 @@ void setup()
 #endif
 }
 
-void loop()
+__attribute__((optimize("O3"))) void loop()
 {
-#ifdef DRIVER_MCP2515
+#if defined(DRIVER_MCP2515)
     appLoop<MCP2515Driver>();
 #elif defined(DRIVER_SAME51)
     appLoop<SAME51Driver>();

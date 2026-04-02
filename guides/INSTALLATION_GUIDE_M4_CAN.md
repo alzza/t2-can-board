@@ -24,13 +24,20 @@ This guide covers a complete installation of the Tesla Open CAN Mod on a **2023 
    ```
 3. Install **Adafruit SAMD Boards** via **Tools → Board → Boards Manager**.
 4. Install the **Adafruit CAN** library via **Sketch → Include Library → Manage Libraries**.
-5. Open the sketch and set your hardware target at the top:
+5. Open `RP2040CAN/RP2040CAN.ino` in Arduino IDE.
+6. In the `sketch_config.h` tab, set your board and vehicle:
    ```cpp
-   #define HW_TARGET TARGET_HW3  // Change to TARGET_LEGACY, TARGET_HW3, or TARGET_HW4
+   // #define DRIVER_MCP2515
+   #define DRIVER_SAME51
+   // #define DRIVER_TWAI
+
+   // #define LEGACY
+   #define HW3
+   // #define HW4
    ```
-6. Select **Adafruit Feather M4 CAN (SAME51)** as the board under **Tools → Board**.
-7. Connect the Feather via USB, select the correct port, and click **Upload**.
-8. Open the Serial Monitor at **115200 baud** — you should see `CANSAME5x ready @ 500k`.
+7. Select **Adafruit Feather M4 CAN (SAME51)** as the board under **Tools → Board**.
+8. Connect the Feather via USB, select the correct port, and click **Upload**.
+9. Open the Serial Monitor at **115200 baud** — you should see `SAME51 CAN ready @ 500k`.
 
 ## Step 2: Identify the Enhance Auto connector pinout
 
