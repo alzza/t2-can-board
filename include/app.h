@@ -14,14 +14,16 @@
 #define PIN_LED 2
 #endif
 
-#if defined(HW4)
+#if defined(NAG_KILLER)
+using SelectedHandler = NagHandler;
+#elif defined(HW4)
 using SelectedHandler = HW4Handler;
 #elif defined(HW3)
 using SelectedHandler = HW3Handler;
 #elif defined(LEGACY)
 using SelectedHandler = LegacyHandler;
 #else
-#error "Define HW4, HW3 or LEGACY in build_flags"
+#error "Define HW4, HW3, LEGACY, or NAG_KILLER in build_flags"
 #endif
 
 static std::unique_ptr<CanDriver> appDriver;

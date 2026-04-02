@@ -191,6 +191,94 @@ struct HW3Handler : public CarManagerBase
     }
 };
 
+/**
+ * NagHandler — Autosteer nag suppression (counter+1 echo method)
+ *
+ * Replicates the Chinese TSL6P module behavior:
+ * - Listens for CAN 880 (0x370) = EPAS3P_sysStatus
+ * - When handsOnLevel = 0 (nag would trigger):
+ *   1. Copies the real frame
+ *   2. Sets byte 3 = 0xB6 (fixed torsionBarTorque = 1.80 Nm)
+ *   3. Sets byte 4 |= 0x40 (handsOnLevel = 1)
+ *   4. Increments counter (byte 6 lower nibble + 1)
+ *   5. Recalculates checksum (byte 7)
+ * - The real EPAS frame with the same counter arrives AFTER -> rejected as duplicate
+ *
+ * Tested: Model Y Performance 2022 HW3, Basic Autopilot
+ * Bus: X179 pin 2/3 (CAN bus 4)
+ *
+ * Enable with build flag: -D NAG_KILLER
+ */
+struct NagHandler : public CarManagerBase
+{
+    Shared<bool> nagKillerActive{true};
+    Shared<uint32_t> nagEchoCount{0};
+
+    const uint32_t *filterIds() const override
+    {
+        static constexpr uint32_t ids[] = {880};
+        return ids;
+    }
+    uint8_t filterIdCount() const override { return 1; }
+
+    void handleMessage(CanFrame &frame, CanDriver &driver) override
+    {
+        if (frame.id != 880 || frame.dlc < 8)
+            return;
+
+        uint8_t handsOn = (frame.data[4] >> 6) & 0x03;
+
+        if (!nagKillerActive || handsOn != 0)
+            return;
+
+        CanFrame echo;
+        echo.id = 880;
+        echo.dlc = 8;
+
+        echo.data[0] = frame.data[0];
+        echo.data[1] = frame.data[1];
+        echo.data[2] = frame.data[2];
+        echo.data[5] = frame.data[5];
+
+        // Fixed torque = 1.80 Nm
+        echo.data[3] = 0xB6;
+
+        // handsOnLevel = 1
+        echo.data[4] = frame.data[4] | 0x40;
+
+        // Counter + 1
+        uint8_t cnt = (frame.data[6] & 0x0F);
+        cnt = (cnt + 1) & 0x0F;
+        echo.data[6] = (frame.data[6] & 0xF0) | cnt;
+
+        // Checksum: sum(byte0..byte6) + 0x73
+        uint16_t sum = echo.data[0] + echo.data[1] + echo.data[2] + echo.data[3]
+                     + echo.data[4] + echo.data[5] + echo.data[6];
+        echo.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
+
+        framesSent++;
+        nagEchoCount++;
+        driver.send(echo);
+
+        if (enablePrint && (nagEchoCount % 500 == 1))
+        {
+            char buf[LogRingBuffer::kMaxMsgLen];
+            snprintf(buf, sizeof(buf), "NagHandler: echo=%u",
+                     (unsigned int)(uint32_t)nagEchoCount);
+            logRing.push(buf,
+#ifndef NATIVE_BUILD
+                         millis()
+#else
+                         0
+#endif
+            );
+#ifndef NATIVE_BUILD
+            Serial.println(buf);
+#endif
+        }
+    }
+};
+
 struct HW4Handler : public CarManagerBase
 {
     const uint32_t *filterIds() const override
