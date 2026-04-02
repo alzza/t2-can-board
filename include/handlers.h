@@ -252,8 +252,7 @@ struct NagHandler : public CarManagerBase
         echo.data[6] = (frame.data[6] & 0xF0) | cnt;
 
         // Checksum: sum(byte0..byte6) + 0x73
-        uint16_t sum = echo.data[0] + echo.data[1] + echo.data[2] + echo.data[3]
-                     + echo.data[4] + echo.data[5] + echo.data[6];
+        uint16_t sum = echo.data[0] + echo.data[1] + echo.data[2] + echo.data[3] + echo.data[4] + echo.data[5] + echo.data[6];
         echo.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
 
         framesSent++;
