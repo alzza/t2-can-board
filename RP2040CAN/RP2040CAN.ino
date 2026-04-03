@@ -4,4 +4,4 @@
 */
 
 #include "sketch_config.h"
-#include "../include/arduino_entrypoint.h"
+#include "src/arduino_entrypoint.h"
