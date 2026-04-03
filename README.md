@@ -208,7 +208,8 @@ Install via **Sketch → Include Library → Manage Libraries…**:
 
 #### 4. Open the Arduino Sketch
 
-Open `RP2040CAN/RP2040CAN.ino` in Arduino IDE. The sketch folder name now matches the primary `.ino`, which keeps Arduino IDE happy without changing the PlatformIO repository layout.
+Open the `RP2040CAN` folder in Arduino IDE, or open `RP2040CAN/RP2040CAN.ino` directly. The sketch folder name matches the primary `.ino`, which keeps Arduino IDE happy.
+The sketch also exposes the shared headers through `RP2040CAN/src`, so Arduino IDE builds the same shared code that PlatformIO uses.
 
 #### 5. Select Your Board and Vehicle
 
@@ -268,6 +269,11 @@ You can also enable optional features in the same file:
    PlatformIO reads the active board, vehicle, and optional feature defines from `RP2040CAN/sketch_config.h`.
    The `-e` environment still selects the board, so it must match the uncommented driver define in the shared config. If they do not match, the build stops with a clear error.
 
+   You can switch the shared sketch profile from the command line instead of editing the file by hand:
+   ```bash
+   python3 scripts/platformio_set_ino_profile.py --driver DRIVER_MCP2515 --vehicle HW3 --enable EMERGENCY_VEHICLE_DETECTION
+   ```
+
 2. Build for your board:
    ```bash
    # Adafruit Feather RP2040 CAN
@@ -311,6 +317,16 @@ Unit tests run on your host machine — no hardware required:
 ```bash
 pio test -e native
 ```
+
+Additional native test targets cover the `FORCE_FSD` path and the standalone log buffer suite:
+
+```bash
+pio test -e native_force_fsd
+pio test -e native_log_buffer
+```
+
+> [!TIP]
+> On macOS, the native PlatformIO test environments automatically add the Xcode Command Line Tools libc++ headers. If `xcode-select -p` fails, install the Command Line Tools first.
 
 ### Wiring
 
@@ -389,16 +405,30 @@ include/
 RP2040CAN/
   RP2040CAN.ino           # Arduino IDE sketch entry point
   sketch_config.h         # Shared board, vehicle, and feature defines
+  src/                    # Shared headers exposed inside the sketch for Arduino IDE
 src/
   main.cpp                # PlatformIO entry point
+scripts/
+  platformio_set_ino_profile.py   # Switch shared board/vehicle/feature defines
+  platformio_sync_ino_defines.py  # Sync shared sketch defines into PlatformIO envs
+  platformio_native_env.py        # Add macOS native test compiler includes
 test/
   test_native_helpers/    # Tests for bit manipulation helpers
   test_native_legacy/     # LegacyHandler tests
   test_native_hw3/        # HW3Handler tests
   test_native_hw4/        # HW4Handler tests
   test_native_twai/       # TWAI filter computation tests
-RP2040CAN.ino             # Repository-root compatibility entry point
 ```
+
+### Continuous Integration
+
+GitLab CI validates three layers:
+
+- `pio test -e native`, `pio test -e native_force_fsd`, and `pio test -e native_log_buffer`
+- `pio run` for `feather_rp2040_can`, `feather_m4_can`, `esp32_twai`, and `m5stack-atomic-can-base`
+- `arduino-cli compile` for the `RP2040CAN` sketch folder on `rp2040:rp2040:adafruit_feather_can`
+
+The GitLab pipeline in `.gitlab-ci.yml` rewrites `RP2040CAN/sketch_config.h` per job using `scripts/platformio_set_ino_profile.py`, so the shared Arduino sketch profile stays the source of truth in CI as well.
 
 ### Running Tests
 

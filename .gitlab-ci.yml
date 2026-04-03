@@ -1,9 +1,9 @@
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
+    - if: "$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS"
       when: never
-    - if: '$CI_COMMIT_BRANCH'
+    - if: "$CI_COMMIT_BRANCH"
 
 stages:
   - verify
@@ -20,6 +20,23 @@ variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   PLATFORMIO_CORE_DIR: "$CI_PROJECT_DIR/.platformio"
   PLATFORMIO_VERSION: "6.1.19"
+  ARDUINO_CLI_VERSION: "1.4.1"
+
+.platformio-job:
+  stage: verify
+  image: python:3-slim
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends build-essential git
+    - pip install "platformio==${PLATFORMIO_VERSION}"
+
+.esp32-platformio-job:
+  extends: .platformio-job
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends build-essential git
+    - pip install "platformio==${PLATFORMIO_VERSION}"
+    - pip install littlefs-python fatfs-ng pyyaml
 
 lint:
   stage: verify
@@ -31,38 +48,48 @@ lint:
     - clang-format --version
     - git ls-files '*.cpp' '*.h' '*.hpp' '*.ino' | xargs -r clang-format --dry-run --Werror --style=file
 
-tests:
-  stage: verify
-  image: python:3.12-slim
-  before_script:
-    - apt-get update
-    - apt-get install -y --no-install-recommends build-essential git
-    - pip install "platformio==${PLATFORMIO_VERSION}"
+native-tests:
+  extends: .platformio-job
   script:
-    - mkdir -p test-results
-    - pio test -e native -e native_force_fsd --junit-output-path test-results/junit.xml
-  artifacts:
-    when: always
-    reports:
-      junit: test-results/junit.xml
-    paths:
-      - test-results/junit.xml
+    - pio test -e native
+    - pio test -e native_force_fsd
+    - pio test -e native_log_buffer
 
-builds:
-  stage: verify
-  image: python:3.12-slim
-  before_script:
-    - apt-get update
-    - apt-get install -y --no-install-recommends build-essential git
-    - pip install "platformio==${PLATFORMIO_VERSION}"
+build-rp2040:
+  extends: .platformio-job
   script:
-    - mkdir -p .tests
-    - cp RP2040CAN.ino .tests/RP2040CAN.ino.ci.bak
-    - trap 'mv .tests/RP2040CAN.ino.ci.bak RP2040CAN.ino' EXIT
     - python scripts/platformio_set_ino_profile.py --driver DRIVER_MCP2515 --vehicle HW3 --enable EMERGENCY_VEHICLE_DETECTION
     - pio run -e feather_rp2040_can
-    - python scripts/platformio_set_ino_profile.py --driver DRIVER_SAME51 --vehicle HW3 --enable EMERGENCY_VEHICLE_DETECTION
+
+build-m4:
+  extends: .platformio-job
+  script:
+    - python scripts/platformio_set_ino_profile.py --driver DRIVER_SAME51 --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION
     - pio run -e feather_m4_can
-    - python scripts/platformio_set_ino_profile.py --driver DRIVER_TWAI --vehicle HW3 --enable EMERGENCY_VEHICLE_DETECTION
+
+build-esp32:
+  extends: .esp32-platformio-job
+  script:
+    - python scripts/platformio_set_ino_profile.py --driver DRIVER_TWAI --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION
     - pio run -e esp32_twai
+
+build-m5stack:
+  extends: .esp32-platformio-job
+  script:
+    - python scripts/platformio_set_ino_profile.py --driver DRIVER_TWAI --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION
     - pio run -e m5stack-atomic-can-base
+
+arduino-rp2040:
+  stage: verify
+  image: python:3-slim
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends curl git
+    - curl -fsSL "https://downloads.arduino.cc/arduino-cli/arduino-cli_${ARDUINO_CLI_VERSION}_Linux_64bit.tar.gz" | tar -xz
+  script:
+    - ./arduino-cli config add board_manager.additional_urls https://github.com/earlephilhower/arduino-pico/releases/download/global/package_rp2040_index.json
+    - ./arduino-cli core update-index
+    - ./arduino-cli core install rp2040:rp2040
+    - ./arduino-cli lib install "autowp-mcp2515"
+    - python scripts/platformio_set_ino_profile.py --driver DRIVER_MCP2515 --vehicle HW3 --enable EMERGENCY_VEHICLE_DETECTION
+    - ./arduino-cli compile -b rp2040:rp2040:adafruit_feather_can RP2040CAN
