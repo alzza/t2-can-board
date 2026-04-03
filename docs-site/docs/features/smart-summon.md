@@ -18,10 +18,10 @@ The firmware sets the `UI_hardCoreSummon` bit in CAN message 1021, mux 1, which 
 
 ## Requirements
 
-- **HW4 vehicle only** — this feature is not available on HW3 or Legacy
+- **HW3/4 vehicle only** — this feature is not available on Legacy
 - Active FSD subscription or purchase
 - Vehicle firmware that supports Actually Smart Summon
 
 :::note
-This feature is automatically enabled on HW4 builds. No additional configuration is needed.
+This feature is automatically enabled on HW3/4 builds. No additional configuration is needed.
 :::
