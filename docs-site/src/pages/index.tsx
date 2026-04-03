@@ -23,8 +23,7 @@ function HomepageHeader() {
             Get Started
           </Link>
           <Link
-            className="button button--outline button--secondary button--lg"
-            style={{marginLeft: '1rem'}}
+            className="button button--secondary button--lg"
             href="https://gitlab.com/tesla-open-can-mod/tesla-open-can-mod">
             View Source
           </Link>
