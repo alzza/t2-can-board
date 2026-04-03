@@ -7,6 +7,7 @@ workflow:
 
 stages:
   - verify
+  - deploy
 
 default:
   interruptible: true
@@ -93,3 +94,17 @@ arduino-rp2040:
     - ./arduino-cli lib install "autowp-mcp2515"
     - python scripts/platformio_set_ino_profile.py --driver DRIVER_MCP2515 --vehicle HW3 --enable EMERGENCY_VEHICLE_DETECTION
     - ./arduino-cli compile -b rp2040:rp2040:adafruit_feather_can RP2040CAN
+
+pages:
+  stage: deploy
+  image: node:22-slim
+  script:
+    - cd docs-site
+    - npm ci
+    - npm run build
+    - mv build ../public
+  artifacts:
+    paths:
+      - public
+  rules:
+    - if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"

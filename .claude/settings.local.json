@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(npx create-docusaurus@latest docs-site classic --typescript)",
+      "Bash(npx docusaurus:*)"
+    ]
+  }
+}
