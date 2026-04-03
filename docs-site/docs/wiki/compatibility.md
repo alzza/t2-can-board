@@ -12,13 +12,13 @@ sidebar_position: 3
 
 | Firmware | HW3 | HW4 | Notes |
 |---|---|---|---|
-| < 2026.2.9 | FSD v13 | Compile as HW3 | HW4 vehicles use HW3 handler for FSD v13 |
-| 2026.2.9.X | FSD v13 | FSD v14 | HW4 gets full v14 features |
-| 2026.8.X | FSD v13 | FSD v13 | HW4 on this branch is still v13 — compile as HW3 |
+| < 2026.2.9 | FSD v12.4.6 | Compile as HW3 | HW4 vehicles use HW3 handler for FSD v13 |
+| 2026.2.9.X | FSD v12.4.6 | FSD v14.x | HW4 gets full v14 features |
+| 2026.8.X | FSD v12.4.6 | FSD v12.4.6 | HW4 on this branch is still v12/v13 — compile as HW3 |
 
 ## FSD Version Differences
 
-### FSD v13 (HW3 handler)
+### FSD v12/13 (HW3 handler)
 - FSD enable bit
 - Speed profiles (3 levels)
 - Nag suppression
