@@ -1,6 +1,6 @@
 # Tesla Open Can Mod
 
-[Community Discord](https://discord.gg/ZTQKAUTd2F)
+[Website](https://teslaopencanmod.org) | [Documentation](https://teslaopencanmod.org/docs/intro) | [Community Discord](https://discord.gg/ZTQKAUTd2F)
 
 > [!WARNING] Update 
 > **do not update to 2026.2.9.x & 2026.8.6 FSD is not Working on HW4.**
