@@ -89,6 +89,9 @@ Select your vehicle hardware variant in `RP2040CAN/sketch_config.h` via the `#de
 
 The table below shows exactly which CAN messages each hardware variant monitors and what modifications are made.
 
+> [!IMPORTANT]
+> If a CAN message contains a counter or checksum, any modification to that message **must** recalculate these fields — otherwise the receiving ECU will discard the frame. Messages with these integrity fields require strict test coverage to ensure correctness.
+
 #### Legacy (HW3 Retrofit)
 
 | CAN ID | Name | R/W | Mux | Bit | Value | Signal | Description |
