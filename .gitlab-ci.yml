@@ -42,6 +42,8 @@ variables:
 lint:
   stage: verify
   image: debian:bookworm-slim
+  tags:
+    - docker
   before_script:
     - apt-get update
     - apt-get install -y --no-install-recommends clang-format git
@@ -51,6 +53,9 @@ lint:
 
 native-tests:
   extends: .platformio-job
+  tags:
+    - native
+    - unraid
   script:
     - pio test -e native
     - pio test -e native_force_fsd
@@ -58,30 +63,45 @@ native-tests:
 
 build-rp2040:
   extends: .platformio-job
+  tags:
+    - native
+    - unraid
   script:
     - python scripts/platformio_set_ino_profile.py --driver DRIVER_MCP2515 --vehicle HW3 --enable EMERGENCY_VEHICLE_DETECTION
     - pio run -e feather_rp2040_can
 
 build-m4:
   extends: .platformio-job
+  tags:
+    - native
+    - unraid
   script:
     - python scripts/platformio_set_ino_profile.py --driver DRIVER_SAME51 --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION
     - pio run -e feather_m4_can
 
 build-esp32:
   extends: .esp32-platformio-job
+  tags:
+    - native
+    - unraid
   script:
     - python scripts/platformio_set_ino_profile.py --driver DRIVER_TWAI --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION
     - pio run -e esp32_twai
 
 build-m5stack:
   extends: .esp32-platformio-job
+  tags:
+    - native
+    - unraid
   script:
     - python scripts/platformio_set_ino_profile.py --driver DRIVER_TWAI --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION
     - pio run -e m5stack-atomic-can-base
 
 build-esp32-featherwing:
   extends: .esp32-platformio-job
+  tags:
+    - native
+    - unraid
   script:
     - python scripts/platformio_set_ino_profile.py --driver DRIVER_MCP2515 --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION
     - pio run -e esp32_feather_v2_mcp2515
@@ -89,6 +109,9 @@ build-esp32-featherwing:
 arduino-rp2040:
   stage: verify
   image: python:3-slim
+  tags:
+    - native
+    - unraid
   before_script:
     - apt-get update
     - apt-get install -y --no-install-recommends curl git
