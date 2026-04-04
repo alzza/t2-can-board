@@ -9,6 +9,8 @@ const sidebars: SidebarsConfig = {
       items: [
         'getting-started/hardware-selection',
         'getting-started/installation',
+        'getting-started/installation-m4',
+        'getting-started/fsd-subscription',
         'getting-started/wiring-legacy',
         'getting-started/firmware-flash',
         'getting-started/configuration',
@@ -20,6 +22,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'features/fsd-activation',
         'features/nag-suppression',
+        'features/autosteer-nag-killer',
         'features/speed-profiles',
         'features/smart-summon',
         'features/emergency-vehicle-detection',
