@@ -237,10 +237,10 @@ struct NagHandler : public CarManagerBase
 
         echo.data[0] = frame.data[0];
         echo.data[1] = frame.data[1];
-        echo.data[2] = frame.data[2];
+        echo.data[2] = 0x08; // Keep flag bits, clear upper torque bits
         echo.data[5] = frame.data[5];
 
-        // Fixed torque = 1.80 Nm
+        // Fixed torque = 1.80 Nm (0x08B6 = 2230, tRaw * 0.01 - 20.5 = 1.80)
         echo.data[3] = 0xB6;
 
         // handsOnLevel = 1
