@@ -11,6 +11,19 @@ An open-source general-purpose CAN bus modification tool for Tesla vehicles. Whi
 
 Some sellers charge up to 500 € for a solution like this. The hardware costs around 20 €, and even with labor factored in, a fair price is no more than 50 €. This project exists so nobody has to overpay.
 
+## Features
+
+- **FSD Activation** — Enables Full Self-Driving at the CAN bus level by intercepting and modifying Autopilot control frames
+- **Nag Suppression** — Clears the hands-on-wheel ECE R79 nag bit, suppressing the periodic "apply pressure to the steering wheel" warning
+- **Autosteer Nag Killer** — Suppresses the Autopilot "hands on wheel" alert by echoing modified EPAS steering torque frames on CAN bus 4
+- **Actually Smart Summon (ASS)** — Removes EU regulatory restrictions on Smart Summon (HW3/HW4)
+- **Speed Profiles** — Maps the follow-distance stalk setting to FSD aggressiveness profiles (Chill / Normal / Hurry / Max / Sloth)
+- **ISA Speed Chime Suppression** — Mutes the Intelligent Speed Assistance audible chime while keeping the visual indicator active (HW4, optional)
+- **Emergency Vehicle Detection** — Enables approaching emergency vehicle detection on FSD v14 (HW4, optional)
+- **Web Interface** — WiFi hotspot on ESP32 boards for real-time monitoring, runtime feature toggles, and over-the-air firmware updates
+
+Full feature documentation: [teslaopencanmod.org/docs/](https://teslaopencanmod.org/docs/intro)
+
 ## Disclaimer
 
 > [!WARNING]
