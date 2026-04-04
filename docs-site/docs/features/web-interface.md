@@ -18,7 +18,7 @@ ESP32 boards (and M5Stack Atomic CAN Base) feature an optional web interface for
 
 ### Real-Time Status
 - **FSD Active**: Current FSD state
-- **Force FSD**: Whether forced FSD is enabled
+- **Bypass TLSSC**: Whether the TLSSC requirement is bypassed
 - **ISA Speed Chime Suppress**: Suppression status (HW4 only)
 - **Emergency Vehicle Detection**: Detection status (HW4 only)
 - **Speed Profile**: Current active speed level
@@ -27,7 +27,7 @@ ESP32 boards (and M5Stack Atomic CAN Base) feature an optional web interface for
 
 ### Remote Controls
 
-#### Force FSD Toggle
+#### Bypass TLSSC Toggle
 Enable or disable FSD activation without the "Traffic Light and Stop Sign Control" requirement.
 
 - **Build-enabled**: Always available
@@ -81,7 +81,7 @@ Update your board's firmware wirelessly without needing a USB cable.
 The web interface exposes the following API endpoints:
 
 - `GET /api/status` — Get current state (FSD, profile, uptime, etc.)
-- `POST /api/force-fsd` — Toggle Force FSD
+- `POST /api/bypass-tlssc` — Toggle Bypass TLSSC
 - `POST /api/isa-speed-chime-suppress` — Toggle ISA chime (HW4 only)
 - `POST /api/emergency-vehicle-detection` — Toggle emergency detection (HW4 only)
 - `GET /api/log` — Retrieve recent log lines

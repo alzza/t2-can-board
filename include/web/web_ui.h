@@ -55,7 +55,7 @@ input:disabled+.sl:before{background:#5f6680}
 <div class="card">
 <h2>Status</h2>
 <div class="row"><span class="label">FSD Active</span><span class="val" id="fsd">--</span></div>
-<div class="row"><span class="label">Force FSD</span><span class="val" id="ffsd">--</span></div>
+<div class="row"><span class="label">Bypass TLSSC</span><span class="val" id="ffsd">--</span></div>
 <div class="row"><span class="label">ISA Chime Suppress</span><span class="val" id="isa">--</span></div>
 <div class="row"><span class="label">Emergency Detection</span><span class="val" id="evd">--</span></div>
 <div class="row"><span class="label">Speed Profile</span><span class="val" id="prof">--</span></div>
@@ -78,10 +78,10 @@ input:disabled+.sl:before{background:#5f6680}
 <h2>Controls</h2>
 <div class="row">
 <div class="labelWrap">
-<span class="label">Force FSD</span>
+<span class="label">Bypass TLSSC</span>
 <span class="meta" id="metaFsd">--</span>
 </div>
-<label class="sw"><input type="checkbox" id="tFsd" onchange="togSwitch('/api/force-fsd',this,'Enable Force FSD?')"><span class="sl"></span></label>
+<label class="sw"><input type="checkbox" id="tFsd" onchange="togSwitch('/api/bypass-tlssc',this,'Bypass TLSSC requirement?')"><span class="sl"></span></label>
 </div>
 <div class="row">
 <div class="labelWrap">
