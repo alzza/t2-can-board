@@ -43,7 +43,7 @@ lint:
   stage: verify
   image: debian:bookworm-slim
   tags:
-    - docker
+    - native
   before_script:
     - apt-get update
     - apt-get install -y --no-install-recommends clang-format git
@@ -127,6 +127,8 @@ arduino-rp2040:
 pages:
   stage: deploy
   image: node:22-slim
+  tags:
+    - native
   script:
     - cd docs-site
     - npm ci
