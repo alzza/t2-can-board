@@ -11,6 +11,18 @@ An open-source general-purpose CAN bus modification tool for Tesla vehicles. Whi
 
 Some sellers charge up to 500 € for a solution like this. The hardware costs around 20 €, and even with labor factored in, a fair price is no more than 50 €. This project exists so nobody has to overpay.
 
+## Disclaimer
+
+> [!WARNING]
+> **FSD is a premium feature and must be properly purchased or subscribed to.** Any attempt to bypass the purchase or subscription requirement will result in a permanent ban from Tesla services.
+
+> [!WARNING]
+> **Modifying CAN bus messages can cause dangerous behavior or permanently damage your vehicle.** The CAN bus controls everything from braking and steering to airbags — a malformed message can have serious consequences. If you don't fully understand what you're doing, **do not install this on your car**.
+
+This project is for testing and educational purposes only and for use on **private property**. The authors accept no responsibility for any damage to your vehicle, injury, or legal consequences resulting from the use of this software. This project may void your vehicle warranty and **may not comply with road safety regulations in your jurisdiction**.
+
+For any use beyond private testing, you are responsible for complying with all applicable local laws and regulations. Always keep your hands on the wheel and stay attentive while driving.
+
 ## Features
 
 - **FSD Activation** — Enables Full Self-Driving at the CAN bus level by intercepting and modifying Autopilot control frames
@@ -24,50 +36,57 @@ Some sellers charge up to 500 € for a solution like this. The hardware costs a
 
 Full feature documentation: [teslaopencanmod.org/docs/](https://teslaopencanmod.org/docs/intro)
 
-## Disclaimer
+## What It Does
 
-> [!WARNING]
-> **FSD is a premium feature and must be properly purchased or subscribed to.** Any attempt to bypass the purchase or subscription requirement will result in a permanent ban from Tesla services.
+The firmware runs on multiple supported boards — Adafruit Feather RP2040 CAN, Feather M4 CAN Express, ESP32-based boards, and M5Stack Atomic CAN Base. It sits on the vehicle CAN bus, intercepts relevant frames, modifies the necessary bits, and re-transmits the modified frames — all in real time.
 
-> [!WARNING]
-> **Modifying CAN bus messages can cause dangerous behavior or permanently damage your vehicle.** The CAN bus controls everything from braking and steering to airbags — a malformed message can have serious consequences. If you don't fully understand what you're doing, **do not install this on your car**.
-
-This project is for testing and educational purposes only and for use on **private property**. The authors accept no responsibility for any damage to your vehicle, injury, or legal consequences resulting from the use of this software. This project may void your vehicle warranty and **may not comply with road safety regulations in your jurisdiction**.
-
-For any use beyond private testing, you are responsible for complying with all applicable local laws and regulations. Always keep your hands on the wheel and stay attentive while driving.
+Features are selected at compile time via `sketch_config.h` and vary by hardware variant (Legacy / HW3 / HW4). ESP32 boards additionally expose a WiFi web interface for runtime control and OTA firmware updates.
 
 ## Prerequisites
 
-**You must have an active FSD package on the vehicle** — either purchased or subscribed. This board enables the FSD functionality on the CAN bus level, but the vehicle still needs a valid FSD entitlement from Tesla.
+**An active FSD package is required to use FSD-related features** — either purchased or subscribed. This board enables the FSD functionality on the CAN bus level, but the vehicle still needs a valid FSD entitlement from Tesla.
 
-If FSD subscriptions are not available in your region, you can work around this by:
+Features like the Autosteer Nag Killer, ISA Speed Chime Suppression, and the Web Interface work independently and do not require FSD.
 
-1. Creating a Tesla account in a region where FSD subscriptions are offered (e.g. Canada).
-2. Transferring the vehicle to that account.
-3. Subscribing to FSD through that account.
+If FSD subscriptions are not available in your region, there is a workaround using a foreign Tesla account. See [teslaopencanmod.org/docs/getting-started/fsd-subscription](https://teslaopencanmod.org/docs/getting-started/fsd-subscription) for details.
 
-This allows you to activate an FSD subscription from anywhere in the world.
+## Supported Boards
 
-## What It Does
+| Board                                                                   | CAN Interface              | Library                      | Status                             | Case STL |
+|-------------------------------------------------------------------------|----------------------------|------------------------------|------------------------------------|----------|
+| Adafruit Feather RP2040 CAN                                             | MCP2515 over SPI           | `mcp2515.h` (autowp)         | Tested                             | [Printables](https://www.printables.com/model/1662242-adafruit-rp2040-can-bus-feather-case-5724) |
+| Adafruit Feather M4 CAN Express (ATSAME51)                              | Native MCAN peripheral     | `Adafruit_CAN` (`CANSAME5x`) | Tested                             |          |
+| ESP32 with CAN transceiver (e.g. ESP32-DevKitC + SN65HVD230)            | Native TWAI peripheral     | ESP-IDF `driver/twai.h`      | Tested                             |          |
+| [Atomic CAN Base](https://docs.m5stack.com/en/atom/Atomic%20CAN%20Base) | CA-IS3050G over ESP32 TWAI | ESP32 TWAI                   | Tested                             |          |
+| Adafruit ESP32 Feather V2 (5400) + Adafruit CAN Bus Featherwing (5709)  | MCP2515 over SPI           | `mcp2515.h` (autowp)         | Tested                             |          |
 
-This firmware runs on an Adafruit Feather with CAN bus support (RP2040 CAN with MCP2515, M4 CAN Express with native ATSAME51 CAN, or any ESP32 board with a built-in TWAI peripheral). It intercepts specific CAN bus messages to enable and configure Full Self-Driving (FSD). Additionally, ASS (Actually Smart Summon) is no longer restricted by EU regulations.
+## Installation
 
-Core Function
-- Intercepts specific CAN bus messages
-- Re-transmits them onto the vehicle bus
+Both Arduino IDE and PlatformIO are supported. Select your board and vehicle variant in `sketch_config.h`, then flash the firmware to your board.
 
+Full installation guide: [teslaopencanmod.org/docs/getting-started/firmware-flash](https://teslaopencanmod.org/docs/getting-started/firmware-flash)
 
-FSD Activation Logic
-- Listens for Autopilot-related CAN frames
-- Checks if "Traffic Light and Stop Sign Control" is enabled in the Autopilot settings Uses this setting as a trigger for Full Self-Driving (FSD)
-- Adjusts the required bits in the CAN message to activate FSD
+## Third-Party Libraries
 
-Additional Behavior
-- Reads the follow-distance stalk setting
-- Maps it dynamically to a speed profile
+This project depends on the following open-source libraries. Their full license texts are in [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).
 
-HW4 - FSD V14 Features
-- Approaching Emergency Vehicle Detection
+| Library | License | Copyright |
+|---------|---------|-----------|
+| [autowp/arduino-mcp2515](https://github.com/autowp/arduino-mcp2515) | MIT | (c) 2013 Seeed Technology Inc., (c) 2016 Dmitry |
+| [adafruit/Adafruit_CAN](https://github.com/adafruit/Adafruit_CAN) | MIT | (c) 2017 Sandeep Mistry |
+| [espressif/esp-idf](https://github.com/espressif/esp-idf) (TWAI driver) | Apache 2.0 | (c) 2015-2025 Espressif Systems (Shanghai) CO LTD |
+
+## License
+
+This project is licensed under the **GNU General Public License v3.0** — see the [GPL-3.0 License](https://www.gnu.org/licenses/gpl-3.0.html) for details.
+
+---
+
+> [!NOTE]
+> The sections below are kept for reference but are no longer actively maintained here. The [documentation site](https://teslaopencanmod.org/docs/intro) is the source of truth for installation, wiring, CAN details, and feature guides.
+
+<details>
+<summary>Legacy README — hardware details, installation, wiring, CAN tables</summary>
 
 ### Supported Hardware Variants
 
@@ -141,16 +160,6 @@ The table below shows exactly which CAN messages each hardware variant monitors 
 
 > Signal names sourced from [tesla-can-explorer](https://github.com/mikegapinski/tesla-can-explorer) by [@mikegapinski](https://x.com/mikegapinski).
 
-## Supported Boards
-
-| Board                                                                   | CAN Interface              | Library                      | Status                             | Case STL |
-|-------------------------------------------------------------------------|----------------------------|------------------------------|------------------------------------|----------|
-| Adafruit Feather RP2040 CAN                                             | MCP2515 over SPI           | `mcp2515.h` (autowp)         | Tested                             | [Printables](https://www.printables.com/model/1662242-adafruit-rp2040-can-bus-feather-case-5724) |
-| Adafruit Feather M4 CAN Express (ATSAME51)                              | Native MCAN peripheral     | `Adafruit_CAN` (`CANSAME5x`) | Tested                             |          |
-| ESP32 with CAN transceiver (e.g. ESP32-DevKitC + SN65HVD230)            | Native TWAI peripheral     | ESP-IDF `driver/twai.h`      | Tested                             |.         |
-| [Atomic CAN Base](https://docs.m5stack.com/en/atom/Atomic%20CAN%20Base) | CA-IS3050G over ESP32 TWAI | ESP32 TWAI                   | Tested                             |          |
-| Adafruit ESP32 Feather V2 (5400) + Adafruit CAN Bus Featherwing (5709)  | MCP2515 over SPI           | `mcp2515.h` (autowp)         | Tested                             |          |
-
 ## Hardware Requirements
 
 - One of the supported boards listed above
@@ -172,7 +181,7 @@ The table below shows exactly which CAN messages each hardware variant monitors 
   - `TWAI_RX_PIN` — GPIO connected to the transceiver RX pin (default `GPIO_NUM_4`)
 
 **Adafruit ESP32 Feather V2 (5400) + Adafruit CAN Bus Featherwing (5709)** — uses the MCP2515 over SPI via the Featherwing stacked on top.
-  - Ensure the stacking headers are installed and the SPI bus is properly connected. 
+  - Ensure the stacking headers are installed and the SPI bus is properly connected.
   - `PIN_CAN_CS` — SPI chip-select for the MCP2515. Defaults to pin 14.
   - `PIN_CAN_INTERRUPT` — interrupt pin (unused; polling mode). Defaults to pin 32.
 
@@ -371,10 +380,7 @@ Connect the Feather's CAN-H and CAN-L lines to pins 1 and 2 on the X652 connecto
 
 The speed profile controls how aggressively the vehicle drives under FSD. It is configured differently depending on the hardware variant:
 
-
 ### Legacy, HW3 & HW4 Profiles
-
-
 
 | Distance | Profile (HW3) | Profile (HW4) |
 | :--- | :--- | :--- |
@@ -457,18 +463,4 @@ pio test -e native
 
 Tests run on your host machine — no hardware required. They cover all handler logic including FSD activation, nag suppression, speed profile mapping, and bit manipulation correctness.
 
-
-
-## Third-Party Libraries
-
-This project depends on the following open-source libraries. Their full license texts are in [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).
-
-| Library | License | Copyright |
-|---------|---------|-----------|
-| [autowp/arduino-mcp2515](https://github.com/autowp/arduino-mcp2515) | MIT | (c) 2013 Seeed Technology Inc., (c) 2016 Dmitry |
-| [adafruit/Adafruit_CAN](https://github.com/adafruit/Adafruit_CAN) | MIT | (c) 2017 Sandeep Mistry |
-| [espressif/esp-idf](https://github.com/espressif/esp-idf) (TWAI driver) | Apache 2.0 | (c) 2015-2025 Espressif Systems (Shanghai) CO LTD |
-
-## License
-
-This project is licensed under the **GNU General Public License v3.0** — see the [GPL-3.0 License](https://www.gnu.org/licenses/gpl-3.0.html) for details.
+</details>
