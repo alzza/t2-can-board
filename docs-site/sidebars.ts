@@ -64,8 +64,6 @@ const sidebars: SidebarsConfig = {
       label: 'Legal',
       items: [
         'legal/disclaimer',
-        'legal/impressum',
-        'legal/datenschutz',
       ],
     },
   ],
