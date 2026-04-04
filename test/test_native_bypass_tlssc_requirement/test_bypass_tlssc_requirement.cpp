@@ -10,20 +10,20 @@ static MockDriver mock;
 void setUp()
 {
     mock.reset();
-    forceFSDRuntime = kForceFSDDefaultEnabled;
+    bypassTlsscRequirementRuntime = kBypassTlsscRequirementDefaultEnabled;
 }
 void tearDown() {}
 
-// --- isFSDSelectedInUI always returns true under FORCE_FSD ---
+// --- isFSDSelectedInUI always returns true under BYPASS_TLSSC_REQUIREMENT ---
 
-void test_force_fsd_helper_returns_true_when_bit_clear()
+void test_bypass_tlssc_helper_returns_true_when_bit_clear()
 {
     CanFrame f = {};
     f.data[4] = 0x00; // FSD bit NOT set
     TEST_ASSERT_TRUE(isFSDSelectedInUI(f));
 }
 
-void test_force_fsd_helper_returns_true_when_bit_set()
+void test_bypass_tlssc_helper_returns_true_when_bit_set()
 {
     CanFrame f = {};
     f.data[4] = 0x40; // FSD bit set
@@ -32,7 +32,7 @@ void test_force_fsd_helper_returns_true_when_bit_set()
 
 // --- Legacy: sends on mux 0 even without FSD toggle ---
 
-void test_force_fsd_legacy_sends_without_ui_toggle()
+void test_bypass_tlssc_legacy_sends_without_ui_toggle()
 {
     LegacyHandler handler;
     handler.enablePrint = false;
@@ -47,7 +47,7 @@ void test_force_fsd_legacy_sends_without_ui_toggle()
 
 // --- HW3: sends on mux 0 even without FSD toggle ---
 
-void test_force_fsd_hw3_sends_without_ui_toggle()
+void test_bypass_tlssc_hw3_sends_without_ui_toggle()
 {
     HW3Handler handler;
     handler.enablePrint = false;
@@ -60,7 +60,7 @@ void test_force_fsd_hw3_sends_without_ui_toggle()
     TEST_ASSERT_EQUAL_HEX8(0x40, mock.sent[0].data[5] & 0x40); // bit 46
 }
 
-void test_force_fsd_hw3_mux2_sends_without_ui_toggle()
+void test_bypass_tlssc_hw3_mux2_sends_without_ui_toggle()
 {
     HW3Handler handler;
     handler.enablePrint = false;
@@ -80,7 +80,7 @@ void test_force_fsd_hw3_mux2_sends_without_ui_toggle()
 
 // --- HW4: sends on mux 0 even without FSD toggle ---
 
-void test_force_fsd_hw4_sends_without_ui_toggle()
+void test_bypass_tlssc_hw4_sends_without_ui_toggle()
 {
     HW4Handler handler;
     handler.enablePrint = false;
@@ -98,13 +98,13 @@ int main()
 {
     UNITY_BEGIN();
 
-    RUN_TEST(test_force_fsd_helper_returns_true_when_bit_clear);
-    RUN_TEST(test_force_fsd_helper_returns_true_when_bit_set);
+    RUN_TEST(test_bypass_tlssc_helper_returns_true_when_bit_clear);
+    RUN_TEST(test_bypass_tlssc_helper_returns_true_when_bit_set);
 
-    RUN_TEST(test_force_fsd_legacy_sends_without_ui_toggle);
-    RUN_TEST(test_force_fsd_hw3_sends_without_ui_toggle);
-    RUN_TEST(test_force_fsd_hw3_mux2_sends_without_ui_toggle);
-    RUN_TEST(test_force_fsd_hw4_sends_without_ui_toggle);
+    RUN_TEST(test_bypass_tlssc_legacy_sends_without_ui_toggle);
+    RUN_TEST(test_bypass_tlssc_hw3_sends_without_ui_toggle);
+    RUN_TEST(test_bypass_tlssc_hw3_mux2_sends_without_ui_toggle);
+    RUN_TEST(test_bypass_tlssc_hw4_sends_without_ui_toggle);
 
     return UNITY_END();
 }

@@ -20,7 +20,7 @@ Tesla Open CAN Mod is an open-source project and contributions are welcome.
 3. Run all tests:
    ```bash
    pio test -e native
-   pio test -e native_force_fsd
+   pio test -e native_bypass_tlssc_requirement
    pio test -e native_log_buffer
    ```
 4. Ensure your code passes the linter:

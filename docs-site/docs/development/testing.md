@@ -12,8 +12,8 @@ The project uses [PlatformIO](https://platformio.org/) with the [Unity](https://
 # Main test suite — all handler logic
 pio test -e native
 
-# FORCE_FSD path tests
-pio test -e native_force_fsd
+# BYPASS_TLSSC_REQUIREMENT path tests
+pio test -e native_bypass_tlssc_requirement
 
 # Log buffer tests
 pio test -e native_log_buffer
@@ -47,7 +47,7 @@ Tests use the `MockDriver` from `include/drivers/mock_driver.h` to simulate CAN 
 
 GitLab CI validates three layers on every commit:
 
-1. **Unit tests:** `pio test -e native`, `native_force_fsd`, `native_log_buffer`
+1. **Unit tests:** `pio test -e native`, `native_bypass_tlssc_requirement`, `native_log_buffer`
 2. **Cross-compilation:** `pio run` for all board environments (RP2040, M4, ESP32, M5Stack)
 3. **Arduino IDE compatibility:** `arduino-cli compile` for the RP2040 sketch
 

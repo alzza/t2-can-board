@@ -42,12 +42,12 @@ The core feature of Tesla Open CAN Mod — enabling Full Self-Driving at the CAN
 If a CAN message contains a counter or checksum, any modification to that message **must** recalculate these fields — otherwise the receiving ECU will discard the frame.
 :::
 
-## FORCE_FSD Mode
+## BYPASS_TLSSC_REQUIREMENT Mode
 
-By default, FSD is only activated when "Traffic Light and Stop Sign Control" is toggled on in the vehicle settings. If you want FSD to be always active, enable `FORCE_FSD` in `sketch_config.h`:
+By default, FSD is only activated when "Traffic Light and Stop Sign Control" is toggled on in the vehicle settings. If you want FSD to be always active, enable `BYPASS_TLSSC_REQUIREMENT` in `sketch_config.h`:
 
 ```cpp
-#define FORCE_FSD
+#define BYPASS_TLSSC_REQUIREMENT
 ```
 
 This bypasses the toggle check and always sets the FSD enable bit.

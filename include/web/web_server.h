@@ -185,7 +185,7 @@ static esp_err_t statusHandler(httpd_req_t *req)
 
     // Read handler state (atomic reads -- no lock needed)
     bool fsdEnabled = appHandler ? (bool)appHandler->FSDEnabled : false;
-    bool forceFsd = (bool)forceFSDRuntime;
+    bool bypassTlssc = (bool)bypassTlsscRequirementRuntime;
     int speedProfile = appHandler ? (int)appHandler->speedProfile : 0;
     int speedOffset = appHandler ? (int)appHandler->speedOffset : 0;
     bool enablePrint = appHandler ? (bool)appHandler->enablePrint : true;
@@ -196,7 +196,7 @@ static esp_err_t statusHandler(httpd_req_t *req)
     // Build JSON
     cJSON *root = cJSON_CreateObject();
     cJSON_AddBoolToObject(root, "fsd_enabled", fsdEnabled);
-    cJSON_AddBoolToObject(root, "force_fsd", forceFsd);
+    cJSON_AddBoolToObject(root, "bypass_tlssc_requirement", bypassTlssc);
     cJSON_AddBoolToObject(root, "isa_speed_chime_suppress", isaSuppress);
     cJSON_AddBoolToObject(root, "emergency_vehicle_detection", emergencyVehicleDetection);
     cJSON_AddNumberToObject(root, "speed_profile", speedProfile);
@@ -206,7 +206,7 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "log_head", logRing.currentHead());
 
     cJSON *features = cJSON_AddObjectToObject(root, "features");
-    addFeatureState(features, "force_fsd", true, forceFsd, kForceFSDBuildEnabled);
+    addFeatureState(features, "bypass_tlssc_requirement", true, bypassTlssc, kBypassTlsscRequirementBuildEnabled);
     addFeatureState(features, "isa_speed_chime_suppress",
                     kWebSupportsIsaSpeedChimeSuppress, isaSuppress, kWebSupportsIsaSpeedChimeSuppress);
     addFeatureState(features, "emergency_vehicle_detection",
@@ -271,9 +271,9 @@ static esp_err_t statusHandler(httpd_req_t *req)
     return ESP_OK;
 }
 
-static esp_err_t forceFsdHandler(httpd_req_t *req)
+static esp_err_t bypassTlsscRequirementHandler(httpd_req_t *req)
 {
-    return featureToggleHandler(req, forceFSDRuntime, true, "force_fsd", "FORCE_FSD");
+    return featureToggleHandler(req, bypassTlsscRequirementRuntime, true, "bypass_tlssc", "BYPASS_TLSSC_REQUIREMENT");
 }
 
 static esp_err_t isaSpeedChimeSuppressHandler(httpd_req_t *req)
@@ -460,12 +460,12 @@ static void webServerInit()
     // NVS: load persisted runtime feature switches
     if (nvsInit())
     {
-        forceFSDRuntime = nvsReadBool("force_fsd", kForceFSDDefaultEnabled);
+        bypassTlsscRequirementRuntime = nvsReadBool("bypass_tlssc", kBypassTlsscRequirementDefaultEnabled);
         isaSpeedChimeSuppressRuntime =
             nvsReadBool("isa_speed_chime", kIsaSpeedChimeSuppressDefaultEnabled);
         emergencyVehicleDetectionRuntime =
             nvsReadBool("emergency_vehicle_detection", kEmergencyVehicleDetectionDefaultEnabled);
-        Serial.printf("NVS: FORCE_FSD = %d\n", (bool)forceFSDRuntime);
+        Serial.printf("NVS: BYPASS_TLSSC_REQUIREMENT = %d\n", (bool)bypassTlsscRequirementRuntime);
         Serial.printf("NVS: ISA_SPEED_CHIME_SUPPRESS = %d\n", (bool)isaSpeedChimeSuppressRuntime);
         Serial.printf("NVS: EMERGENCY_VEHICLE_DETECTION = %d\n",
                       (bool)emergencyVehicleDetectionRuntime);
@@ -502,8 +502,8 @@ static void webServerInit()
         .uri = "/", .method = HTTP_GET, .handler = rootHandler, .user_ctx = NULL};
     httpd_uri_t uriStatus = {
         .uri = "/api/status", .method = HTTP_GET, .handler = statusHandler, .user_ctx = NULL};
-    httpd_uri_t uriForceFsd = {
-        .uri = "/api/force-fsd", .method = HTTP_POST, .handler = forceFsdHandler, .user_ctx = NULL};
+    httpd_uri_t uriBypassTlsscRequirement = {
+        .uri = "/api/bypass-tlssc", .method = HTTP_POST, .handler = bypassTlsscRequirementHandler, .user_ctx = NULL};
     httpd_uri_t uriIsaSpeedChime = {
         .uri = "/api/isa-speed-chime-suppress", .method = HTTP_POST, .handler = isaSpeedChimeSuppressHandler, .user_ctx = NULL};
     httpd_uri_t uriEmergencyVehicleDetection = {
@@ -519,7 +519,7 @@ static void webServerInit()
 
     httpd_register_uri_handler(webServer, &uriRoot);
     httpd_register_uri_handler(webServer, &uriStatus);
-    httpd_register_uri_handler(webServer, &uriForceFsd);
+    httpd_register_uri_handler(webServer, &uriBypassTlsscRequirement);
     httpd_register_uri_handler(webServer, &uriIsaSpeedChime);
     httpd_register_uri_handler(webServer, &uriEmergencyVehicleDetection);
     httpd_register_uri_handler(webServer, &uriEnablePrint);

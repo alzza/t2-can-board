@@ -179,13 +179,13 @@ async function poll(){
     var d=await r.json();
     var f=d.features||{};
     setDot(document.getElementById('fsd'),d.fsd_enabled);
-    setFeatureState(document.getElementById('ffsd'),f.force_fsd);
+    setFeatureState(document.getElementById('ffsd'),f.bypass_tlssc_requirement);
     setFeatureState(document.getElementById('isa'),f.isa_speed_chime_suppress);
     setFeatureState(document.getElementById('evd'),f.emergency_vehicle_detection);
     document.getElementById('prof').textContent=profNames[d.speed_profile]||('P'+d.speed_profile);
     document.getElementById('soff').textContent=d.speed_offset;
     document.getElementById('up').textContent=fmt(d.uptime_s);
-    setFeatureToggle('tFsd','metaFsd',f.force_fsd);
+    setFeatureToggle('tFsd','metaFsd',f.bypass_tlssc_requirement);
     setFeatureToggle('tIsa','metaIsa',f.isa_speed_chime_suppress);
     setFeatureToggle('tEvd','metaEvd',f.emergency_vehicle_detection);
     document.getElementById('tLog').checked=d.enable_print;

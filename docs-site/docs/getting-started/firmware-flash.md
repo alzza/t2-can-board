@@ -122,7 +122,7 @@ pio run -e m5stack-atomic-can-base --target upload
 
 ```bash
 pio test -e native
-pio test -e native_force_fsd
+pio test -e native_bypass_tlssc_requirement
 pio test -e native_log_buffer
 ```
 
