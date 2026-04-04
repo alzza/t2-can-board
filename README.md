@@ -136,9 +136,10 @@ The table below shows exactly which CAN messages each hardware variant monitors 
 | Board                                                                   | CAN Interface              | Library                      | Status                             | Case STL |
 |-------------------------------------------------------------------------|----------------------------|------------------------------|------------------------------------|----------|
 | Adafruit Feather RP2040 CAN                                             | MCP2515 over SPI           | `mcp2515.h` (autowp)         | Tested                             | [Printables](https://www.printables.com/model/1662242-adafruit-rp2040-can-bus-feather-case-5724) |
-| Adafruit Feather M4 CAN Express (ATSAME51)                              | Native MCAN peripheral     | `Adafruit_CAN` (`CANSAME5x`) | Tested                             |
-| ESP32 with CAN transceiver (e.g. ESP32-DevKitC + SN65HVD230)            | Native TWAI peripheral     | ESP-IDF `driver/twai.h`      | Tested |
-| [Atomic CAN Base](https://docs.m5stack.com/en/atom/Atomic%20CAN%20Base) | CA-IS3050G over ESP32 TWAI | ESP32 TWAI                   | Tested                             | 
+| Adafruit Feather M4 CAN Express (ATSAME51)                              | Native MCAN peripheral     | `Adafruit_CAN` (`CANSAME5x`) | Tested                             |          |
+| ESP32 with CAN transceiver (e.g. ESP32-DevKitC + SN65HVD230)            | Native TWAI peripheral     | ESP-IDF `driver/twai.h`      | Tested                             |.         |
+| [Atomic CAN Base](https://docs.m5stack.com/en/atom/Atomic%20CAN%20Base) | CA-IS3050G over ESP32 TWAI | ESP32 TWAI                   | Tested                             |          |
+| Adafruit ESP32 Feather V2 (5400) + Adafruit CAN Bus Featherwing (5709)  | MCP2515 over SPI           | `mcp2515.h` (autowp)         | Tested                             |          |
 
 ## Hardware Requirements
 
@@ -159,6 +160,11 @@ The table below shows exactly which CAN messages each hardware variant monitors 
   - An external CAN transceiver module (e.g. SN65HVD230, TJA1050, or MCP2551)
   - `TWAI_TX_PIN` — GPIO connected to the transceiver TX pin (default `GPIO_NUM_5`)
   - `TWAI_RX_PIN` — GPIO connected to the transceiver RX pin (default `GPIO_NUM_4`)
+
+**Adafruit ESP32 Feather V2 (5400) + Adafruit CAN Bus Featherwing (5709)** — uses the MCP2515 over SPI via the Featherwing stacked on top.
+  - Ensure the stacking headers are installed and the SPI bus is properly connected. 
+  - `PIN_CAN_CS` — SPI chip-select for the MCP2515. Defaults to pin 14.
+  - `PIN_CAN_INTERRUPT` — interrupt pin (unused; polling mode). Defaults to pin 32.
 
 > [!IMPORTANT]
 > Cut the onboard 120 Ω termination resistor on the Feather CAN board (jumper labeled **TERM** on RP2040, **Trm** on M4). If using an ESP32 with an external transceiver that has a termination resistor, remove or disable it as well. The vehicle's CAN bus already has its own termination, and adding a second resistor will cause communication errors.
