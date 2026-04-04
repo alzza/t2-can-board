@@ -80,6 +80,12 @@ build-m5stack:
     - python scripts/platformio_set_ino_profile.py --driver DRIVER_TWAI --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION
     - pio run -e m5stack-atomic-can-base
 
+build-esp32-featherwing:
+  extends: .esp32-platformio-job
+  script:
+    - python scripts/platformio_set_ino_profile.py --driver DRIVER_MCP2515 --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION
+    - pio run -e esp32_feather_v2_mcp2515
+
 arduino-rp2040:
   stage: verify
   image: python:3-slim
