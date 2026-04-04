@@ -23,6 +23,7 @@ const sidebars: SidebarsConfig = {
         'features/speed-profiles',
         'features/smart-summon',
         'features/emergency-vehicle-detection',
+        'features/web-interface',
       ],
     },
     {
