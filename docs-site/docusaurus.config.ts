@@ -106,14 +106,6 @@ const config: Config = {
               to: '/docs/legal/disclaimer',
             },
             {
-              label: 'Impressum',
-              to: '/docs/legal/impressum',
-            },
-            {
-              label: 'Datenschutz',
-              to: '/docs/legal/datenschutz',
-            },
-            {
               label: 'License (GPL-3.0)',
               href: 'https://www.gnu.org/licenses/gpl-3.0.html',
             },
