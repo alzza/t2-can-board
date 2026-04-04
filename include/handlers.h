@@ -214,6 +214,8 @@ struct HW4Handler : public CarManagerBase
         {
             if (frame.dlc < 8)
                 return;
+            if (!isaSpeedChimeSuppressRuntime)
+                return;
             frame.data[1] |= 0x20;
             uint8_t sum = 0;
             for (int i = 0; i < 7; i++)
@@ -261,7 +263,8 @@ struct HW4Handler : public CarManagerBase
                 setBit(frame, 46, true);
                 setBit(frame, 60, true);
 #if defined(EMERGENCY_VEHICLE_DETECTION)
-                setBit(frame, 59, true);
+                if (emergencyVehicleDetectionRuntime)
+                    setBit(frame, 59, true);
 #endif
                 framesSent++;
                 driver.send(frame);

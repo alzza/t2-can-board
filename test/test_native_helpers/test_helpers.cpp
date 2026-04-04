@@ -2,7 +2,12 @@
 #include "can_frame_types.h"
 #include "can_helpers.h"
 
-void setUp() {}
+void setUp()
+{
+    forceFSDRuntime = kForceFSDDefaultEnabled;
+    isaSpeedChimeSuppressRuntime = kIsaSpeedChimeSuppressDefaultEnabled;
+    emergencyVehicleDetectionRuntime = kEmergencyVehicleDetectionDefaultEnabled;
+}
 void tearDown() {}
 
 // --- setBit ---
@@ -174,6 +179,13 @@ void test_runtime_force_fsd_off_still_reads_real_bit()
     TEST_ASSERT_TRUE(isFSDSelectedInUI(f));
 }
 
+void test_runtime_defaults_follow_build_flags()
+{
+    TEST_ASSERT_FALSE(forceFSDRuntime);
+    TEST_ASSERT_TRUE(isaSpeedChimeSuppressRuntime);
+    TEST_ASSERT_TRUE(emergencyVehicleDetectionRuntime);
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -203,6 +215,7 @@ int main()
     RUN_TEST(test_runtime_force_fsd_overrides_when_bit_clear);
     RUN_TEST(test_runtime_force_fsd_off_reads_frame);
     RUN_TEST(test_runtime_force_fsd_off_still_reads_real_bit);
+    RUN_TEST(test_runtime_defaults_follow_build_flags);
 
     return UNITY_END();
 }

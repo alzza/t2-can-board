@@ -13,6 +13,9 @@ void setUp()
     mock.reset();
     handler = HW4Handler();
     handler.enablePrint = false;
+    forceFSDRuntime = kForceFSDDefaultEnabled;
+    isaSpeedChimeSuppressRuntime = kIsaSpeedChimeSuppressDefaultEnabled;
+    emergencyVehicleDetectionRuntime = kEmergencyVehicleDetectionDefaultEnabled;
 }
 
 void tearDown() {}
@@ -99,6 +102,17 @@ void test_hw4_fsd_mux0_sets_emergency_bit59()
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_EQUAL_HEX8(0x08, mock.sent[0].data[7] & 0x08); // bit 59
+}
+
+void test_hw4_fsd_mux0_skips_emergency_bit59_when_runtime_disabled()
+{
+    emergencyVehicleDetectionRuntime = false;
+    CanFrame f = {.id = 1021};
+    f.data[0] = 0x00;
+    f.data[4] = 0x40;
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_HEX8(0x00, mock.sent[0].data[7] & 0x08);
 }
 
 void test_hw4_no_send_when_fsd_disabled_mux0()
@@ -229,6 +243,14 @@ void test_hw4_isa_suppress_returns_early_no_further_processing()
     TEST_ASSERT_EQUAL(1, mock.sent.size()); // only the ISA send, not any FSD logic
 }
 
+void test_hw4_isa_suppress_runtime_off_skips_send()
+{
+    isaSpeedChimeSuppressRuntime = false;
+    CanFrame f = {.id = 921};
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+}
+
 // --- Filter IDs ---
 
 void test_hw4_filter_ids_count()
@@ -260,6 +282,7 @@ int main()
     RUN_TEST(test_hw4_fsd_enabled_only_set_on_mux0);
     RUN_TEST(test_hw4_fsd_mux0_sets_bits_46_and_60);
     RUN_TEST(test_hw4_fsd_mux0_sets_emergency_bit59);
+    RUN_TEST(test_hw4_fsd_mux0_skips_emergency_bit59_when_runtime_disabled);
     RUN_TEST(test_hw4_no_send_when_fsd_disabled_mux0);
 
     RUN_TEST(test_hw4_nag_suppression_clears_bit19_sets_bit47);
@@ -276,6 +299,7 @@ int main()
     RUN_TEST(test_hw4_isa_suppress_preserves_existing_data1_bits);
     RUN_TEST(test_hw4_isa_suppress_checksum_correct);
     RUN_TEST(test_hw4_isa_suppress_returns_early_no_further_processing);
+    RUN_TEST(test_hw4_isa_suppress_runtime_off_skips_send);
 
     return UNITY_END();
 }

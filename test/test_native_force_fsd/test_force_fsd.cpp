@@ -7,7 +7,11 @@
 
 static MockDriver mock;
 
-void setUp() { mock.reset(); }
+void setUp()
+{
+    mock.reset();
+    forceFSDRuntime = kForceFSDDefaultEnabled;
+}
 void tearDown() {}
 
 // --- isFSDSelectedInUI always returns true under FORCE_FSD ---

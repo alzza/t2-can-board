@@ -3,12 +3,14 @@
 
 #if defined(DRIVER_TWAI) && !defined(NATIVE_BUILD)
 
+#include <algorithm>
 #include <WiFi.h>
 #include <esp_http_server.h>
 #include <nvs_flash.h>
 #include <nvs.h>
 #include <lwip/sockets.h>
 #include <cJSON.h>
+#include <Update.h>
 #include <driver/twai.h>
 
 #include "shared_types.h"
@@ -18,6 +20,18 @@
 
 static const char *AP_SSID = "TeslaCAN";
 static const char *AP_PASS = "canmod12"; // WPA2, min 8 chars
+
+#if defined(HW4) && defined(ISA_SPEED_CHIME_SUPPRESS)
+static constexpr bool kWebSupportsIsaSpeedChimeSuppress = true;
+#else
+static constexpr bool kWebSupportsIsaSpeedChimeSuppress = false;
+#endif
+
+#if defined(HW4) && defined(EMERGENCY_VEHICLE_DETECTION)
+static constexpr bool kWebSupportsEmergencyVehicleDetection = true;
+#else
+static constexpr bool kWebSupportsEmergencyVehicleDetection = false;
+#endif
 
 // --- NVS helpers ---
 
@@ -32,23 +46,27 @@ static bool nvsInit()
     return err == ESP_OK;
 }
 
-static bool nvsReadForceFSD()
+static bool nvsReadBool(const char *key, bool fallback)
 {
     nvs_handle_t handle;
     if (nvs_open("canmod", NVS_READONLY, &handle) != ESP_OK)
-        return false;
+        return fallback;
     uint8_t val = 0;
-    nvs_get_u8(handle, "force_fsd", &val);
+    if (nvs_get_u8(handle, key, &val) != ESP_OK)
+    {
+        nvs_close(handle);
+        return fallback;
+    }
     nvs_close(handle);
     return val != 0;
 }
 
-static void nvsWriteForceFSD(bool enabled)
+static void nvsWriteBool(const char *key, bool enabled)
 {
     nvs_handle_t handle;
     if (nvs_open("canmod", NVS_READWRITE, &handle) != ESP_OK)
         return;
-    nvs_set_u8(handle, "force_fsd", enabled ? 1 : 0);
+    nvs_set_u8(handle, key, enabled ? 1 : 0);
     nvs_commit(handle);
     nvs_close(handle);
 }
@@ -65,6 +83,81 @@ static bool rateLimitOk()
         return false;
     lastToggleMs = now;
     return true;
+}
+
+static void addFeatureState(cJSON *parent, const char *name, bool supported, bool enabled, bool buildEnabled)
+{
+    cJSON *feature = cJSON_AddObjectToObject(parent, name);
+    cJSON_AddBoolToObject(feature, "supported", supported);
+    cJSON_AddBoolToObject(feature, "enabled", supported && enabled);
+    cJSON_AddBoolToObject(feature, "build_enabled", buildEnabled);
+}
+
+static bool parseToggleBody(httpd_req_t *req, bool &enabledOut)
+{
+    char body[64];
+    int len = httpd_req_recv(req, body, sizeof(body) - 1);
+    if (len <= 0)
+    {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+        return false;
+    }
+    body[len] = '\0';
+
+    cJSON *json = cJSON_Parse(body);
+    if (!json)
+    {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return false;
+    }
+
+    cJSON *enabled = cJSON_GetObjectItem(json, "enabled");
+    if (!cJSON_IsBool(enabled))
+    {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing enabled");
+        return false;
+    }
+
+    enabledOut = cJSON_IsTrue(enabled);
+    cJSON_Delete(json);
+    return true;
+}
+
+static esp_err_t featureToggleHandler(httpd_req_t *req, Shared<bool> &target, bool supported,
+                                      const char *nvsKey, const char *logName)
+{
+    if (!rateLimitOk())
+    {
+        httpd_resp_set_status(req, "429 Too Many Requests");
+        httpd_resp_send(req, "Rate limited", HTTPD_RESP_USE_STRLEN);
+        return ESP_FAIL;
+    }
+
+    if (!supported)
+    {
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Feature not available");
+        return ESP_FAIL;
+    }
+
+    bool enabled = false;
+    if (!parseToggleBody(req, enabled))
+        return ESP_FAIL;
+
+    target = enabled;
+    nvsWriteBool(nvsKey, enabled);
+    Serial.printf("Web: %s set to %d\n", logName, enabled);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+static void restartTask(void *param)
+{
+    (void)param;
+    vTaskDelay(pdMS_TO_TICKS(750));
+    ESP.restart();
 }
 
 // --- HTTP handlers ---
@@ -96,16 +189,30 @@ static esp_err_t statusHandler(httpd_req_t *req)
     int speedProfile = appHandler ? (int)appHandler->speedProfile : 0;
     int speedOffset = appHandler ? (int)appHandler->speedOffset : 0;
     bool enablePrint = appHandler ? (bool)appHandler->enablePrint : true;
+    bool isaSuppress = kWebSupportsIsaSpeedChimeSuppress ? (bool)isaSpeedChimeSuppressRuntime : false;
+    bool emergencyVehicleDetection =
+        kWebSupportsEmergencyVehicleDetection ? (bool)emergencyVehicleDetectionRuntime : false;
 
     // Build JSON
     cJSON *root = cJSON_CreateObject();
     cJSON_AddBoolToObject(root, "fsd_enabled", fsdEnabled);
     cJSON_AddBoolToObject(root, "force_fsd", forceFsd);
+    cJSON_AddBoolToObject(root, "isa_speed_chime_suppress", isaSuppress);
+    cJSON_AddBoolToObject(root, "emergency_vehicle_detection", emergencyVehicleDetection);
     cJSON_AddNumberToObject(root, "speed_profile", speedProfile);
     cJSON_AddNumberToObject(root, "speed_offset", speedOffset);
     cJSON_AddBoolToObject(root, "enable_print", enablePrint);
     cJSON_AddNumberToObject(root, "uptime_s", millis() / 1000);
     cJSON_AddNumberToObject(root, "log_head", logRing.currentHead());
+
+    cJSON *features = cJSON_AddObjectToObject(root, "features");
+    addFeatureState(features, "force_fsd", true, forceFsd, kForceFSDBuildEnabled);
+    addFeatureState(features, "isa_speed_chime_suppress",
+                    kWebSupportsIsaSpeedChimeSuppress, isaSuppress, kWebSupportsIsaSpeedChimeSuppress);
+    addFeatureState(features, "emergency_vehicle_detection",
+                    kWebSupportsEmergencyVehicleDetection, emergencyVehicleDetection,
+                    kWebSupportsEmergencyVehicleDetection);
+    addFeatureState(features, "ota", true, false, true);
 
     // Add log entries since last poll
     LogRingBuffer::Entry logEntries[LogRingBuffer::kCapacity];
@@ -166,42 +273,21 @@ static esp_err_t statusHandler(httpd_req_t *req)
 
 static esp_err_t forceFsdHandler(httpd_req_t *req)
 {
-    if (!rateLimitOk())
-    {
-        httpd_resp_set_status(req, "429 Too Many Requests");
-        httpd_resp_send(req, "Rate limited", HTTPD_RESP_USE_STRLEN);
-        return ESP_FAIL;
-    }
+    return featureToggleHandler(req, forceFSDRuntime, true, "force_fsd", "FORCE_FSD");
+}
 
-    char body[64];
-    int len = httpd_req_recv(req, body, sizeof(body) - 1);
-    if (len <= 0)
-    {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-        return ESP_FAIL;
-    }
-    body[len] = '\0';
+static esp_err_t isaSpeedChimeSuppressHandler(httpd_req_t *req)
+{
+    return featureToggleHandler(req, isaSpeedChimeSuppressRuntime,
+                                kWebSupportsIsaSpeedChimeSuppress,
+                                "isa_speed_chime", "ISA_SPEED_CHIME_SUPPRESS");
+}
 
-    cJSON *json = cJSON_Parse(body);
-    if (!json)
-    {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
-        return ESP_FAIL;
-    }
-
-    cJSON *enabled = cJSON_GetObjectItem(json, "enabled");
-    if (cJSON_IsBool(enabled))
-    {
-        bool val = cJSON_IsTrue(enabled);
-        forceFSDRuntime = val;
-        nvsWriteForceFSD(val);
-        Serial.printf("Web: FORCE_FSD set to %d\n", val);
-    }
-    cJSON_Delete(json);
-
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
+static esp_err_t emergencyVehicleDetectionHandler(httpd_req_t *req)
+{
+    return featureToggleHandler(req, emergencyVehicleDetectionRuntime,
+                                kWebSupportsEmergencyVehicleDetection,
+                                "emergency_vehicle_detection", "EMERGENCY_VEHICLE_DETECTION");
 }
 
 static esp_err_t enablePrintHandler(httpd_req_t *req)
@@ -238,6 +324,54 @@ static esp_err_t enablePrintHandler(httpd_req_t *req)
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+static esp_err_t otaHandler(httpd_req_t *req)
+{
+    if (req->content_len <= 0)
+    {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing firmware payload");
+        return ESP_FAIL;
+    }
+
+    if (!Update.begin(req->content_len))
+    {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, Update.errorString());
+        return ESP_FAIL;
+    }
+
+    int remaining = req->content_len;
+    uint8_t buffer[1024];
+    while (remaining > 0)
+    {
+        int received = httpd_req_recv(req, reinterpret_cast<char *>(buffer),
+                                      std::min(remaining, (int)sizeof(buffer)));
+        if (received <= 0)
+        {
+            Update.abort();
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Upload failed");
+            return ESP_FAIL;
+        }
+        if (Update.write(buffer, received) != (size_t)received)
+        {
+            Update.abort();
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, Update.errorString());
+            return ESP_FAIL;
+        }
+        remaining -= received;
+    }
+
+    if (!Update.end(true))
+    {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, Update.errorString());
+        return ESP_FAIL;
+    }
+
+    Serial.println("Web: OTA upload complete, restarting");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"ok\":true,\"restarting\":true}", HTTPD_RESP_USE_STRLEN);
+    xTaskCreatePinnedToCore(restartTask, "reboot", 2048, NULL, 1, NULL, 0);
     return ESP_OK;
 }
 
@@ -323,11 +457,18 @@ static httpd_handle_t webServer = NULL;
 
 static void webServerInit()
 {
-    // NVS: load persisted FORCE_FSD
+    // NVS: load persisted runtime feature switches
     if (nvsInit())
     {
-        forceFSDRuntime = nvsReadForceFSD();
+        forceFSDRuntime = nvsReadBool("force_fsd", kForceFSDDefaultEnabled);
+        isaSpeedChimeSuppressRuntime =
+            nvsReadBool("isa_speed_chime", kIsaSpeedChimeSuppressDefaultEnabled);
+        emergencyVehicleDetectionRuntime =
+            nvsReadBool("emergency_vehicle_detection", kEmergencyVehicleDetectionDefaultEnabled);
         Serial.printf("NVS: FORCE_FSD = %d\n", (bool)forceFSDRuntime);
+        Serial.printf("NVS: ISA_SPEED_CHIME_SUPPRESS = %d\n", (bool)isaSpeedChimeSuppressRuntime);
+        Serial.printf("NVS: EMERGENCY_VEHICLE_DETECTION = %d\n",
+                      (bool)emergencyVehicleDetectionRuntime);
     }
     else
     {
@@ -346,7 +487,7 @@ static void webServerInit()
     // HTTP server on Core 0
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.core_id = 0;
-    config.max_uri_handlers = 8;
+    config.max_uri_handlers = 10;
     config.lru_purge_enable = true;
     config.stack_size = 8192;
 
@@ -363,8 +504,14 @@ static void webServerInit()
         .uri = "/api/status", .method = HTTP_GET, .handler = statusHandler, .user_ctx = NULL};
     httpd_uri_t uriForceFsd = {
         .uri = "/api/force-fsd", .method = HTTP_POST, .handler = forceFsdHandler, .user_ctx = NULL};
+    httpd_uri_t uriIsaSpeedChime = {
+        .uri = "/api/isa-speed-chime-suppress", .method = HTTP_POST, .handler = isaSpeedChimeSuppressHandler, .user_ctx = NULL};
+    httpd_uri_t uriEmergencyVehicleDetection = {
+        .uri = "/api/emergency-vehicle-detection", .method = HTTP_POST, .handler = emergencyVehicleDetectionHandler, .user_ctx = NULL};
     httpd_uri_t uriEnablePrint = {
         .uri = "/api/enable-print", .method = HTTP_POST, .handler = enablePrintHandler, .user_ctx = NULL};
+    httpd_uri_t uriOta = {
+        .uri = "/api/ota", .method = HTTP_POST, .handler = otaHandler, .user_ctx = NULL};
     httpd_uri_t uriGenerate204 = {
         .uri = "/generate_204", .method = HTTP_GET, .handler = captiveRedirectHandler, .user_ctx = NULL};
     httpd_uri_t uriHotspot = {
@@ -373,7 +520,10 @@ static void webServerInit()
     httpd_register_uri_handler(webServer, &uriRoot);
     httpd_register_uri_handler(webServer, &uriStatus);
     httpd_register_uri_handler(webServer, &uriForceFsd);
+    httpd_register_uri_handler(webServer, &uriIsaSpeedChime);
+    httpd_register_uri_handler(webServer, &uriEmergencyVehicleDetection);
     httpd_register_uri_handler(webServer, &uriEnablePrint);
+    httpd_register_uri_handler(webServer, &uriOta);
     httpd_register_uri_handler(webServer, &uriGenerate204);
     httpd_register_uri_handler(webServer, &uriHotspot);
 
