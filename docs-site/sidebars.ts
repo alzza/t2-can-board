@@ -9,6 +9,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'getting-started/hardware-selection',
         'getting-started/installation',
+        'getting-started/wiring-legacy',
         'getting-started/firmware-flash',
         'getting-started/configuration',
       ],

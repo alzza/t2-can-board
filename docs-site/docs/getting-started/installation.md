@@ -20,7 +20,9 @@ This guide is board-agnostic — it applies to any board you're using with this 
 The X179 connector is located on the **passenger side footwell**, behind the panel on the right.
 
 1. Remove the right-side footwell panel trim — it pops off with gentle pulling, no tools required.
-2. Locate the connector cluster.
+2. Locate the connector cluster. The X179 connector is the one highlighted below.
+
+![X179 connector location](/img/x179-connector.png)
 
 For a video walkthrough of how to access the connector and plug in the cable, see [this installation video by Enhance Auto](https://youtube.com/watch?v=ifwJNZgykVI).
 
@@ -30,7 +32,9 @@ Legacy Model 3 vehicles (2020 and earlier) may not have the X179 connector. In t
 
 ## Step 2: Identify the Cable Pinout
 
-The Enhance Auto Gen 2 Cable has a connector on one end that plugs into the X179 port, and loose wires on the other end:
+The Enhance Auto Gen 2 Cable has a connector on one end that plugs into the X179 port, and loose wires on the other end that normally connect to a S3XY Commander. The pinout of the loose end:
+
+![Enhance Auto connector pinout](/img/pinout-labeled.png)
 
 | Wire | Signal | Purpose |
 |---|---|---|
@@ -45,6 +49,9 @@ The Enhance Auto Gen 2 Cable has a connector on one end that plugs into the X179
 1. Connect the **CAN-H** (black with stripe) and **CAN-L** (black solid) wires to your board's CAN screw terminal or CAN pins.
 2. Connect the **12V+** (red) and **GND** (black) wires to your DC/DC converter's input.
 3. Connect the DC/DC converter's output (USB-C or Micro-USB) to your board to power it.
+
+![Connected setup](/img/x170-enhanced.png)
+![Connected setup example](/img/connected-setup.png)
 
 :::important
 If your board or CAN module has an onboard 120 Ohm termination resistor, **cut or remove it** before connecting. The vehicle's CAN bus already has its own termination, and adding a second resistor will cause communication errors.
