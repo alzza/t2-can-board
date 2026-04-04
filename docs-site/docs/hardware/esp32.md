@@ -28,6 +28,8 @@ Uses the native TWAI (Two-Wire Automotive Interface) peripheral built into all E
 | `TWAI_TX_PIN` | `GPIO_NUM_5` | Connect to transceiver TX |
 | `TWAI_RX_PIN` | `GPIO_NUM_4` | Connect to transceiver RX |
 
+If you have other GPIO Pins connected to the CAN transceiver Module. You can define the Ports in `/include/arduino_enytrypoint.h`
+
 ## Configuration
 
 In `sketch_config.h`:
