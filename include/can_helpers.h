@@ -3,7 +3,29 @@
 #include "can_frame_types.h"
 #include "shared_types.h"
 
-inline Shared<bool> forceFSDRuntime{false};
+#if defined(FORCE_FSD)
+inline constexpr bool kForceFSDDefaultEnabled = true;
+inline constexpr bool kForceFSDBuildEnabled = true;
+#else
+inline constexpr bool kForceFSDDefaultEnabled = false;
+inline constexpr bool kForceFSDBuildEnabled = false;
+#endif
+
+#if defined(ISA_SPEED_CHIME_SUPPRESS)
+inline constexpr bool kIsaSpeedChimeSuppressDefaultEnabled = true;
+#else
+inline constexpr bool kIsaSpeedChimeSuppressDefaultEnabled = false;
+#endif
+
+#if defined(EMERGENCY_VEHICLE_DETECTION)
+inline constexpr bool kEmergencyVehicleDetectionDefaultEnabled = true;
+#else
+inline constexpr bool kEmergencyVehicleDetectionDefaultEnabled = false;
+#endif
+
+inline Shared<bool> forceFSDRuntime{kForceFSDDefaultEnabled};
+inline Shared<bool> isaSpeedChimeSuppressRuntime{kIsaSpeedChimeSuppressDefaultEnabled};
+inline Shared<bool> emergencyVehicleDetectionRuntime{kEmergencyVehicleDetectionDefaultEnabled};
 
 inline uint8_t readMuxID(const CanFrame &frame)
 {
@@ -12,14 +34,9 @@ inline uint8_t readMuxID(const CanFrame &frame)
 
 inline bool isFSDSelectedInUI(const CanFrame &frame)
 {
-#if defined(FORCE_FSD)
-    (void)frame;
-    return true;
-#else
     if (forceFSDRuntime)
         return true;
     return (frame.data[4] >> 6) & 0x01;
-#endif
 }
 
 inline void setSpeedProfileV12V13(CanFrame &frame, int profile)
