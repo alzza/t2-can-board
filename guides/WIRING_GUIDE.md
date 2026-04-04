@@ -1,4 +1,58 @@
-# Wiring Guide: Tesla Model 3/Y
+# Finding the right wires for your car
+
+Please use this website for reference to find the right car sheet for your car: <https://service.tesla.com/docs/Model3/ElectricalReference/>
+
+# Wiring Guide: Tesla model 3/y before 2020
+
+There are 3 options:
+
+1. [X652](https://service.tesla.com/docs/Model3/ElectricalReference/prog-20/connector/x652/)
+2. [X052](https://service.tesla.com/docs/Model3/ElectricalReference/prog-20/connector/x052/)
+3. [X930M](https://service.tesla.com/docs/Model3/ElectricalReference/prog-20/connector/x930m/) (this will not enable FSD!)
+
+## X652
+
+![X652](images/x652.png)
+
+This can be found really easily. Just lift the passenerseat footwell all the way up and look under the seat you will see this:
+![alt text](images/x625-image.png)
+
+If it is connected to a black plastic box, please do not use it. If you unplug it the passenger seat warning comes on and stays on. First make a Y splitter cable yourself with these [connectors](https://aliexpress.com/w/wholesale-936119%2525252d1.html)
+
+When connector X652 is present in your car, and there is no black box, it is recommended to use that. Make 2 cables with these [connectors](https://aliexpress.com/w/wholesale-1355717%2525252d1.html) and this [connector](https://aliexpress.com/item/1005008884473620.html?pdp_ext_f=%7B%22order%22%3A%223%22%2C%22eval%22%3A%221%22%2C%22fromPage%22%3A%22search%22%7D)
+
+![alt text](images/x625-pins.png)
+
+Pin 1 = CAN-L
+
+Pin 2 = CAN-H
+
+Pin 3 = Ground
+
+Pin 4 = Power
+
+## X052
+
+![X056](images/x052.png)
+
+If pin X652 is not avaible please use X052 which is located near the right side of the car:
+![Rightside car](images/rightsidecarmodel3.png)
+there is 1 piece plastic trim that you need to remove. Just pull it near the bottom of the photo up and lift it slowly, near the dashboard there is 1 plastic screw which you can unclip with just your hands. Here you will find the X052 connector:
+![x052 location](images/x052-location.png)
+
+Since this connector uses special types of plugs that are really deep it is recommended to buy these [connectors](https://aliexpress.com/item/1005008523245081.html) make 4 cables and connect them as follows:
+
+Pin 44: CAN-H
+
+Pin 45: CAN-L
+
+Pin 22: GRN
+
+Pin 20: Power (12v)
+
+Connect them your can device.
+
+# Wiring Guide: Tesla Model 3/Y after 2020
 
 This guide shows how to connect your board to the CAN bus on a Tesla Model 3/Y. The easiest method is using an [Enhance Auto Tesla Gen 2 Cable](https://www.enhauto.com/products/tesla-gen-2-cable?variant=41214470094923) — the same cable used for the Enhance Auto S3XY Commander — which provides both CAN bus data and 12V power through a single connector. Direct wiring to the X179 or X652 connector is also covered.
 
@@ -39,6 +93,9 @@ The Enhance Auto Gen 2 Cable has a connector on one end that plugs into the X179
 | Remaining black pair | Other Bus | Not used — leave disconnected |
 
 ## Step 3: Connect power and CAN bus
+
+Make sure you have now wired everything like this:
+![alt text](images/x170-enhanced.png)
 
 1. Connect the **CAN-H** (black with stripe) and **CAN-L** (black solid) wires to your board's CAN screw terminal or CAN pins.
 2. Connect the **12V+** (red) and **GND** (black) wires to your DC/DC converter's input.

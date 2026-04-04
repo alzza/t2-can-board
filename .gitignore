@@ -218,6 +218,9 @@ pyrightconfig.json
 .vscode/
 !.vscode/settings.json
 !.vscode/tasks.json
+
+# Local scratch files
+.tmp/
 !.vscode/launch.json
 !.vscode/extensions.json
 !.vscode/*.code-snippets
