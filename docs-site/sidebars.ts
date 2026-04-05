@@ -39,7 +39,7 @@ const sidebars: SidebarsConfig = {
         'hardware/esp32',
         'hardware/feather-v2-featherwing',
         'hardware/m5stack',
-        'hardware/lilygo-tcan485',
+        'hardware/lilygo-tcan485'
       ],
     },
     {
