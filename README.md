@@ -262,7 +262,7 @@ You can also enable optional features in the same file:
 ```cpp
 // #define ISA_SPEED_CHIME_SUPPRESS
 // #define EMERGENCY_VEHICLE_DETECTION
-// #define FORCE_FSD
+// #define BYPASS_TLSSC_REQUIREMENT
 ```
 
 #### 6. Upload
@@ -346,10 +346,10 @@ Unit tests run on your host machine — no hardware required:
 pio test -e native
 ```
 
-Additional native test targets cover the `FORCE_FSD` path and the standalone log buffer suite:
+Additional native test targets cover the `BYPASS_TLSSC_REQUIREMENT` path and the standalone log buffer suite:
 
 ```bash
-pio test -e native_force_fsd
+pio test -e native_bypass_tlssc_requirement
 pio test -e native_log_buffer
 ```
 
@@ -449,7 +449,7 @@ test/
 
 GitLab CI validates three layers:
 
-- `pio test -e native`, `pio test -e native_force_fsd`, and `pio test -e native_log_buffer`
+- `pio test -e native`, `pio test -e native_bypass_tlssc_requirement`, and `pio test -e native_log_buffer`
 - `pio run` for `feather_rp2040_can`, `feather_m4_can`, `esp32_twai`, and `m5stack-atomic-can-base`
 - `arduino-cli compile` for the `RP2040CAN` sketch folder on `rp2040:rp2040:adafruit_feather_can`
 

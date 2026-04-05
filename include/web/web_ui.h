@@ -55,7 +55,7 @@ input:disabled+.sl:before{background:#5f6680}
 <div class="card">
 <h2>Status</h2>
 <div class="row"><span class="label">FSD Active</span><span class="val" id="fsd">--</span></div>
-<div class="row"><span class="label">Force FSD</span><span class="val" id="ffsd">--</span></div>
+<div class="row"><span class="label">Bypass TLSSC</span><span class="val" id="ffsd">--</span></div>
 <div class="row"><span class="label">ISA Chime Suppress</span><span class="val" id="isa">--</span></div>
 <div class="row"><span class="label">Emergency Detection</span><span class="val" id="evd">--</span></div>
 <div class="row"><span class="label">Speed Profile</span><span class="val" id="prof">--</span></div>
@@ -78,10 +78,10 @@ input:disabled+.sl:before{background:#5f6680}
 <h2>Controls</h2>
 <div class="row">
 <div class="labelWrap">
-<span class="label">Force FSD</span>
+<span class="label">Bypass TLSSC</span>
 <span class="meta" id="metaFsd">--</span>
 </div>
-<label class="sw"><input type="checkbox" id="tFsd" onchange="togSwitch('/api/force-fsd',this,'Enable Force FSD?')"><span class="sl"></span></label>
+<label class="sw"><input type="checkbox" id="tFsd" onchange="togSwitch('/api/bypass-tlssc',this,'Bypass TLSSC requirement?')"><span class="sl"></span></label>
 </div>
 <div class="row">
 <div class="labelWrap">
@@ -179,13 +179,13 @@ async function poll(){
     var d=await r.json();
     var f=d.features||{};
     setDot(document.getElementById('fsd'),d.fsd_enabled);
-    setFeatureState(document.getElementById('ffsd'),f.force_fsd);
+    setFeatureState(document.getElementById('ffsd'),f.bypass_tlssc_requirement);
     setFeatureState(document.getElementById('isa'),f.isa_speed_chime_suppress);
     setFeatureState(document.getElementById('evd'),f.emergency_vehicle_detection);
     document.getElementById('prof').textContent=profNames[d.speed_profile]||('P'+d.speed_profile);
     document.getElementById('soff').textContent=d.speed_offset;
     document.getElementById('up').textContent=fmt(d.uptime_s);
-    setFeatureToggle('tFsd','metaFsd',f.force_fsd);
+    setFeatureToggle('tFsd','metaFsd',f.bypass_tlssc_requirement);
     setFeatureToggle('tIsa','metaIsa',f.isa_speed_chime_suppress);
     setFeatureToggle('tEvd','metaEvd',f.emergency_vehicle_detection);
     document.getElementById('tLog').checked=d.enable_print;

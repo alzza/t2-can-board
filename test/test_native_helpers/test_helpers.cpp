@@ -4,7 +4,7 @@
 
 void setUp()
 {
-    forceFSDRuntime = kForceFSDDefaultEnabled;
+    bypassTlsscRequirementRuntime = kBypassTlsscRequirementDefaultEnabled;
     isaSpeedChimeSuppressRuntime = kIsaSpeedChimeSuppressDefaultEnabled;
     emergencyVehicleDetectionRuntime = kEmergencyVehicleDetectionDefaultEnabled;
 }
@@ -152,28 +152,28 @@ void test_setSpeedProfileV12V13_preserves_other_bits()
     TEST_ASSERT_EQUAL_HEX8(0xFB, f.data[6]);
 }
 
-// --- Runtime FORCE_FSD ---
+// --- Runtime BYPASS_TLSSC_REQUIREMENT ---
 
-void test_runtime_force_fsd_overrides_when_bit_clear()
+void test_runtime_bypass_tlssc_overrides_when_bit_clear()
 {
-    forceFSDRuntime = true;
+    bypassTlsscRequirementRuntime = true;
     CanFrame f = {};
     f.data[4] = 0x00;
     TEST_ASSERT_TRUE(isFSDSelectedInUI(f));
-    forceFSDRuntime = false;
+    bypassTlsscRequirementRuntime = false;
 }
 
-void test_runtime_force_fsd_off_reads_frame()
+void test_runtime_bypass_tlssc_off_reads_frame()
 {
-    forceFSDRuntime = false;
+    bypassTlsscRequirementRuntime = false;
     CanFrame f = {};
     f.data[4] = 0x00;
     TEST_ASSERT_FALSE(isFSDSelectedInUI(f));
 }
 
-void test_runtime_force_fsd_off_still_reads_real_bit()
+void test_runtime_bypass_tlssc_off_still_reads_real_bit()
 {
-    forceFSDRuntime = false;
+    bypassTlsscRequirementRuntime = false;
     CanFrame f = {};
     f.data[4] = 0x40;
     TEST_ASSERT_TRUE(isFSDSelectedInUI(f));
@@ -181,7 +181,7 @@ void test_runtime_force_fsd_off_still_reads_real_bit()
 
 void test_runtime_defaults_follow_build_flags()
 {
-    TEST_ASSERT_FALSE(forceFSDRuntime);
+    TEST_ASSERT_FALSE(bypassTlsscRequirementRuntime);
     TEST_ASSERT_TRUE(isaSpeedChimeSuppressRuntime);
     TEST_ASSERT_TRUE(emergencyVehicleDetectionRuntime);
 }
@@ -212,9 +212,9 @@ int main()
     RUN_TEST(test_setSpeedProfileV12V13_sets_profile_2);
     RUN_TEST(test_setSpeedProfileV12V13_preserves_other_bits);
 
-    RUN_TEST(test_runtime_force_fsd_overrides_when_bit_clear);
-    RUN_TEST(test_runtime_force_fsd_off_reads_frame);
-    RUN_TEST(test_runtime_force_fsd_off_still_reads_real_bit);
+    RUN_TEST(test_runtime_bypass_tlssc_overrides_when_bit_clear);
+    RUN_TEST(test_runtime_bypass_tlssc_off_reads_frame);
+    RUN_TEST(test_runtime_bypass_tlssc_off_still_reads_real_bit);
     RUN_TEST(test_runtime_defaults_follow_build_flags);
 
     return UNITY_END();

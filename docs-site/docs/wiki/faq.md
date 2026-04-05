@@ -50,9 +50,9 @@ Check **Controls > Software > Additional Vehicle Information** on the touchscree
 
 Compile with `HW3`. HW4 vehicles on the 2026.8.X branch or anything older than 2026.2.9 are still on FSD v13.
 
-### What does FORCE_FSD do?
+### What does BYPASS_TLSSC_REQUIREMENT do?
 
-Normally, FSD is only activated when "Traffic Light and Stop Sign Control" is toggled on. `FORCE_FSD` bypasses this check and always enables FSD.
+Normally, FSD is only activated when "Traffic Light and Stop Sign Control" is toggled on. `BYPASS_TLSSC_REQUIREMENT` bypasses this check and always enables FSD.
 
 ## FSD Subscription from Outside Supported Regions
 

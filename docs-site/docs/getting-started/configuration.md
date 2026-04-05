@@ -37,14 +37,14 @@ Uncomment any of the following lines to enable optional features:
 ```cpp
 // #define ISA_SPEED_CHIME_SUPPRESS         // Suppress ISA speed chime
 // #define EMERGENCY_VEHICLE_DETECTION      // Enable emergency vehicle detection (HW4)
-// #define FORCE_FSD                        // Always enable FSD without requiring toggle
+// #define BYPASS_TLSSC_REQUIREMENT          // Always enable FSD without requiring toggle
 ```
 
 | Feature | Description |
 |---|---|
 | `ISA_SPEED_CHIME_SUPPRESS` | Suppresses the ISA speed chime; speed limit sign will be empty while driving |
 | `EMERGENCY_VEHICLE_DETECTION` | Enables approaching emergency vehicle detection (HW4 only) |
-| `FORCE_FSD` | Always enables FSD without requiring "Traffic Light and Stop Sign Control" to be toggled on |
+| `BYPASS_TLSSC_REQUIREMENT` | Always enables FSD without requiring "Traffic Light and Stop Sign Control" to be toggled on |
 
 ## PlatformIO Command-Line Configuration
 

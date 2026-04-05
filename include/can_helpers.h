@@ -3,12 +3,12 @@
 #include "can_frame_types.h"
 #include "shared_types.h"
 
-#if defined(FORCE_FSD)
-inline constexpr bool kForceFSDDefaultEnabled = true;
-inline constexpr bool kForceFSDBuildEnabled = true;
+#if defined(BYPASS_TLSSC_REQUIREMENT)
+inline constexpr bool kBypassTlsscRequirementDefaultEnabled = true;
+inline constexpr bool kBypassTlsscRequirementBuildEnabled = true;
 #else
-inline constexpr bool kForceFSDDefaultEnabled = false;
-inline constexpr bool kForceFSDBuildEnabled = false;
+inline constexpr bool kBypassTlsscRequirementDefaultEnabled = false;
+inline constexpr bool kBypassTlsscRequirementBuildEnabled = false;
 #endif
 
 #if defined(ISA_SPEED_CHIME_SUPPRESS)
@@ -23,7 +23,7 @@ inline constexpr bool kEmergencyVehicleDetectionDefaultEnabled = true;
 inline constexpr bool kEmergencyVehicleDetectionDefaultEnabled = false;
 #endif
 
-inline Shared<bool> forceFSDRuntime{kForceFSDDefaultEnabled};
+inline Shared<bool> bypassTlsscRequirementRuntime{kBypassTlsscRequirementDefaultEnabled};
 inline Shared<bool> isaSpeedChimeSuppressRuntime{kIsaSpeedChimeSuppressDefaultEnabled};
 inline Shared<bool> emergencyVehicleDetectionRuntime{kEmergencyVehicleDetectionDefaultEnabled};
 
@@ -34,7 +34,7 @@ inline uint8_t readMuxID(const CanFrame &frame)
 
 inline bool isFSDSelectedInUI(const CanFrame &frame)
 {
-    if (forceFSDRuntime)
+    if (bypassTlsscRequirementRuntime)
         return true;
     return (frame.data[4] >> 6) & 0x01;
 }

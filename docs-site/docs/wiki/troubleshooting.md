@@ -25,7 +25,7 @@ sidebar_position: 2
 ## FSD Not Activating
 
 1. Verify you have an active FSD subscription or purchase
-2. Check that "Traffic Light and Stop Sign Control" is enabled in Autopilot settings (unless using `FORCE_FSD`)
+2. Check that "Traffic Light and Stop Sign Control" is enabled in Autopilot settings (unless using `BYPASS_TLSSC_REQUIREMENT`)
 3. Open the Serial Monitor and check if the handler output shows `FSD: 1`
 4. Verify you selected the correct vehicle variant in `sketch_config.h`
 5. HW4 on FSD v13: Make sure you compiled with `HW3`, not `HW4`

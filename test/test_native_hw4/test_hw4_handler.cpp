@@ -13,7 +13,7 @@ void setUp()
     mock.reset();
     handler = HW4Handler();
     handler.enablePrint = false;
-    forceFSDRuntime = kForceFSDDefaultEnabled;
+    bypassTlsscRequirementRuntime = kBypassTlsscRequirementDefaultEnabled;
     isaSpeedChimeSuppressRuntime = kIsaSpeedChimeSuppressDefaultEnabled;
     emergencyVehicleDetectionRuntime = kEmergencyVehicleDetectionDefaultEnabled;
 }
