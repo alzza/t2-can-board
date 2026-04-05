@@ -25,3 +25,4 @@
 // #define ISA_SPEED_CHIME_SUPPRESS // Suppress ISA speed chime; speed limit sign will be empty while driving
 #define EMERGENCY_VEHICLE_DETECTION // Enable emergency vehicle detection
 // #define BYPASS_TLSSC_REQUIREMENT // Always enable FSD without requiring "Traffic Light and Stop Sign Control" toggle
+// #define NAG_KILLER // Suppress Autosteer "hands on wheel" nag (CAN 880 counter+1 echo, X179 pin 2/3)
