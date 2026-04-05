@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- HW3Handler: removed obsolete speed-offset-to-profile mapping that overwrote stalk-derived `speedProfile`
+- NagHandler: fixed incomplete torque override in echo frame — `data[2]` lower nibble now set to `0x08` to match fixed torque raw value `0x08B6` (1.80 Nm)
+
 ## [1.0.0] - 2026-04-05
 
 ### Added

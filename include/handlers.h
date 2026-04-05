@@ -136,21 +136,6 @@ struct HW3Handler : public CarManagerBase
             if (index == 0 && FSDEnabled)
             {
                 speedOffset = std::max(std::min(((uint8_t)((frame.data[3] >> 1) & 0x3F) - 30) * 5, 100), 0);
-                auto off = (uint8_t)((frame.data[3] >> 1) & 0x3F) - 30;
-                switch (off)
-                {
-                case 2:
-                    speedProfile = 2;
-                    break;
-                case 1:
-                    speedProfile = 1;
-                    break;
-                case 0:
-                    speedProfile = 0;
-                    break;
-                default:
-                    break;
-                }
                 setBit(frame, 46, true);
                 setSpeedProfileV12V13(frame, speedProfile);
                 framesSent++;
@@ -237,10 +222,10 @@ struct NagHandler : public CarManagerBase
 
         echo.data[0] = frame.data[0];
         echo.data[1] = frame.data[1];
-        echo.data[2] = 0x08; // Keep flag bits, clear upper torque bits
+        echo.data[2] = (frame.data[2] & 0xF0) | 0x08;
         echo.data[5] = frame.data[5];
 
-        // Fixed torque = 1.80 Nm (0x08B6 = 2230, tRaw * 0.01 - 20.5 = 1.80)
+        // Fixed torque = 1.80 Nm (tRaw = 0x08B6)
         echo.data[3] = 0xB6;
 
         // handsOnLevel = 1
