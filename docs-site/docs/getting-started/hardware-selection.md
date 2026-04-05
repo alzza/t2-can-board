@@ -12,6 +12,7 @@ sidebar_position: 1
 | Adafruit Feather M4 CAN Express (ATSAME51) | Native MCAN peripheral | `Adafruit_CAN` (`CANSAME5x`) | Tested |
 | ESP32 with CAN transceiver (e.g. ESP32-DevKitC + SN65HVD230) | Native TWAI peripheral | ESP-IDF `driver/twai.h` | Tested |
 | [M5Stack Atomic CAN Base](https://docs.m5stack.com/en/atom/Atomic%20CAN%20Base) | CA-IS3050G over ESP32 TWAI | ESP32 TWAI | Tested |
+| Adafruit ESP32 Feather V2 + CAN Bus Featherwing | MCP2515 over SPI | `mcp2515.h` (autowp) | Tested |
 
 ## Supported Vehicle Variants
 
@@ -48,3 +49,4 @@ Cut the onboard 120 Ohm termination resistor on the Feather CAN board (jumper la
 - **Feather M4 CAN Express** — Native CAN controller (no SPI overhead), slightly faster
 - **ESP32 + CAN transceiver** — Cheapest option if you already have an ESP32, requires external transceiver module
 - **M5Stack Atomic CAN Base** — Most compact form factor
+- **Feather V2 + FeatherWing** — WiFi-capable ESP32 with MCP2515 CAN controller, good balance of features and cost
