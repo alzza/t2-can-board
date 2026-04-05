@@ -1,9 +1,15 @@
+---
+sidebar_position: 99
+---
+
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to Tesla Open CAN Mod are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+---
 
 ## [Unreleased]
 
@@ -11,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - FSD activation bypass for HW3 and HW4 vehicles
-- `BYPASS_TLSSC_REQUIREMENT` build flag to bypass Tesla Live Service SC requirement for regions without traffic light toggle (previously named `FORCE_FSD`)
+- `BYPASS_TLSSC_REQUIREMENT` build flag to bypass Tesla Live Service SC requirement for regions without traffic light toggle
 - Autosteer nag suppression via CAN frame interception
 - Autosteer Nag Killer hardware mode: echoes CAN frame 0x370 with counter+1 to suppress nag at hardware level (X179 connector, CAN bus 4)
 - ISA speed chime suppression for HW3 and HW4
@@ -34,12 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - STL case model for Feather RP2040 CAN
 - FSD subscription guide for unsupported regions (Canadian account method)
 - Wiring guide for Tesla Model 3/Y including legacy connector pinouts
-- Documentation site at [teslaopencanmod.org](https://teslaopencanmod.org)
-- GitLab CI/CD pipeline with lint, unit tests, and multi-board builds
 - Comprehensive NagHandler unit test suite
 
 ### Fixed
-- Nag handler torque value calculation: output is now fixed at safe 1.80 Nm (0x08B6) instead of copying torque from the original frame
+- Nag handler torque value: output is now fixed at safe 1.80 Nm (0x08B6) instead of copying torque from the original frame
 - FSDEnabled variable shadowing bug in HW3 and HW4 handlers
 - TWAI TX timeout changed from 0 ms to 2 ms to avoid bus starvation
 

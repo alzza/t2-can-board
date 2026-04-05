@@ -37,7 +37,9 @@ const sidebars: SidebarsConfig = {
         'hardware/feather-rp2040',
         'hardware/feather-m4',
         'hardware/esp32',
+        'hardware/feather-v2-featherwing',
         'hardware/m5stack',
+        'hardware/lilygo-tcan485',
       ],
     },
     {
@@ -66,6 +68,7 @@ const sidebars: SidebarsConfig = {
         'legal/disclaimer',
       ],
     },
+    'changelog',
   ],
 };
 
