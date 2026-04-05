@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - FSD activation bypass for HW3 and HW4 vehicles
-- `BYPASS_TLSSC_REQUIREMENT` build flag to bypass Tesla Live Service SC requirement for regions without traffic light toggle (previously named `FORCE_FSD`)
+- `BYPASS_TLSSC_REQUIREMENT` build flag to always enable the FSD mod in markets where the Traffic Light and Stop Sign Control (TLSSC) toggle is unavailable in the Tesla UI (previously named `FORCE_FSD`)
 - Autosteer nag suppression via CAN frame interception
 - Autosteer Nag Killer hardware mode: echoes CAN frame 0x370 with counter+1 to suppress nag at hardware level (X179 connector, CAN bus 4)
 - ISA speed chime suppression for HW3 and HW4
