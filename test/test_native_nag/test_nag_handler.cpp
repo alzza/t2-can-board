@@ -208,7 +208,7 @@ void test_nag_copies_bytes_0_1_2_5_unchanged()
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL_HEX8(0xAB, mock.sent[0].data[0]);
     TEST_ASSERT_EQUAL_HEX8(0xCD, mock.sent[0].data[1]);
-    TEST_ASSERT_EQUAL_HEX8(0x08, mock.sent[0].data[2]); // byte 2 set to 0x08 for fixed torque (upper bits of 0x08B6)
+    TEST_ASSERT_EQUAL_HEX8(0x88, mock.sent[0].data[2]); // upper nibble preserved, lower nibble = 0x08 (fixed torque 0x08B6)
     TEST_ASSERT_EQUAL_HEX8(0x42, mock.sent[0].data[5]);
 }
 
