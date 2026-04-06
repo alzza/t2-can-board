@@ -7,7 +7,12 @@ from pathlib import Path
 
 DRIVER_DEFINES = ("DRIVER_MCP2515", "DRIVER_SAME51", "DRIVER_TWAI")
 VEHICLE_DEFINES = ("LEGACY", "HW3", "HW4")
-OPTIONAL_DEFINES = ("ISA_SPEED_CHIME_SUPPRESS", "EMERGENCY_VEHICLE_DETECTION", "BYPASS_TLSSC_REQUIREMENT")
+OPTIONAL_DEFINES = (
+    "ISA_SPEED_CHIME_SUPPRESS",
+    "EMERGENCY_VEHICLE_DETECTION",
+    "BYPASS_TLSSC_REQUIREMENT",
+    "ENHANCED_AUTOPILOT",
+)
 MANAGED_DEFINES = set(DRIVER_DEFINES + VEHICLE_DEFINES + OPTIONAL_DEFINES)
 DEFINE_PATTERN = re.compile(
     r"^(?P<indent>\s*)(?P<comment>//\s*)?#define\s+(?P<name>[A-Z0-9_]+)(?P<rest>.*)$"
@@ -72,7 +77,9 @@ def main():
 
     missing = sorted(MANAGED_DEFINES - seen)
     if missing:
-        raise SystemExit(f"Missing managed define lines in {sketch_path}: {', '.join(missing)}")
+        raise SystemExit(
+            f"Missing managed define lines in {sketch_path}: {', '.join(missing)}"
+        )
 
     sketch_path.write_text("".join(updated_lines), encoding="utf-8")
 

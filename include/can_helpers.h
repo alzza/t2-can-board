@@ -3,6 +3,8 @@
 #include "can_frame_types.h"
 #include "shared_types.h"
 
+inline constexpr uint8_t kTrackModeRequestOn = 0x01;
+
 #if defined(BYPASS_TLSSC_REQUIREMENT)
 inline constexpr bool kBypassTlsscRequirementDefaultEnabled = true;
 inline constexpr bool kBypassTlsscRequirementBuildEnabled = true;
@@ -13,19 +15,41 @@ inline constexpr bool kBypassTlsscRequirementBuildEnabled = false;
 
 #if defined(ISA_SPEED_CHIME_SUPPRESS)
 inline constexpr bool kIsaSpeedChimeSuppressDefaultEnabled = true;
+inline constexpr bool kIsaSpeedChimeSuppressBuildEnabled = true;
 #else
 inline constexpr bool kIsaSpeedChimeSuppressDefaultEnabled = false;
+inline constexpr bool kIsaSpeedChimeSuppressBuildEnabled = false;
 #endif
 
 #if defined(EMERGENCY_VEHICLE_DETECTION)
 inline constexpr bool kEmergencyVehicleDetectionDefaultEnabled = true;
+inline constexpr bool kEmergencyVehicleDetectionBuildEnabled = true;
 #else
 inline constexpr bool kEmergencyVehicleDetectionDefaultEnabled = false;
+inline constexpr bool kEmergencyVehicleDetectionBuildEnabled = false;
+#endif
+
+#if defined(ENHANCED_AUTOPILOT)
+inline constexpr bool kEnhancedAutopilotDefaultEnabled = false;
+inline constexpr bool kEnhancedAutopilotBuildEnabled = true;
+#else
+inline constexpr bool kEnhancedAutopilotDefaultEnabled = false;
+inline constexpr bool kEnhancedAutopilotBuildEnabled = false;
+#endif
+
+#if defined(NAG_KILLER)
+inline constexpr bool kNagKillerDefaultEnabled = true;
+inline constexpr bool kNagKillerBuildEnabled = true;
+#else
+inline constexpr bool kNagKillerDefaultEnabled = false;
+inline constexpr bool kNagKillerBuildEnabled = false;
 #endif
 
 inline Shared<bool> bypassTlsscRequirementRuntime{kBypassTlsscRequirementDefaultEnabled};
 inline Shared<bool> isaSpeedChimeSuppressRuntime{kIsaSpeedChimeSuppressDefaultEnabled};
 inline Shared<bool> emergencyVehicleDetectionRuntime{kEmergencyVehicleDetectionDefaultEnabled};
+inline Shared<bool> enhancedAutopilotRuntime{kEnhancedAutopilotDefaultEnabled};
+inline Shared<bool> nagKillerRuntime{kNagKillerDefaultEnabled};
 
 inline uint8_t readMuxID(const CanFrame &frame)
 {
@@ -43,6 +67,28 @@ inline void setSpeedProfileV12V13(CanFrame &frame, int profile)
 {
     frame.data[6] &= ~0x06;
     frame.data[6] |= (profile << 1);
+}
+
+inline void setTrackModeRequest(CanFrame &frame, uint8_t request)
+{
+    frame.data[0] &= static_cast<uint8_t>(~0x03);
+    frame.data[0] |= static_cast<uint8_t>(request & 0x03);
+}
+
+inline uint8_t computeTeslaChecksum(const CanFrame &frame, uint8_t checksumByteIndex = 7)
+{
+    if (checksumByteIndex >= frame.dlc)
+        return 0;
+
+    uint16_t sum = static_cast<uint16_t>(frame.id & 0xFF) +
+                   static_cast<uint16_t>((frame.id >> 8) & 0xFF);
+    for (uint8_t i = 0; i < frame.dlc; ++i)
+    {
+        if (i == checksumByteIndex)
+            continue;
+        sum += frame.data[i];
+    }
+    return static_cast<uint8_t>(sum & 0xFF);
 }
 
 inline void setBit(CanFrame &frame, int bit, bool value)

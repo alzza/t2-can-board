@@ -16,6 +16,7 @@ void setUp()
     bypassTlsscRequirementRuntime = kBypassTlsscRequirementDefaultEnabled;
     isaSpeedChimeSuppressRuntime = kIsaSpeedChimeSuppressDefaultEnabled;
     emergencyVehicleDetectionRuntime = kEmergencyVehicleDetectionDefaultEnabled;
+    enhancedAutopilotRuntime = true;
 }
 
 void tearDown() {}
@@ -136,6 +137,16 @@ void test_hw4_nag_suppression_clears_bit19_sets_bit47()
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_FALSE((mock.sent[0].data[2] >> 3) & 0x01);     // bit 19 cleared
     TEST_ASSERT_EQUAL_HEX8(0x80, mock.sent[0].data[5] & 0x80); // bit 47 set
+}
+
+void test_hw4_nag_suppression_skips_mux1_changes_when_eap_runtime_disabled()
+{
+    enhancedAutopilotRuntime = false;
+    CanFrame f = {.id = 1021};
+    f.data[0] = 0x01;
+    setBit(f, 19, true);
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
 // --- Speed profile injection (mux 2) ---
@@ -286,6 +297,7 @@ int main()
     RUN_TEST(test_hw4_no_send_when_fsd_disabled_mux0);
 
     RUN_TEST(test_hw4_nag_suppression_clears_bit19_sets_bit47);
+    RUN_TEST(test_hw4_nag_suppression_skips_mux1_changes_when_eap_runtime_disabled);
 
     RUN_TEST(test_hw4_mux2_injects_speed_profile);
     RUN_TEST(test_hw4_mux2_clears_old_profile_bits);

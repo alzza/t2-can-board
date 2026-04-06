@@ -25,6 +25,17 @@ variables:
   PLATFORMIO_VERSION: "6.1.19"
   ARDUINO_CLI_VERSION: "1.4.1"
 
+release-metadata:
+  stage: verify
+  image: python:3-slim
+  tags:
+    - native
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends git
+  script:
+    - python scripts/check_release_metadata.py
+
 .platformio-job:
   stage: verify
   image: python:3-slim
@@ -81,7 +92,7 @@ build-m4:
   tags:
     - native
   script:
-    - python scripts/platformio_set_ino_profile.py --driver DRIVER_SAME51 --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION
+    - python scripts/platformio_set_ino_profile.py --driver DRIVER_SAME51 --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION --enable ENHANCED_AUTOPILOT
     - pio run -e feather_m4_can
   artifacts:
     name: "firmware-m4-${CI_COMMIT_REF_SLUG}"
@@ -95,7 +106,7 @@ build-esp32:
   tags:
     - native
   script:
-    - python scripts/platformio_set_ino_profile.py --driver DRIVER_TWAI --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION
+    - python scripts/platformio_set_ino_profile.py --driver DRIVER_TWAI --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION --enable ENHANCED_AUTOPILOT
     - pio run -e esp32_twai
   artifacts:
     name: "firmware-esp32-${CI_COMMIT_REF_SLUG}"
@@ -109,7 +120,7 @@ build-m5stack:
   tags:
     - native
   script:
-    - python scripts/platformio_set_ino_profile.py --driver DRIVER_TWAI --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION
+    - python scripts/platformio_set_ino_profile.py --driver DRIVER_TWAI --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION --enable ENHANCED_AUTOPILOT
     - pio run -e m5stack-atomic-can-base
   artifacts:
     name: "firmware-m5stack-${CI_COMMIT_REF_SLUG}"
@@ -131,6 +142,12 @@ build-esp32-featherwing:
       - .pio/build/esp32_feather_v2_mcp2515/firmware.bin
     expire_in: 1 year
     when: on_success
+
+build-m5stack-atoms3:
+  extends: .esp32-platformio-job
+  script:
+    - python scripts/platformio_set_ino_profile.py --driver DRIVER_TWAI --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION --enable ENHANCED_AUTOPILOT
+    - pio run -e m5stack-atoms3-mini-can-base
 
 arduino-rp2040:
   stage: verify

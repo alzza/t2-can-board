@@ -38,6 +38,7 @@ Uncomment any of the following lines to enable optional features:
 // #define ISA_SPEED_CHIME_SUPPRESS         // Suppress ISA speed chime
 // #define EMERGENCY_VEHICLE_DETECTION      // Enable emergency vehicle detection (HW4)
 // #define BYPASS_TLSSC_REQUIREMENT          // Always enable FSD without requiring toggle
+// #define ENHANCED_AUTOPILOT               // Enable UI_applyEceR79 override on HW3/HW4 and summon support on HW4
 ```
 
 | Feature | Description |
@@ -45,6 +46,7 @@ Uncomment any of the following lines to enable optional features:
 | `ISA_SPEED_CHIME_SUPPRESS` | Suppresses the ISA speed chime; speed limit sign will be empty while driving |
 | `EMERGENCY_VEHICLE_DETECTION` | Enables approaching emergency vehicle detection (HW4 only) |
 | `BYPASS_TLSSC_REQUIREMENT` | Always enables FSD without requiring "Traffic Light and Stop Sign Control" to be toggled on |
+| `ENHANCED_AUTOPILOT` | Enables the UI_applyEceR79 override on HW3/HW4, and adds summon support on HW4 |
 
 ## PlatformIO Command-Line Configuration
 
@@ -53,8 +55,9 @@ You can switch the configuration from the command line instead of editing the fi
 ```bash
 python3 scripts/platformio_set_ino_profile.py \
   --driver DRIVER_MCP2515 \
-  --vehicle HW3 \
-  --enable EMERGENCY_VEHICLE_DETECTION
+  --vehicle HW4 \
+  --enable EMERGENCY_VEHICLE_DETECTION \
+  --enable ENHANCED_AUTOPILOT
 ```
 
 PlatformIO reads the active board, vehicle, and optional feature defines from `sketch_config.h`. The `-e` environment still selects the board, so it must match the uncommented driver define. If they do not match, the build stops with a clear error.

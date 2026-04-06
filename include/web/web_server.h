@@ -20,6 +20,16 @@
 
 static const char *AP_SSID = "TeslaCAN";
 static const char *AP_PASS = "canmod12"; // WPA2, min 8 chars
+static constexpr char kNvsNamespace[] = "canmod";
+static constexpr char kNvsKeyIsaSpeedChime[] = "isa_speed_chime";
+static constexpr char kNvsKeyEmergencyVehicleDetection[] = "emerg_veh_det";
+static constexpr char kNvsKeyEnhancedAutopilot[] = "enh_autopilot";
+static constexpr char kNvsKeyNagKiller[] = "nag_killer";
+
+static_assert(sizeof(kNvsKeyIsaSpeedChime) - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyEmergencyVehicleDetection) - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyEnhancedAutopilot) - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyNagKiller) - 1 <= 15, "NVS key too long");
 
 #if defined(HW4) && defined(ISA_SPEED_CHIME_SUPPRESS)
 static constexpr bool kWebSupportsIsaSpeedChimeSuppress = true;
@@ -31,6 +41,18 @@ static constexpr bool kWebSupportsIsaSpeedChimeSuppress = false;
 static constexpr bool kWebSupportsEmergencyVehicleDetection = true;
 #else
 static constexpr bool kWebSupportsEmergencyVehicleDetection = false;
+#endif
+
+#if defined(ENHANCED_AUTOPILOT)
+static constexpr bool kWebSupportsEnhancedAutopilot = true;
+#else
+static constexpr bool kWebSupportsEnhancedAutopilot = false;
+#endif
+
+#if defined(NAG_KILLER)
+static constexpr bool kWebSupportsNagKiller = true;
+#else
+static constexpr bool kWebSupportsNagKiller = false;
 #endif
 
 // --- NVS helpers ---
@@ -49,7 +71,7 @@ static bool nvsInit()
 static bool nvsReadBool(const char *key, bool fallback)
 {
     nvs_handle_t handle;
-    if (nvs_open("canmod", NVS_READONLY, &handle) != ESP_OK)
+    if (nvs_open(kNvsNamespace, NVS_READONLY, &handle) != ESP_OK)
         return fallback;
     uint8_t val = 0;
     if (nvs_get_u8(handle, key, &val) != ESP_OK)
@@ -61,14 +83,33 @@ static bool nvsReadBool(const char *key, bool fallback)
     return val != 0;
 }
 
-static void nvsWriteBool(const char *key, bool enabled)
+static bool nvsWriteBool(const char *key, bool enabled)
 {
     nvs_handle_t handle;
-    if (nvs_open("canmod", NVS_READWRITE, &handle) != ESP_OK)
-        return;
-    nvs_set_u8(handle, key, enabled ? 1 : 0);
-    nvs_commit(handle);
+    esp_err_t err = nvs_open(kNvsNamespace, NVS_READWRITE, &handle);
+    if (err != ESP_OK)
+    {
+        Serial.printf("NVS: open failed for %s (%ld)\n", key, static_cast<long>(err));
+        return false;
+    }
+
+    err = nvs_set_u8(handle, key, enabled ? 1 : 0);
+    if (err != ESP_OK)
+    {
+        Serial.printf("NVS: set failed for %s (%ld)\n", key, static_cast<long>(err));
+        nvs_close(handle);
+        return false;
+    }
+
+    err = nvs_commit(handle);
+    if (err != ESP_OK)
+    {
+        Serial.printf("NVS: commit failed for %s (%ld)\n", key, static_cast<long>(err));
+        nvs_close(handle);
+        return false;
+    }
     nvs_close(handle);
+    return true;
 }
 
 // --- Rate limiter ---
@@ -144,8 +185,12 @@ static esp_err_t featureToggleHandler(httpd_req_t *req, Shared<bool> &target, bo
     if (!parseToggleBody(req, enabled))
         return ESP_FAIL;
 
+    if (!nvsWriteBool(nvsKey, enabled))
+    {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to persist setting");
+        return ESP_FAIL;
+    }
     target = enabled;
-    nvsWriteBool(nvsKey, enabled);
     Serial.printf("Web: %s set to %d\n", logName, enabled);
 
     httpd_resp_set_type(req, "application/json");
@@ -192,6 +237,9 @@ static esp_err_t statusHandler(httpd_req_t *req)
     bool isaSuppress = kWebSupportsIsaSpeedChimeSuppress ? (bool)isaSpeedChimeSuppressRuntime : false;
     bool emergencyVehicleDetection =
         kWebSupportsEmergencyVehicleDetection ? (bool)emergencyVehicleDetectionRuntime : false;
+    bool enhancedAutopilot =
+        kWebSupportsEnhancedAutopilot ? (bool)enhancedAutopilotRuntime : false;
+    bool nagKiller = kWebSupportsNagKiller ? (bool)nagKillerRuntime : false;
 
     // Build JSON
     cJSON *root = cJSON_CreateObject();
@@ -199,6 +247,8 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "bypass_tlssc_requirement", bypassTlssc);
     cJSON_AddBoolToObject(root, "isa_speed_chime_suppress", isaSuppress);
     cJSON_AddBoolToObject(root, "emergency_vehicle_detection", emergencyVehicleDetection);
+    cJSON_AddBoolToObject(root, "enhanced_autopilot", enhancedAutopilot);
+    cJSON_AddBoolToObject(root, "nag_killer", nagKiller);
     cJSON_AddNumberToObject(root, "speed_profile", speedProfile);
     cJSON_AddNumberToObject(root, "speed_offset", speedOffset);
     cJSON_AddBoolToObject(root, "enable_print", enablePrint);
@@ -208,10 +258,14 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON *features = cJSON_AddObjectToObject(root, "features");
     addFeatureState(features, "bypass_tlssc_requirement", true, bypassTlssc, kBypassTlsscRequirementBuildEnabled);
     addFeatureState(features, "isa_speed_chime_suppress",
-                    kWebSupportsIsaSpeedChimeSuppress, isaSuppress, kWebSupportsIsaSpeedChimeSuppress);
+                    kWebSupportsIsaSpeedChimeSuppress, isaSuppress, kIsaSpeedChimeSuppressBuildEnabled);
     addFeatureState(features, "emergency_vehicle_detection",
                     kWebSupportsEmergencyVehicleDetection, emergencyVehicleDetection,
-                    kWebSupportsEmergencyVehicleDetection);
+                    kEmergencyVehicleDetectionBuildEnabled);
+    addFeatureState(features, "enhanced_autopilot",
+                    kWebSupportsEnhancedAutopilot, enhancedAutopilot,
+                    kEnhancedAutopilotBuildEnabled);
+    addFeatureState(features, "nag_killer", kWebSupportsNagKiller, nagKiller, kNagKillerBuildEnabled);
     addFeatureState(features, "ota", true, false, true);
 
     // Add log entries since last poll
@@ -280,14 +334,26 @@ static esp_err_t isaSpeedChimeSuppressHandler(httpd_req_t *req)
 {
     return featureToggleHandler(req, isaSpeedChimeSuppressRuntime,
                                 kWebSupportsIsaSpeedChimeSuppress,
-                                "isa_speed_chime", "ISA_SPEED_CHIME_SUPPRESS");
+                                kNvsKeyIsaSpeedChime, "ISA_SPEED_CHIME_SUPPRESS");
 }
 
 static esp_err_t emergencyVehicleDetectionHandler(httpd_req_t *req)
 {
     return featureToggleHandler(req, emergencyVehicleDetectionRuntime,
                                 kWebSupportsEmergencyVehicleDetection,
-                                "emergency_vehicle_detection", "EMERGENCY_VEHICLE_DETECTION");
+                                kNvsKeyEmergencyVehicleDetection, "EMERGENCY_VEHICLE_DETECTION");
+}
+
+static esp_err_t enhancedAutopilotHandler(httpd_req_t *req)
+{
+    return featureToggleHandler(req, enhancedAutopilotRuntime,
+                                kWebSupportsEnhancedAutopilot,
+                                kNvsKeyEnhancedAutopilot, "ENHANCED_AUTOPILOT");
+}
+
+static esp_err_t nagKillerHandler(httpd_req_t *req)
+{
+    return featureToggleHandler(req, nagKillerRuntime, kWebSupportsNagKiller, kNvsKeyNagKiller, "NAG_KILLER");
 }
 
 static esp_err_t enablePrintHandler(httpd_req_t *req)
@@ -342,17 +408,30 @@ static esp_err_t otaHandler(httpd_req_t *req)
     }
 
     int remaining = req->content_len;
+    int timeoutCount = 0;
     uint8_t buffer[1024];
     while (remaining > 0)
     {
         int received = httpd_req_recv(req, reinterpret_cast<char *>(buffer),
                                       std::min(remaining, (int)sizeof(buffer)));
+        if (received == HTTPD_SOCK_ERR_TIMEOUT)
+        {
+            if (++timeoutCount >= 5)
+            {
+                Update.abort();
+                httpd_resp_set_status(req, "408 Request Timeout");
+                httpd_resp_send(req, "Upload timed out", HTTPD_RESP_USE_STRLEN);
+                return ESP_FAIL;
+            }
+            continue;
+        }
         if (received <= 0)
         {
             Update.abort();
             httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Upload failed");
             return ESP_FAIL;
         }
+        timeoutCount = 0;
         if (Update.write(buffer, received) != (size_t)received)
         {
             Update.abort();
@@ -462,13 +541,20 @@ static void webServerInit()
     {
         bypassTlsscRequirementRuntime = nvsReadBool("bypass_tlssc", kBypassTlsscRequirementDefaultEnabled);
         isaSpeedChimeSuppressRuntime =
-            nvsReadBool("isa_speed_chime", kIsaSpeedChimeSuppressDefaultEnabled);
+            nvsReadBool(kNvsKeyIsaSpeedChime, kIsaSpeedChimeSuppressDefaultEnabled);
         emergencyVehicleDetectionRuntime =
             nvsReadBool("emergency_vehicle_detection", kEmergencyVehicleDetectionDefaultEnabled);
         Serial.printf("NVS: BYPASS_TLSSC_REQUIREMENT = %d\n", (bool)bypassTlsscRequirementRuntime);
+        nvsReadBool(kNvsKeyEmergencyVehicleDetection, kEmergencyVehicleDetectionDefaultEnabled);
+        enhancedAutopilotRuntime =
+            nvsReadBool(kNvsKeyEnhancedAutopilot, kEnhancedAutopilotDefaultEnabled);
+        nagKillerRuntime = nvsReadBool(kNvsKeyNagKiller, kNagKillerDefaultEnabled);
         Serial.printf("NVS: ISA_SPEED_CHIME_SUPPRESS = %d\n", (bool)isaSpeedChimeSuppressRuntime);
         Serial.printf("NVS: EMERGENCY_VEHICLE_DETECTION = %d\n",
                       (bool)emergencyVehicleDetectionRuntime);
+        Serial.printf("NVS: ENHANCED_AUTOPILOT = %d\n",
+                      (bool)enhancedAutopilotRuntime);
+        Serial.printf("NVS: NAG_KILLER = %d\n", (bool)nagKillerRuntime);
     }
     else
     {
@@ -487,7 +573,7 @@ static void webServerInit()
     // HTTP server on Core 0
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.core_id = 0;
-    config.max_uri_handlers = 10;
+    config.max_uri_handlers = 11;
     config.lru_purge_enable = true;
     config.stack_size = 8192;
 
@@ -508,6 +594,10 @@ static void webServerInit()
         .uri = "/api/isa-speed-chime-suppress", .method = HTTP_POST, .handler = isaSpeedChimeSuppressHandler, .user_ctx = NULL};
     httpd_uri_t uriEmergencyVehicleDetection = {
         .uri = "/api/emergency-vehicle-detection", .method = HTTP_POST, .handler = emergencyVehicleDetectionHandler, .user_ctx = NULL};
+    httpd_uri_t uriEnhancedAutopilot = {
+        .uri = "/api/enhanced-autopilot", .method = HTTP_POST, .handler = enhancedAutopilotHandler, .user_ctx = NULL};
+    httpd_uri_t uriNagKiller = {
+        .uri = "/api/nag-killer", .method = HTTP_POST, .handler = nagKillerHandler, .user_ctx = NULL};
     httpd_uri_t uriEnablePrint = {
         .uri = "/api/enable-print", .method = HTTP_POST, .handler = enablePrintHandler, .user_ctx = NULL};
     httpd_uri_t uriOta = {
@@ -522,6 +612,8 @@ static void webServerInit()
     httpd_register_uri_handler(webServer, &uriBypassTlsscRequirement);
     httpd_register_uri_handler(webServer, &uriIsaSpeedChime);
     httpd_register_uri_handler(webServer, &uriEmergencyVehicleDetection);
+    httpd_register_uri_handler(webServer, &uriEnhancedAutopilot);
+    httpd_register_uri_handler(webServer, &uriNagKiller);
     httpd_register_uri_handler(webServer, &uriEnablePrint);
     httpd_register_uri_handler(webServer, &uriOta);
     httpd_register_uri_handler(webServer, &uriGenerate204);

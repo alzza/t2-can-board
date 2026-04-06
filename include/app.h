@@ -47,6 +47,9 @@ static void appSetup(std::unique_ptr<Driver> drv, const char *readyMsg)
     {
     }
 
+    pinMode(PIN_LED, OUTPUT);
+    digitalWrite(PIN_LED, HIGH);
+
     appDriver = std::move(drv);
     if (!appDriver->init())
     {

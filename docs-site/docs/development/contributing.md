@@ -16,18 +16,30 @@ Tesla Open CAN Mod is an open-source project and contributions are welcome.
 ## Development Workflow
 
 1. Create a branch for your changes
-2. Make your changes
-3. Run all tests:
+2. If your change affects firmware behavior, supported hardware, documentation, or build/runtime tooling, add an entry to `CHANGELOG.md`. Keep `VERSION` in sync with the latest released section using Semantic Versioning.
+3. Make your changes
+4. Run all tests:
    ```bash
    pio test -e native
    pio test -e native_bypass_tlssc_requirement
    pio test -e native_log_buffer
    ```
-4. Ensure your code passes the linter:
+5. Ensure your code passes the linter:
    ```bash
    git ls-files '*.cpp' '*.h' '*.hpp' '*.ino' | xargs clang-format --dry-run --Werror --style=file
    ```
-5. Submit a merge request
+6. Validate the release metadata:
+   ```bash
+   python scripts/check_release_metadata.py
+   ```
+7. Submit a merge request
+
+## Versioning and Changelog
+
+- The project uses Semantic Versioning via the root `VERSION` file.
+- `CHANGELOG.md` is the source of truth for release notes.
+- Leave changes under `## [Unreleased]` until they are part of a release.
+- When cutting a release, move the unreleased entries into a dated `## [x.y.z] - YYYY-MM-DD` section and update `VERSION`.
 
 ## Code Style
 

@@ -98,6 +98,9 @@ pio run -e esp32_twai
 
 # M5Stack Atomic CAN Base
 pio run -e m5stack-atomic-can-base
+
+# M5Stack AtomS3 CAN Base
+pio run -e m5stack-atoms3-can-base
 ```
 
 ### Flash
@@ -116,6 +119,9 @@ pio run -e esp32_twai --target upload
 
 # M5Stack Atomic CAN Base
 pio run -e m5stack-atomic-can-base --target upload
+
+# M5Stack AtomS3 CAN Base
+pio run -e m5stack-atoms3-can-base --target upload
 ```
 
 ### Run Tests

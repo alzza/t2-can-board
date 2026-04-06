@@ -25,11 +25,13 @@ In `sketch_config.h`:
 
 ## PlatformIO
 
-The M5Stack has its own PlatformIO environment:
+The M5Stack Atom and AtomS3 CAN-base builds each have their own PlatformIO environment:
 
 ```bash
 pio run -e m5stack-atomic-can-base
 pio run -e m5stack-atomic-can-base --target upload
+pio run -e m5stack-atoms3-can-base
+pio run -e m5stack-atoms3-can-base --target upload
 ```
 
 ## Notes
@@ -37,5 +39,6 @@ pio run -e m5stack-atomic-can-base --target upload
 - This board uses the same `DRIVER_TWAI` define as the generic ESP32 setup
 - The CAN transceiver is integrated — no external transceiver module needed
 - Very small form factor, making it easy to hide in the vehicle
+- The AtomS3 build uses PlatformIO board `m5stack-atoms3` with CAN-base pins `G5` (TX) and `G6` (RX)
 
 For more details, see the [official M5Stack documentation](https://docs.m5stack.com/en/atom/Atomic%20CAN%20Base).

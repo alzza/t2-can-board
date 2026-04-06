@@ -98,13 +98,23 @@ struct HW3Handler : public CarManagerBase
 {
     const uint32_t *filterIds() const override
     {
-        static constexpr uint32_t ids[] = {1016, 1021};
+        static constexpr uint32_t ids[] = {787, 1016, 1021};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 2; }
+    uint8_t filterIdCount() const override { return 3; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
+        if (frame.id == 787)
+        {
+            if (frame.dlc < 8)
+                return;
+            setTrackModeRequest(frame, kTrackModeRequestOn);
+            frame.data[7] = computeTeslaChecksum(frame);
+            framesSent++;
+            driver.send(frame);
+            return;
+        }
         if (frame.id == 1016)
         {
             if (frame.dlc < 6)
@@ -143,9 +153,20 @@ struct HW3Handler : public CarManagerBase
             }
             if (index == 1)
             {
-                setBit(frame, 19, false);
-                framesSent++;
-                driver.send(frame);
+                bool modified = false;
+#if defined(ENHANCED_AUTOPILOT)
+                if (enhancedAutopilotRuntime)
+                {
+                    setBit(frame, 19, false);
+                    setBit(frame, 46, true);
+                    modified = true;
+                }
+#endif
+                if (modified)
+                {
+                    framesSent++;
+                    driver.send(frame);
+                }
             }
             if (index == 2 && FSDEnabled)
             {
@@ -213,7 +234,7 @@ struct NagHandler : public CarManagerBase
 
         uint8_t handsOn = (frame.data[4] >> 6) & 0x03;
 
-        if (!nagKillerActive || handsOn != 0)
+        if (!nagKillerActive || !nagKillerRuntime || handsOn != 0)
             return;
 
         CanFrame echo;
@@ -343,10 +364,20 @@ struct HW4Handler : public CarManagerBase
             }
             if (index == 1)
             {
-                setBit(frame, 19, false);
-                setBit(frame, 47, true);
-                framesSent++;
-                driver.send(frame);
+                bool modified = false;
+#if defined(ENHANCED_AUTOPILOT)
+                if (enhancedAutopilotRuntime)
+                {
+                    setBit(frame, 19, false);
+                    setBit(frame, 47, true);
+                    modified = true;
+                }
+#endif
+                if (modified)
+                {
+                    framesSent++;
+                    driver.send(frame);
+                }
             }
             if (index == 2)
             {

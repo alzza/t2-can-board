@@ -1,5 +1,5 @@
 ---
-sidebar_position: 4
+sidebar_position: 5
 ---
 
 # Actually Smart Summon (ASS)
@@ -18,10 +18,10 @@ The firmware sets the `UI_hardCoreSummon` bit in CAN message 1021, mux 1, which 
 
 ## Requirements
 
-- **HW3/4 vehicle only** — this feature is not available on Legacy
+- **HW4 vehicle only**
 - Active FSD subscription or purchase
 - Vehicle firmware that supports Actually Smart Summon
 
 :::note
-This feature is automatically enabled on HW3/4 builds. No additional configuration is needed.
+This feature is exposed through `ENHANCED_AUTOPILOT` on HW4 builds.
 :::

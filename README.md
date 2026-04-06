@@ -1,11 +1,11 @@
 ### 🚨 DO NOT UPDATE YOUR TESLA TO ```2026.8.6``` and ```2026.2.9.x``` TO KEEP FSD FEATURES 🚨
+
 <br>
 <hr>
 
 # Tesla Open Can Mod
 
 [Website](https://teslaopencanmod.org) | [Documentation](https://teslaopencanmod.org/docs/intro) | [Community Discord](https://discord.gg/ZTQKAUTd2F)
-
 
 An open-source general-purpose CAN bus modification tool for Tesla vehicles. While FSD enablement was the starting point, the goal is to expose and control everything accessible via CAN — as a fully open project.
 
@@ -66,6 +66,12 @@ Both Arduino IDE and PlatformIO are supported. Select your board and vehicle var
 
 Full installation guide: [teslaopencanmod.org/docs/getting-started/firmware-flash](https://teslaopencanmod.org/docs/getting-started/firmware-flash)
 
+## Versioning
+
+- The project version is tracked in [`VERSION`](VERSION) using Semantic Versioning.
+- Release notes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
+- Ongoing work should be added to the `Unreleased` section before merge.
+
 ## Third-Party Libraries
 
 This project depends on the following open-source libraries. Their full license texts are in [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).
@@ -87,6 +93,30 @@ This project is licensed under the **GNU General Public License v3.0** — see t
 
 <details>
 <summary>Legacy README — hardware details, installation, wiring, CAN tables</summary>
+## What It Does
+
+This firmware runs on an Adafruit Feather with CAN bus support (RP2040 CAN with MCP2515, M4 CAN Express with native ATSAME51 CAN, or any ESP32 board with a built-in TWAI peripheral). It intercepts specific CAN bus messages to enable and configure Full Self-Driving (FSD). Additionally, ASS (Actually Smart Summon) is no longer restricted by EU regulations.
+
+Core Function
+
+- Intercepts specific CAN bus messages
+- Re-transmits them onto the vehicle bus
+
+FSD Activation Logic
+
+- Listens for Autopilot-related CAN frames
+- Checks if "Traffic Light and Stop Sign Control" is enabled in the Autopilot settings Uses this setting as a trigger for Full Self-Driving (FSD)
+- Adjusts the required bits in the CAN message to activate FSD
+
+Additional Behavior
+
+- Reads the follow-distance stalk setting
+- Maps it dynamically to a speed profile
+
+HW4 - FSD V14 Features
+
+- Enhanced Autopilot (optional)
+- Approaching Emergency Vehicle Detection
 
 ### Supported Hardware Variants
 
@@ -111,7 +141,7 @@ Select your vehicle hardware variant in `RP2040CAN/sketch_config.h` via the `#de
 
 - **FSD enable bit** is set when **"Traffic Light and Stop Sign Control"** is enabled in the vehicle's Autopilot settings.
 - **Speed profile** is derived from the scroll-wheel offset or follow-distance setting.
-- **Nag suppression** — clears the hands-on-wheel nag bit.
+- **Nag suppression** — clears the hands-on-wheel nag bit. On HW3/HW4 this is bundled into `ENHANCED_AUTOPILOT`.
 - Debug output is printed over Serial at 115200 baud when `enablePrint` is `true`.
 
 ### CAN Message Details
@@ -140,7 +170,7 @@ The table below shows exactly which CAN messages each hardware variant monitors 
 | 1021 | UI_autopilotControl | R+W | 0 | 25–30 | (offset) | | read offset |
 | 1021 | UI_autopilotControl | R+W | 0 | 46 | 1 | | enable FSD |
 | 1021 | UI_autopilotControl | R+W | 0 | 49–50 | (0–2) | | inject profile |
-| 1021 | UI_autopilotControl | R+W | 1 | 19 | 0 | UI_applyEceR79 | suppress nag |
+| 1021 | UI_autopilotControl | R+W | 1 | 19 | 0 | UI_applyEceR79 | suppress nag (`ENHANCED_AUTOPILOT`) |
 | 1021 | UI_autopilotControl | R+W | 2 | 6–7, 8–13 | (offset) | | inject offset |
 
 #### HW4
@@ -154,11 +184,21 @@ The table below shows exactly which CAN messages each hardware variant monitors 
 | 1021 | UI_autopilotControl | R+W | 0 | 46 | 1 | | enable FSD |
 | 1021 | UI_autopilotControl | R+W | 0 | 59 | 1 | | enable detection |
 | 1021 | UI_autopilotControl | R+W | 0 | 60 | 1 | | enable V14 |
-| 1021 | UI_autopilotControl | R+W | 1 | 19 | 0 | UI_applyEceR79 | suppress nag |
-| 1021 | UI_autopilotControl | R+W | 1 | 47 | 1 | UI_hardCoreSummon | enable summon |
+| 1021 | UI_autopilotControl | R+W | 1 | 19 | 0 | UI_applyEceR79 | suppress nag (`ENHANCED_AUTOPILOT`) |
+| 1021 | UI_autopilotControl | R+W | 1 | 47 | 1 | UI_hardCoreSummon | enable summon (`ENHANCED_AUTOPILOT`) |
 | 1021 | UI_autopilotControl | R+W | 2 | 60–62 | (0–4) | | inject profile |
 
 > Signal names sourced from [tesla-can-explorer](https://github.com/mikegapinski/tesla-can-explorer) by [@mikegapinski](https://x.com/mikegapinski).
+
+## Supported Boards
+
+| Board                                                                   | CAN Interface              | Library                      | Status                             | Case STL |
+|-------------------------------------------------------------------------|----------------------------|------------------------------|------------------------------------|----------|
+| Adafruit Feather RP2040 CAN                                             | MCP2515 over SPI           | `mcp2515.h` (autowp)         | Tested                             | [Printables](https://www.printables.com/model/1662242-adafruit-rp2040-can-bus-feather-case-5724) |
+| Adafruit Feather M4 CAN Express (ATSAME51)                              | Native MCAN peripheral     | `Adafruit_CAN` (`CANSAME5x`) | Tested                             |
+| ESP32 with CAN transceiver (e.g. ESP32-DevKitC + SN65HVD230)            | Native TWAI peripheral     | ESP-IDF `driver/twai.h`      | Tested |
+| [Atomic CAN Base](https://docs.m5stack.com/en/atom/Atomic%20CAN%20Base) | CA-IS3050G over ESP32 TWAI | ESP32 TWAI                   | Tested                             |
+| M5Stack AtomS3 CAN Base                                                 | CA-IS3050G over ESP32-S3 TWAI | ESP32 TWAI                | Build target                       |
 
 ## Hardware Requirements
 
@@ -166,24 +206,28 @@ The table below shows exactly which CAN messages each hardware variant monitors 
 - CAN bus connection to the vehicle (500 kbit/s)
 
 **Feather RP2040 CAN** — the board must expose these pins (defined by the earlephilhower board variant):
-  - `PIN_CAN_CS` — SPI chip-select for the MCP2515
-  - `PIN_CAN_INTERRUPT` — interrupt pin (unused; polling mode)
-  - `PIN_CAN_STANDBY` — CAN transceiver standby control
-  - `PIN_CAN_RESET` — MCP2515 hardware reset
+
+- `PIN_CAN_CS` — SPI chip-select for the MCP2515
+- `PIN_CAN_INTERRUPT` — interrupt pin (unused; polling mode)
+- `PIN_CAN_STANDBY` — CAN transceiver standby control
+- `PIN_CAN_RESET` — MCP2515 hardware reset
 
 **Feather M4 CAN Express** — uses the native ATSAME51 CAN peripheral; requires:
-  - `PIN_CAN_STANDBY` — CAN transceiver standby control
-  - `PIN_CAN_BOOSTEN` — 3V→5V boost converter enable for CAN signal levels
+
+- `PIN_CAN_STANDBY` — CAN transceiver standby control
+- `PIN_CAN_BOOSTEN` — 3V→5V boost converter enable for CAN signal levels
 
 **ESP32 with CAN transceiver** — uses the native TWAI peripheral; requires:
-  - An external CAN transceiver module (e.g. SN65HVD230, TJA1050, or MCP2551)
-  - `TWAI_TX_PIN` — GPIO connected to the transceiver TX pin (default `GPIO_NUM_5`)
-  - `TWAI_RX_PIN` — GPIO connected to the transceiver RX pin (default `GPIO_NUM_4`)
+
+- An external CAN transceiver module (e.g. SN65HVD230, TJA1050, or MCP2551)
+- `TWAI_TX_PIN` — GPIO connected to the transceiver TX pin (default `GPIO_NUM_5`)
+- `TWAI_RX_PIN` — GPIO connected to the transceiver RX pin (default `GPIO_NUM_4`)
 
 **Adafruit ESP32 Feather V2 (5400) + Adafruit CAN Bus Featherwing (5709)** — uses the MCP2515 over SPI via the Featherwing stacked on top.
-  - Ensure the stacking headers are installed and the SPI bus is properly connected.
-  - `PIN_CAN_CS` — SPI chip-select for the MCP2515. Defaults to pin 14.
-  - `PIN_CAN_INTERRUPT` — interrupt pin (unused; polling mode). Defaults to pin 32.
+
+- Ensure the stacking headers are installed and the SPI bus is properly connected.
+- `PIN_CAN_CS` — SPI chip-select for the MCP2515. Defaults to pin 14.
+- `PIN_CAN_INTERRUPT` — interrupt pin (unused; polling mode). Defaults to pin 32.
 
 > [!IMPORTANT]
 > Cut the onboard 120 Ω termination resistor on the Feather CAN board (jumper labeled **TERM** on RP2040, **Trm** on M4). If using an ESP32 with an external transceiver that has a termination resistor, remove or disable it as well. The vehicle's CAN bus already has its own termination, and adding a second resistor will cause communication errors.
@@ -201,28 +245,37 @@ Download from [https://www.arduino.cc/en/software](https://www.arduino.cc/en/sof
 #### 2. Add the Board Package
 
 **For Feather RP2040 CAN:**
+
 1. Open **File → Preferences**.
 2. In **Additional Board Manager URLs**, add:
+
    ```
    https://github.com/earlephilhower/arduino-pico/releases/download/global/package_rp2040_index.json
    ```
+
 3. Go to **Tools → Board → Boards Manager**, search for **Raspberry PI Pico/RP2040**, and install it.
 4. Select **Adafruit Feather RP2040 CAN** as the Board.
 
 **For Feather M4 CAN Express:**
+
 1. In **Additional Board Manager URLs**, add:
+
    ```
    https://adafruit.github.io/arduino-board-index/package_adafruit_index.json
    ```
+
 2. Install **Adafruit SAMD Boards** from the Boards Manager.
 3. Select **Feather M4 CAN (SAME51)** as the Board.
 4. Install the **Adafruit CAN** library via the Library Manager.
 
 **For ESP32 boards:**
+
 1. In **Additional Board Manager URLs**, add:
+
    ```
    https://espressif.github.io/arduino-esp32/package_esp32_index.json
    ```
+
 2. Install **esp32 by Espressif Systems** from the Boards Manager.
 3. Select your ESP32 board (e.g. **ESP32 Dev Module**).
 
@@ -263,6 +316,7 @@ You can also enable optional features in the same file:
 // #define ISA_SPEED_CHIME_SUPPRESS
 // #define EMERGENCY_VEHICLE_DETECTION
 // #define BYPASS_TLSSC_REQUIREMENT
+// #define ENHANCED_AUTOPILOT               // Summon + UI_applyEceR79 override on HW4
 ```
 
 #### 6. Upload
@@ -289,20 +343,25 @@ You can also enable optional features in the same file:
 #### Build
 
 1. Select your board, vehicle, and optional features in `RP2040CAN/sketch_config.h`:
+
    ```cpp
    #define DRIVER_MCP2515  // Change to DRIVER_SAME51 or DRIVER_TWAI for other boards
-   #define LEGACY          // Change to HW4, HW3, or LEGACY
+   #define HW4             // Change to HW4, HW3, or LEGACY
    #define EMERGENCY_VEHICLE_DETECTION  // Optional
+   #define ENHANCED_AUTOPILOT           // Optional
    ```
+
    PlatformIO reads the active board, vehicle, and optional feature defines from `RP2040CAN/sketch_config.h`.
    The `-e` environment still selects the board, so it must match the uncommented driver define in the shared config. If they do not match, the build stops with a clear error.
 
    You can switch the shared sketch profile from the command line instead of editing the file by hand:
+
    ```bash
-   python3 scripts/platformio_set_ino_profile.py --driver DRIVER_MCP2515 --vehicle HW3 --enable EMERGENCY_VEHICLE_DETECTION
+   python3 scripts/platformio_set_ino_profile.py --driver DRIVER_MCP2515 --vehicle HW4 --enable EMERGENCY_VEHICLE_DETECTION --enable ENHANCED_AUTOPILOT
    ```
 
 2. Build for your board:
+
    ```bash
    # Adafruit Feather RP2040 CAN
    pio run -e feather_rp2040_can
@@ -315,6 +374,9 @@ You can also enable optional features in the same file:
 
    # M5Stack Atomic CAN Base
    pio run -e m5stack-atomic-can-base
+
+   # M5Stack AtomS3 CAN Base
+   pio run -e m5stack-atoms3-can-base
    ```
 
 #### Flash
@@ -333,6 +395,9 @@ pio run -e esp32_twai --target upload
 
 # M5Stack Atomic CAN Base
 pio run -e m5stack-atomic-can-base --target upload
+
+# M5Stack AtomS3 CAN Base
+pio run -e m5stack-atoms3-can-base --target upload
 ```
 
 > [!TIP]
@@ -399,11 +464,13 @@ Open the Serial Monitor at **115200 baud** to see live debug output showing FSD 
 The project uses an abstract `CanDriver` interface so that all vehicle logic (handlers, bit manipulation, speed profiles) is shared across boards. Only the driver implementation changes.
 
 **What changes per board:**
+
 - **RP2040 CAN:** `mcp2515.h` (autowp) — SPI-based, struct read/write, needs `PIN_CAN_CS`
 - **M4 CAN Express:** `Adafruit_CAN` (`CANSAME5x`) — native MCAN peripheral, packet-stream API, needs `PIN_CAN_BOOSTEN`
 - **ESP32 TWAI:** ESP-IDF `driver/twai.h` — native TWAI peripheral, FreeRTOS queue-based RX, needs an external CAN transceiver and two GPIO pins
 
 **What stays identical:**
+
 - All handler structs and bit manipulation logic
 - Vehicle-specific behavior (FSD enable, nag suppression, speed profiles)
 - Serial debug output
@@ -449,8 +516,9 @@ test/
 
 GitLab CI validates three layers:
 
-- `pio test -e native`, `pio test -e native_bypass_tlssc_requirement`, and `pio test -e native_log_buffer`
 - `pio run` for `feather_rp2040_can`, `feather_m4_can`, `esp32_twai`, and `m5stack-atomic-can-base`
+- `pio test -e native`, `pio test -e native_bypass_tlssc_requirement`, and `pio test -e native_log_buffer`
+- `pio run` for `feather_rp2040_can`, `feather_m4_can`, `esp32_twai`, `m5stack-atomic-can-base`, and `m5stack-atoms3-can-base`
 - `arduino-cli compile` for the `RP2040CAN` sketch folder on `rp2040:rp2040:adafruit_feather_can`
 
 The GitLab pipeline in `.gitlab-ci.yml` rewrites `RP2040CAN/sketch_config.h` per job using `scripts/platformio_set_ino_profile.py`, so the shared Arduino sketch profile stays the source of truth in CI as well.

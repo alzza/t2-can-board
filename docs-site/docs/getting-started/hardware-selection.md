@@ -13,6 +13,7 @@ sidebar_position: 1
 | ESP32 with CAN transceiver (e.g. ESP32-DevKitC + SN65HVD230) | Native TWAI peripheral | ESP-IDF `driver/twai.h` | Tested |
 | [M5Stack Atomic CAN Base](https://docs.m5stack.com/en/atom/Atomic%20CAN%20Base) | CA-IS3050G over ESP32 TWAI | ESP32 TWAI | Tested |
 | Adafruit ESP32 Feather V2 + CAN Bus Featherwing | MCP2515 over SPI | `mcp2515.h` (autowp) | Tested |
+| M5Stack AtomS3 on CAN Base | CA-IS3050G over ESP32-S3 TWAI | ESP32 TWAI | Build target |
 
 ## Supported Vehicle Variants
 
@@ -50,3 +51,4 @@ Cut the onboard 120 Ohm termination resistor on the Feather CAN board (jumper la
 - **ESP32 + CAN transceiver** — Cheapest option if you already have an ESP32, requires external transceiver module
 - **M5Stack Atomic CAN Base** — Most compact form factor
 - **Feather V2 + FeatherWing** — WiFi-capable ESP32 with MCP2515 CAN controller, good balance of features and cost
+- **M5Stack AtomS3 on CAN Base** — Same compact setup with the newer ESP32-S3 module
