@@ -142,8 +142,10 @@ struct HW3Handler : public CarManagerBase
                 return;
             auto index = readMuxID(frame);
             if (index == 0)
-                FSDEnabled = isFSDSelectedInUI(frame);
-            if (index == 0 && FSDEnabled)
+               // FSDEnabled = isFSDSelectedInUI(frame);
+                FSDEnabled = false; // web UI에서 FSD 선택 여부를 읽는 대신, 항상 false로 고정하여 FSD 모드 진입 자체를 막습니다.
+
+            /*if (index == 0 && FSDEnabled)
             {
                 speedOffset = std::max(std::min(((uint8_t)((frame.data[3] >> 1) & 0x3F) - 30) * 5, 100), 0);
                 setBit(frame, 46, true);
@@ -151,6 +153,8 @@ struct HW3Handler : public CarManagerBase
                 framesSent++;
                 driver.send(frame);
             }
+            */
+           
             if (index == 1)
             {
                 bool modified = false;
