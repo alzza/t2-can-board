@@ -23,6 +23,7 @@
 #endif
 #else
 #error "Define DRIVER_MCP2515, DRIVER_SAME51, or DRIVER_TWAI in sketch_config.h"
+
 #endif
 
 void setup()
