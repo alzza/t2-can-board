@@ -6,6 +6,8 @@ sidebar_position: 6
 
 ESP32 boards (and M5Stack Atomic CAN Base) feature an optional web interface for remote monitoring and control via WiFi.
 
+![esp32web server](/img/webserver.png)
+
 ## Accessing the Web Interface
 
 1. **Power on the board** — it will create a WiFi hotspot
@@ -17,6 +19,7 @@ ESP32 boards (and M5Stack Atomic CAN Base) feature an optional web interface for
 ## Features
 
 ### Real-Time Status
+
 - **FSD Active**: Current FSD state
 - **Bypass TLSSC**: Whether the TLSSC requirement is bypassed
 - **ISA Speed Chime Suppress**: Suppression status (HW4 only)
@@ -28,27 +31,32 @@ ESP32 boards (and M5Stack Atomic CAN Base) feature an optional web interface for
 ### Remote Controls
 
 #### Bypass TLSSC Toggle
+
 Enable or disable FSD activation without the "Traffic Light and Stop Sign Control" requirement.
 
 - **Build-enabled**: Always available
 - **Runtime enabled**: Can be toggled on/off via web UI
 
 #### ISA Speed Chime Suppress (HW4 only)
+
 Suppress the ISA (Intelligent Speed Assistance) speed warning chime.
 
 - **Build support**: Requires `ISA_SPEED_CHIME_SUPPRESS` define at compile time
 - **Runtime control**: Toggle on/off via web UI if supported
 
 #### Emergency Vehicle Detection (HW4 only)
+
 Enable emergency vehicle detection and response on HW4 vehicles with FSD v14.
 
 - **Build support**: Requires `EMERGENCY_VEHICLE_DETECTION` define at compile time
 - **Runtime control**: Toggle on/off via web UI if supported
 
 #### Log Toggle
+
 Enable or disable serial and web log output.
 
 ### Live Log
+
 Real-time scrolling log showing debug output from the firmware. Displays timestamps and log messages.
 
 ## OTA (Over-The-Air) Firmware Updates
@@ -58,9 +66,11 @@ Update your board's firmware wirelessly without needing a USB cable.
 ### How to Update
 
 1. **Compile your firmware** locally using PlatformIO:
+
    ```bash
    pio run -e esp32_twai
    ```
+
    This creates a binary file in `.pio/build/esp32_twai/firmware.bin`
 
 2. **Open the web interface** and navigate to the "OTA Update" section
@@ -75,6 +85,7 @@ Update your board's firmware wirelessly without needing a USB cable.
 - Do **not power off or disconnect WiFi** during the update process
 - A successful update message will appear in the OTA Status area
 - If the update fails, the board will retain the previous firmware
+- In the sketch_config.sh you can enable all the things, by default on the esp32 it will be turned off or on, selected in the webUI.
 
 ## Available Endpoints
 

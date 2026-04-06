@@ -24,6 +24,7 @@ const sidebars: SidebarsConfig = {
         'features/nag-suppression',
         'features/autosteer-nag-killer',
         'features/speed-profiles',
+        'features/enhanced-autopilot',
         'features/smart-summon',
         'features/emergency-vehicle-detection',
         'features/isa-speed-chime',

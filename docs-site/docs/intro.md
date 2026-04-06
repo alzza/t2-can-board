@@ -30,6 +30,7 @@ This firmware runs on supported microcontroller boards with CAN bus support. It 
 - Reads the follow-distance stalk setting
 - Maps it dynamically to a speed profile
 - Nag suppression — clears the hands-on-wheel nag bit
+- HW4: Enhanced Autopilot (optional)
 - HW4: Approaching Emergency Vehicle Detection
 - HW4: Actually Smart Summon (ASS) without EU restrictions
 

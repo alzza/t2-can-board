@@ -7,6 +7,7 @@ void setUp()
     bypassTlsscRequirementRuntime = kBypassTlsscRequirementDefaultEnabled;
     isaSpeedChimeSuppressRuntime = kIsaSpeedChimeSuppressDefaultEnabled;
     emergencyVehicleDetectionRuntime = kEmergencyVehicleDetectionDefaultEnabled;
+    enhancedAutopilotRuntime = kEnhancedAutopilotDefaultEnabled;
 }
 void tearDown() {}
 
@@ -152,6 +153,30 @@ void test_setSpeedProfileV12V13_preserves_other_bits()
     TEST_ASSERT_EQUAL_HEX8(0xFB, f.data[6]);
 }
 
+// --- Track mode helpers ---
+
+void test_setTrackModeRequest_sets_on_and_preserves_upper_bits()
+{
+    CanFrame f = {};
+    f.data[0] = 0xFE;
+    setTrackModeRequest(f, kTrackModeRequestOn);
+    TEST_ASSERT_EQUAL_HEX8(0xFD, f.data[0]);
+}
+
+void test_computeTeslaChecksum_sums_payload_and_frame_id()
+{
+    CanFrame f = {.id = 787, .dlc = 8};
+    f.data[0] = 0xFD;
+    f.data[1] = 0x10;
+    f.data[2] = 0x20;
+    f.data[3] = 0x04;
+    f.data[4] = 0x00;
+    f.data[5] = 0x00;
+    f.data[6] = 0xA0;
+    f.data[7] = 0x00;
+    TEST_ASSERT_EQUAL_HEX8(0xE7, computeTeslaChecksum(f));
+}
+
 // --- Runtime BYPASS_TLSSC_REQUIREMENT ---
 
 void test_runtime_bypass_tlssc_overrides_when_bit_clear()
@@ -179,11 +204,12 @@ void test_runtime_bypass_tlssc_off_still_reads_real_bit()
     TEST_ASSERT_TRUE(isFSDSelectedInUI(f));
 }
 
-void test_runtime_defaults_follow_build_flags()
+void test_runtime_defaults_start_disabled()
 {
     TEST_ASSERT_FALSE(bypassTlsscRequirementRuntime);
     TEST_ASSERT_TRUE(isaSpeedChimeSuppressRuntime);
     TEST_ASSERT_TRUE(emergencyVehicleDetectionRuntime);
+    TEST_ASSERT_FALSE(enhancedAutopilotRuntime);
 }
 
 int main()
@@ -211,11 +237,13 @@ int main()
     RUN_TEST(test_setSpeedProfileV12V13_sets_profile_1);
     RUN_TEST(test_setSpeedProfileV12V13_sets_profile_2);
     RUN_TEST(test_setSpeedProfileV12V13_preserves_other_bits);
+    RUN_TEST(test_setTrackModeRequest_sets_on_and_preserves_upper_bits);
+    RUN_TEST(test_computeTeslaChecksum_sums_payload_and_frame_id);
 
     RUN_TEST(test_runtime_bypass_tlssc_overrides_when_bit_clear);
     RUN_TEST(test_runtime_bypass_tlssc_off_reads_frame);
     RUN_TEST(test_runtime_bypass_tlssc_off_still_reads_real_bit);
-    RUN_TEST(test_runtime_defaults_follow_build_flags);
+    RUN_TEST(test_runtime_defaults_start_disabled);
 
     return UNITY_END();
 }

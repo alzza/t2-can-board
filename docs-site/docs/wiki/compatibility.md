@@ -27,6 +27,7 @@ sidebar_position: 3
 - FSD enable bit
 - Speed profiles (5 levels)
 - Nag suppression
+- Enhanced Autopilot (optional)
 - Actually Smart Summon (ASS)
 - Emergency Vehicle Detection (optional)
 - ISA Speed Chime Suppress (optional)
@@ -41,6 +42,7 @@ All supported boards run the same shared firmware logic. The only difference is 
 | Feather M4 CAN Express | `feather_m4_can` | Feather M4 CAN (SAME51) |
 | ESP32 + Transceiver | `esp32_twai` | ESP32 Dev Module |
 | M5Stack Atomic CAN Base | `m5stack-atomic-can-base` | M5Stack-ATOM |
+| M5Stack AtomS3 CAN Base | `m5stack-atoms3-can-base` | M5AtomS3 |
 
 ## Third-Party Libraries
 

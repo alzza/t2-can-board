@@ -55,6 +55,11 @@ const features = [
       'Enables ASS (Actually Smart Summon) on HW4 vehicles without EU regulatory restrictions.',
   },
   {
+    title: 'Enhanced Autopilot',
+    description:
+      'Adds an HW4 feature bundle for summon support and the existing traffic-light / stop-sign gated Autopilot path.',
+  },
+  {
     title: 'Affordable',
     description:
       'Hardware costs around 20 EUR. Some sellers charge 500 EUR for the same thing — this project exists so nobody has to overpay.',
@@ -106,6 +111,7 @@ function SupportedHardware() {
     {name: 'Feather M4 CAN Express', interface: 'Native MCAN (ATSAME51)', status: 'Tested'},
     {name: 'ESP32 + CAN Transceiver', interface: 'Native TWAI', status: 'Tested'},
     {name: 'M5Stack Atomic CAN Base', interface: 'CA-IS3050G over TWAI', status: 'Tested'},
+    {name: 'M5Stack AtomS3 CAN Base', interface: 'CA-IS3050G over TWAI', status: 'Build target'},
   ];
 
   return (
@@ -130,7 +136,7 @@ export default function Home(): ReactNode {
   return (
     <Layout
       title="Open-source CAN bus mod for Tesla"
-      description="Open-source CAN bus modification tool for Tesla vehicles. FSD activation, nag suppression, speed profiles, and more.">
+      description="Open-source CAN bus modification tool for Tesla vehicles. FSD activation, enhanced autopilot, nag suppression, speed profiles, and more.">
       <HomepageHeader />
       <main>
         <DisclaimerBanner />
