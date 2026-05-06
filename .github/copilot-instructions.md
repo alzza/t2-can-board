@@ -71,9 +71,9 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ### Stack
 - **MCU**: ESP32-S3 (LILYGO T2-CAN), Arduino-ESP32 2.0.17 = ESP-IDF v4.4.x
 - **RTOS**: FreeRTOS, **Core 1 = CAN A/B 통합 폴링 / Core 0 = WiFi·HTTP·보조 태스크** 분리
-- **A 채널**: MCP2515(SPI, GPIO10/11/12/13, CS=GPIO13, RST=GPIO9, INT=GPIO8 미사용) → `appLoop<MCP2515Driver>()`이 **`nagKillerTask` 본문 시작에서** 매 iter 호출됨 + `HW3Handler` (하드코딩: `using SelectedHandler = HW3Handler`). SPI 8MHz 기본 (10MHz 가능).
+- **A 채널**: MCP2515(SPI, GPIO10/11/12/13, CS=GPIO10, RST=GPIO9, INT 미사용) → `appLoop<MCP2515Driver>()`이 **`nagKillerTask` 본문 시작에서** 매 iter 호출됨 + `HW3Handler` (하드코딩: `using SelectedHandler = HW3Handler`). **SPI 10MHz 기본** (웹 UI에서 8MHz로 다운그레이드 가능).
 - **B 채널**: 내장 TWAI (TX=GPIO7, RX=GPIO6, 500kbps) → `nagKillerTask` (**Core 1**, prio 10) + `NagHandler` (ID 880/921). TWAI ISR `intr_flags = ESP_INTR_FLAG_IRAM` 요청 (sdkconfig `CONFIG_TWAI_ISR_IN_IRAM=y` 시 OTA cache-disable 구간에서도 RX FIFO 보호).
-- **`loop()` (Arduino loopTask, Core 1, prio 1)**: A/B 폴링 없음. `vTaskDelay(100ms)`로 IDLE 양보만 수행.
+- **`loop()` (Arduino loopTask, Core 1, prio 1)**: `vTaskDelete(NULL)` 즉시 호출 → loopTask 종료. A/B 폴링 없음, ~8KB RAM 해제.
 - **보조 태스크** (모두 Core 0):
   - `canAlertTask` (prio 1, 20ms): `TWAIDriver::pollAlerts()` → eventLog 기록
   - `statusLogTask` (prio 1): 5초 상태 요약 로그 (`T2CAN_STATUS_LOG_TASK=0`으로 disable)
@@ -241,3 +241,47 @@ pio run -e lilygo_t2can
 1. 사용자가 CAN 통신이나 특정 안정화 로직을 물으면, 위 Skills 디렉토리의 컨텍스트를 최우선으로 반영한다.
 2. 코드를 수정할 때는 'karpathy-guidelines'를 참조하여 기존 코드를 최대한 보존하며 필요한 부분만 수정한다.
 3. 사용자가 명시적으로 `A채널 동작완벽함!` 또는 `B채널 동작완벽함`이라고 선언하기 전까지, 진단/가이드/테스트 우선순위는 A채널(주행/정차 통신 테스트)을 1순위로 유지한다.
+
+---
+
+### 유틸리티 스크립트
+
+#### C 주석 박스 정렬 생성기 (`/tmp/gen_box2.py`)
+
+C/C++ 주석 내 박스 다이어그램 (`┌─ ... ─┐ / │ ... │ / └─...─┘`)을 **유니코드 동아시아 문자 너비를 고려해** 오른쪽 `│`가 정확히 열 맞춤되도록 생성한다.
+
+**한글 포함 주석에서 열 맞춤이 어긋날 때** 이 스크립트를 사용한다.
+
+```python
+# /tmp/gen_box2.py 핵심 구조
+import unicodedata
+
+def vw(s):  # 시각적 너비: 한글·전각 = 2, 그 외 = 1
+    w = 0
+    for c in s:
+        eaw = unicodedata.east_asian_width(c)
+        w += 2 if eaw in ('W', 'F') else 1
+    return w
+
+INNER = 72  # 박스 내부 너비 (내용 최대 vw 기준으로 여유 2 추가)
+
+def box_line(content):
+    pad = INNER - vw(content)
+    return f" *  \u2502{content}{' ' * pad}\u2502"
+
+def box_header(title):
+    dashes = '\u2500' * (INNER - 1 - vw(title))
+    return f" *  \u250c\u2500{title}{dashes}\u2510"
+
+def box_footer():
+    return f" *  \u2514{'\u2500' * INNER}\u2518"
+```
+
+**사용 절차**:
+1. `lines_c1`, `lines_c0` 리스트에 내용 줄 편집 (유니코드 이스케이프 또는 직접 한글)
+2. `max_w = max(vw(l) for l in all_lines)` 로 최대 너비 확인
+3. `INNER = max_w + 2` 로 여유 설정
+4. `python3 /tmp/gen_box2.py --file` → `/tmp/box_out.txt` 생성
+5. `/tmp/apply_box.py` 로 `src/main.cpp` 내 해당 섹션 교체
+
+**주의**: `heredoc << 'EOF'` 방식은 한글+유니코드 혼용 시 터미널에서 깨짐 → 반드시 `.py` 파일로 저장 후 `python3 파일.py` 실행.
