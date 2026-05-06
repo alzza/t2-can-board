@@ -1,46 +1,87 @@
 /**
  * @file main.cpp
- * @note Dual-channel runtime integration (A=MCP2515, B=TWAI)
+ * @brief ESP32-S3 듀얼 CAN 채널 (A=MCP2515, B=TWAI) 런타임 통합
  *
- * Runtime Overview
- * - MCU: ESP32-S3 (LILYGO T2-CAN), Arduino-ESP32 2.0.17 (= ESP-IDF v4.4.x)
- * - CAN-A: MCP2515 over SPI    — A/B 통합 폴링(`nagKillerTask`, Core 1, prio 10)
- * - CAN-B: ESP32-S3 내장 TWAI  — 같은 `nagKillerTask` 본문에서 처리 (Core 1)
- * - Pins : TWAI TX=GPIO7 / RX=GPIO6, MCP2515 SPI=GPIO10/11/12/13, RST=GPIO9
- * - Bitrate: 500 kbps (A/B 공통)
- * - WiFi : AP-only (`TeslaCAN`, ch=kApChannel) — STA 비활성으로 TWAI ACK 안정화
- * - Web  : esp_http_server (Core 0) + cJSON, NVS 영속화, OTA(롤백 지원)
+ * ═══════════════════════════════════════════════════════════════════════════
+ *  하드웨어
+ * ═══════════════════════════════════════════════════════════════════════════
+ *  MCU      : ESP32-S3 (LILYGO T2-CAN)
+ *  RTOS     : FreeRTOS (Arduino-ESP32 2.0.17 = ESP-IDF v4.4.x)
+ *  CAN-A    : MCP2515  SPI — CS=GPIO10  SCK=GPIO12  MISO=GPIO13  MOSI=GPIO11
+ *                            RST=GPIO9   (INT 미사용)   10MHz  500kbps
+ *  CAN-B    : ESP32-S3 내장 TWAI — TX=GPIO7  RX=GPIO6   500kbps
+ *  WiFi     : AP-only ("TeslaCAN") — STA 비활성 → TWAI ACK 충돌 방지
  *
- * ┌── Architecture ─────────────────────────────────────────────────────────┐
- * │                                                                          │
- * │  CAN Bus A ──► MCP2515(SPI) ──► appLoop()  [Core 1, in nagKillerTask]   │
- * │                                  ├─ HW3Handler(ID 1021)                  │
- * │                                  │   ├─ Mux 0 → TSLLC bit38/39 inject    │
- * │                                  │   └─ Mux 1 → EAP bit19/46 inject      │
- * │                                  ├─ EFLG/TEC/REC/MERRF 1초 폴링          │
- * │                                                                          │
- * │  CAN Bus B ──► TWAI(GPIO7/6) ──► nagKillerTask()    [Core 1, prio 10]   │
- * │                                  ├─ TWAI ISR(IRAM 요청)도 Core 1         │
- * │                                  ├─ SW filter: 880 / 921                │
- * │                                  ├─ NagHandler                          │
- * │                                  │   ├─ Mode A: Stealth PRNG            │
- * │                                  │   · checksum: sum + 0x73 & 0xFF      │
- * │                                  ├─ BUS-OFF 복구: hard re-install only  │
- * │                                  └─ TEC≥96 조기 경고 / BUS-OFF 이벤트로그│
- * │                                                                          │
- * │  esp_http_server (Core 0) ──► Web Dashboard (web_ui.h, single-file SPA) │
- * │   GET  /                  → 대시보드                                    │
- * │   GET  /api/status        → 통합 상태 JSON (3s polling)                 │
- * │   GET  /api/nag-config|stats / POST /api/nag-mode|update|reset         │
- * │   POST /api/enhanced-autopilot | /api/tsllc | /api/nag-killer          │
- * │   POST /api/busoff-mode|cooldown   GET /api/busoff-log[-dl] DELETE     │
- * │   POST /api/twai-ss-tx | /api/twai-busoff-stop  (v4.4 실험 토글)       │
- * │   POST /api/can-diag/start  GET /api/can-diag/log  (자가 진단)         │
- * │   GET  /api/logs-bundle   POST /api/time  (wall-clock 동기화)          │
- * │   POST /api/ota | /api/reboot | /api/emergency-disable|restore         │
- * │                                                                          │
- * │  NVS namespace "canmod": 토글/NagConfig/테마/BUS-OFF 모드 영속화        │
- * └──────────────────────────────────────────────────────────────────────────┘
+ * ═══════════════════════════════════════════════════════════════════════════
+ *  RTOS 태스크 배치  (★ 중요: 우선순위는 "코어"가 아닌 "태스크"에 부여됨)
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *  ┌── Core 1 (CAN 전용) ───────────────────────────────────────────────────┐
+ *  │                                                                        │
+ *  │  [nagKillerTask]  prio = 10  ← 이 태스크가 10, Core 1 자체가 10 아님   │
+ *  │   │                                                                    │
+ *  │   ├─ CAN-A 폴링 (매 iter)                                              │
+ *  │   │   └─ appLoop<MCP2515Driver>()                                      │
+ *  │   │       └─ HW3Handler (ID 0x3FD / 1021)                              │
+ *  │   │           ├─ Mux 0 → TSLLC  bit38/39 인젝션 (스톱사인/초록불)      │
+ *  │   │           └─ Mux 1 → EAP    bit19/46 인젝션 (Enhanced Autopilot)   │
+ *  │   │       └─ EFLG/TEC/REC/MERRF 1초 주기 폴링                          │
+ *  │   │                                                                    │
+ *  │   └─ CAN-B 폴링 (매 iter)                                              │
+ *  │       └─ TWAI RX (twai_receive, timeout=1ms)                           │
+ *  │           ├─ SW 필터: ID 0x370(880) · 0x399(921) 외 즉시 skip          │
+ *  │           ├─ NagHandler                                                │
+ *  │           │   ├─ Mode A (Stealth PRNG): 나그 메시지 억제               │
+ *  │           │   ├─ Mode B (Smart FSM): 상태머신 기반 적응형 억제         │
+ *  │           │   └─ checksum: (sum + 0x73) & 0xFF                         │
+ *  │           ├─ BUS-OFF 복구: hard re-install + 쿨다운(런타임 설정 가능)  │
+ *  │           └─ TEC ≥ 96 조기 경고 / BUS-OFF 이벤트 로그 push             │
+ *  │                                                                        │
+ *  │  [loopTask]  prio = 1  (Arduino 기본)                                  │
+ *  │   └─ setup() 완료 후 loop()에서 vTaskDelete(NULL) → 즉시 종료          │
+ *  │       (태스크 스택 ~8KB 해제, nagKillerTask 간섭 없음)                 │
+ *  │                                                                        │
+ *  │  [TWAI ISR]  intr_flags = ESP_INTR_FLAG_IRAM                           │
+ *  │   └─ RX FIFO 보호: OTA 중 캐시 disable 구간에서도 인터럽트 처리 유지   │
+ *  │       (sdkconfig CONFIG_TWAI_ISR_IN_IRAM=y 필요)                       │
+ *  └────────────────────────────────────────────────────────────────────────┘
+ *
+ *  ┌── Core 0 (WiFi / HTTP / 보조 태스크) ──────────────────────────────────┐
+ *  │                                                                        │
+ *  │  [WiFi task]      prio = 23  (ESP-IDF 내부 — 직접 생성 아님)           │
+ *  │                                                                        │
+ *  │  [esp_http_server]  stack = 16384                                      │
+ *  │   └─ Web Dashboard (single-file SPA, web_ui.h / web_server.h)          │
+ *  │       ├─ GET  /                     → 대시보드 HTML                    │
+ *  │       ├─ GET  /api/status           → 통합 상태 JSON (3s polling)      │
+ *  │       ├─ POST /api/nag-mode|update  → NagConfig 변경                   │
+ *  │       ├─ POST /api/enhanced-autopilot | /api/tsllc | /api/nag-killer   │
+ *  │       ├─ POST /api/busoff-mode|cooldown                                │
+ *  │       ├─ GET  /api/busoff-log[-dl]  DELETE /api/busoff-log             │
+ *  │       ├─ POST /api/twai-ss-tx | /api/twai-busoff-stop                  │
+ *  │       ├─ POST /api/can-diag/start   GET /api/can-diag/log              │
+ *  │       ├─ GET  /api/logs-bundle | /api/timeseries-csv                   │
+ *  │       └─ POST /api/ota | /api/reboot | /api/ota-confirm|rollback       │
+ *  │                                                                        │
+ *  │  [canAlertTask]   prio = 1  (20ms 주기)                                │
+ *  │   └─ TWAIDriver::pollAlerts() → eventLog 기록                          │
+ *  │       (nagKillerTask 핫패스와 완전 분리)                               │
+ *  │                                                                        │
+ *  │  [statusLogTask]  prio = 1  (5s 주기, T2CAN_STATUS_LOG_TASK=0 시 OFF)  │
+ *  │   └─ 5초 상태 요약 Serial 출력                                         │
+ *  │                                                                        │
+ *  │  [timeseriesTask] prio = 1  (5s 주기)                                  │
+ *  │   └─ B채널 Hz/에러카운터/결정분포 수집 (최근 30분, CSV 다운로드)       │
+ *  └────────────────────────────────────────────────────────────────────────┘
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ *  NVS (namespace "canmod")  — 전원 OFF 후에도 설정 유지
+ * ═══════════════════════════════════════════════════════════════════════════
+ *  isa_speed_chime  emerg_veh_det  enh_autopilot  nag_killer  tsllc
+ *  a_ch_tx          a_spi_mhz      a_oneshot       a_tx_guard
+ *  nag_mode         nag_id         nag_tc          nag_tb2    nag_tb3  nag_ho
+ *  busoff_cooldown  busoff_soft_mode   theme   ota_pending  ota_fallback
+ *  nvs_init_ok  (최초 부팅 감지 플래그 — 존재하면 초기화 이미 완료)
  */
 
 #include <Arduino.h>
