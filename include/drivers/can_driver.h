@@ -1,13 +1,31 @@
+// CAN 드라이버 추상 인터페이스
+// MCP2515(SPI), TWAI(내장 CAN), MockDriver(테스트) 등이 이 인터페이스를 구현
 #pragma once
 
 #include "../can_frame_types.h"
 
 struct CanDriver
 {
-    virtual bool init() = 0;
-    virtual void setFilters(const uint32_t *ids, uint8_t count) = 0;
-    virtual bool enableInterrupt(void (*onReady)()) = 0;
-    virtual bool read(CanFrame &frame) = 0;
-    virtual void send(const CanFrame &frame) = 0;
+    virtual bool init() = 0;                                    // 드라이버 초기화 (500kbps 설정 등)
+    virtual void setFilters(const uint32_t *ids, uint8_t count) = 0;  // 수신 필터 설정 (필요한 ID만 수신)
+    virtual bool enableInterrupt(void (*onReady)()) = 0;        // 수신 인터럽트 콜백 등록
+    virtual bool read(CanFrame &frame) = 0;                     // 프레임 1개 수신 (없으면 false)
+    virtual void send(const CanFrame &frame) = 0;               // 프레임 1개 전송
+    // 프레임 1개 전송 + 결과 반환 (true=ERROR_OK, false=실패).
+    // MCP2515 진단용. 기본 구현은 send() 호출 후 항상 true (TWAI 등은 자체 카운터 사용).
+    virtual bool sendCheck(const CanFrame &frame) { send(frame); return true; }
+    // 에러 플래그 레지스터 (EFLG) 반환 — MCP2515 구현 시 실제 값, 나머지는 0
+    // 비트 의미: bit5=TXBO(BUS-OFF), bit4=TXEP(TX에러패시브), bit2=TXWAR(TEC≥96)
+    //            bit7=RX1OVR, bit6=RX0OVR (RX 버퍼 오버플로)
+    virtual uint8_t getErrorFlags() { return 0; }
+    // TX/RX 에러 카운터 읽기 — 0~255 범위. 기본 구현은 0/0
+    virtual void getErrorCounters(uint8_t &tec, uint8_t &rec) { tec = 0; rec = 0; }
+    // CANINTF.MERRF (메시지 에러: ACK/Bit/Stuff) 비트가 set이면 클리어 후 1, 아니면 0
+    // 호출 시점부터 다음 호출까지 한 번이라도 발생했는지 감지.
+    virtual uint8_t readAndClearMerrf() { return 0; }
+    // EFLG.RX0OVR/RX1OVR sticky 비트 클리어 (호스트가 수동 클리어해야만 다음 OVR 검출 가능)
+    virtual void clearRxOverrun() {}
+    // 웹 UI/NVS 기반 런타임 설정 적용 훅. 기본 드라이버는 동작 없음.
+    virtual void applyRuntimeSettings() {}
     virtual ~CanDriver() = default;
 };

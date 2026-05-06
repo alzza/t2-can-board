@@ -726,6 +726,11 @@ async function poll(){
     var tTsllc=document.getElementById('tTsllc');if(tTsllc)tTsllc.checked=!!d.tsllc_enabled;
     var tNag=document.getElementById('tNag');if(tNag)tNag.checked=!!d.nag_killer;
     var tLog=document.getElementById('tLog');if(tLog)tLog.checked=!!d.enable_print;
+    if(d.features){
+      var tASpi8=document.getElementById('tASpi8');if(tASpi8)tASpi8.checked=!!(d.features.a_spi_8mhz&&d.features.a_spi_8mhz.enabled);
+      var tAOneShot=document.getElementById('tAOneShot');if(tAOneShot)tAOneShot.checked=!!(d.features.a_mcp_oneshot&&d.features.a_mcp_oneshot.enabled);
+      var tATxGuard=document.getElementById('tATxGuard');if(tATxGuard)tATxGuard.checked=!!(d.features.a_tx_guard&&d.features.a_tx_guard.enabled);
+    }
     if(d.uptime_ms&&baseUptimeTs===0){baseUptimeMs=d.uptime_ms;baseUptimeTs=Date.now();}
     var hwBadge=document.getElementById('hw-badge');
     if(hwBadge&&d.hw_handler){hwBadge.textContent=d.hw_handler;hwBadge.style.display='inline';}

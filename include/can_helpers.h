@@ -62,7 +62,7 @@ inline constexpr bool kDebugNagKillerEnabled = false;
 #endif
 
 #if !defined(T2CAN_SPI_FREQ_HZ)
-#define T2CAN_SPI_FREQ_HZ 8000000
+#define T2CAN_SPI_FREQ_HZ 10000000
 #endif
 
 #if !defined(T2CAN_MCP2515_ONE_SHOT_DEFAULT)

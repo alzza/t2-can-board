@@ -452,6 +452,20 @@ void setup() {
     Serial.println("==================================================");
 
 #if defined(DRIVER_TWAI) && !defined(NATIVE_BUILD)
+    // NVS 최초 1회 초기화: 플래시 직후 canmod 네임스페이스를 깨끗하게 시작
+    {
+        nvs_handle_t initHandle;
+        if (nvs_open(kNvsNamespace, NVS_READWRITE, &initHandle) == ESP_OK) {
+            uint8_t initDone = 0;
+            if (nvs_get_u8(initHandle, "nvs_init_ok", &initDone) == ESP_ERR_NVS_NOT_FOUND) {
+                nvs_erase_all(initHandle);
+                nvs_set_u8(initHandle, "nvs_init_ok", 1);
+                nvs_commit(initHandle);
+                Serial.println("[NVS] 최초 부팅: NVS 초기화 완료");
+            }
+            nvs_close(initHandle);
+        }
+    }
     otaBootCheck();  // OTA 상태 머신 부팅 시 전이 처리
 #endif
 
@@ -533,15 +547,8 @@ void setup() {
 }
 
 void loop() {
-    // A/B 채널 폴링은 모두 nagKillerTask(Core 1)에서 통합 처리.
-    // Arduino loopTask(Core 1, prio 1)는 IDLE 양보용으로만 유지.
-#if defined(BOARD_T2CAN)
-    if (gOtaRecoveryModeActive) {
-        vTaskDelay(pdMS_TO_TICKS(100));
-        return;
-    }
-#endif
-    vTaskDelay(pdMS_TO_TICKS(100));
+    // 모든 작업은 RTOS 태스크에서 처리. loopTask 즉시 삭제.
+    vTaskDelete(NULL);
 }
 
 
