@@ -202,11 +202,12 @@ void nagKillerTask(void* pvParameters) {
                 bChannelDiag.framesReceivedTotal++;
                 bChannelDiag.lastFrameRxMs = millis();
 
-                // SW 필터: 4/10 정상 기준 ID 880/921만 처리
-                if ((frame.id == kNagFixedTargetId || frame.id == 921) && frame.dlc >= 6) {
+                // SW 필터: 880(EPAS3P) / 921(DAS_status) / 297(SCCM_steer, Mode B용)
+                if ((frame.id == kNagFixedTargetId || frame.id == 921 || frame.id == 297) && frame.dlc >= 4) {
                     bChannelDiag.framesFilteredInTotal++;
                     if (frame.id == kNagFixedTargetId) bChannelDiag.frames880++;
-                    else                              bChannelDiag.frames921++;
+                    else if (frame.id == 921)          bChannelDiag.frames921++;
+                    else if (frame.id == 297)          {}  // frames297 는 handler 내부에서 증가
                     // [legacy 제거] echo deadline(_rxMs) 가설은 무효화됨 → handler가 수신 시각을 별도로 추적할 필요 없음
                     nagHandlerB.handleMessage(frame, *driverB);
                     bHzFrames++;
@@ -516,10 +517,11 @@ void setup() {
         xTaskCreatePinnedToCore(canAlertTask, "alert", 2048, nullptr, 1, nullptr, 0);
         // TWAI는 accept-all로 두고 드라이버/태스크 소프트 필터에서 880/921만 처리한다.
         if (driverB) {
-            uint32_t bFiltIds[2] = {kNagFixedTargetId, 921u};
-            driverB->setFilters(bFiltIds, 2);
+            // 항상 3개 등록: 880 + 921 + 297(Mode B 조향각)
+            uint32_t bFiltIds[3] = {kNagFixedTargetId, 921u, 297u};
+            driverB->setFilters(bFiltIds, 3);
             char fBuf[64];
-            snprintf(fBuf, sizeof(fBuf), "[B-CH] SW 필터 기준: ID %u / 921", (unsigned)kNagFixedTargetId);
+            snprintf(fBuf, sizeof(fBuf), "[B-CH] SW 필터 기준: ID %u / 921 / 297", (unsigned)kNagFixedTargetId);
             logRing.push(fBuf, millis());
             Serial.println(fBuf);
         }

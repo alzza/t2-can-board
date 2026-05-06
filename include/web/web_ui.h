@@ -2,247 +2,451 @@
 #pragma once
 
 const char WEB_UI_HTML[] = R"rawliteral(<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#1a1a2e">
 <link rel="icon" href="data:,">
 <title>TeslaCAN</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{min-height:100%}
+
+/* ── Theme variables ── */
+:root,[data-theme="dark"]{
+  --bg:#1a1a2e;--bg2:#0f0f23;--card:#16213e;
+  --bd:#27304d;--row-sep:#1a1a2e;
+  --tx:#e0e0e0;--tx2:#cfd5e6;--tx3:#7b84a3;--tx4:#6a7392;
+  --acc:#00d4aa;--acc2:#3dba72;
+  --err:#ff6b6b;--warn:#f5a623;
+  --sw-off:#2e3755;--sw-thumb:#7a849f;
+  --log-tx:#a8b2d8;--le-bd:#151528;
+  --dot-off:#3e4a6a;
+  --hint-bg:#0f0f23;
+  --file-bg:#0f0f23;--file-tx:#cbd3f0;
+  --btn-bg:#00d4aa;--btn-tx:#08111b;
+  --btn-dis-bg:#2e3755;--btn-dis-tx:#7a849f;
+  --emg-bg:#ef4444;--emg-bg2:#b91c1c;--emg-tx:#fff7f7;
+  /* 별칭(이전 코드 호환): muted/txt/border/bad/ok */
+  --muted:#7b84a3;--txt:#e0e0e0;--border:#27304d;--bad:#ff6b6b;--ok:#3dba72;
+}
+[data-theme="light"]{
+  --bg:#f2f5fb;--bg2:#e8edf8;--card:#ffffff;
+  --bd:#d4dded;--row-sep:#f2f5fb;
+  --tx:#1a2035;--tx2:#2d3a5c;--tx3:#5a6890;--tx4:#8491b0;
+  --acc:#0066cc;--acc2:#16a34a;
+  --err:#dc2626;--warn:#c27700;
+  --sw-off:#c8d0e3;--sw-thumb:#a0aec0;
+  --log-tx:#374455;--le-bd:#dde4f0;
+  --dot-off:#a0aec0;
+  --hint-bg:#eef2ff;
+  --file-bg:#eef2ff;--file-tx:#2d3a5c;
+  --btn-bg:#0066cc;--btn-tx:#ffffff;
+  --btn-dis-bg:#d4dded;--btn-dis-tx:#a0aec0;
+  --emg-bg:#dc2626;--emg-bg2:#991b1b;--emg-tx:#ffffff;
+  --muted:#5a6890;--txt:#1a2035;--border:#d4dded;--bad:#dc2626;--ok:#16a34a;
+}
+
 body{
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
-  background:#1a1a2e;
-  color:#e0e0e0;
-  padding:16px;
-  margin:0 auto;
-  width:100%;
-  max-width:520px;
-  overflow-x:hidden
+  background:var(--bg);color:var(--tx);
+  padding:16px;margin:0 auto;
+  width:100%;max-width:540px;overflow-x:hidden;
+  transition:background .25s,color .25s
 }
-h1{
-  font-size:1.3em;
-  color:#00d4aa;
-  margin-bottom:16px;
-  text-align:center
+
+/* ── Page header ── */
+#page-hdr{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:16px
 }
+h1{font-size:1.55em;color:var(--acc);margin:0;font-weight:700}
+#hw-badge{
+  display:inline-block;background:var(--acc);color:var(--btn-tx);
+  font-size:.52em;font-weight:800;letter-spacing:.05em;
+  padding:2px 8px;border-radius:6px;margin-left:8px;vertical-align:middle
+}
+#ver-badge{
+  color:var(--tx3);font-size:.48em;font-weight:500;
+  margin-left:4px;vertical-align:middle
+}
+#theme-btn{
+  padding:6px 14px;border:1.5px solid var(--bd);border-radius:20px;
+  background:var(--card);color:var(--tx3);font-size:.78em;
+  cursor:pointer;font-family:inherit;font-weight:600;
+  transition:all .2s;white-space:nowrap;flex-shrink:0
+}
+#theme-btn:hover{border-color:var(--acc);color:var(--acc)}
+
+/* ── Card ── */
 .card{
-  background:#16213e;
-  border-radius:12px;
-  padding:16px;
-  margin-bottom:12px;
-  box-shadow:0 8px 24px rgba(0,0,0,.18)
+  background:var(--card);border-radius:12px;
+  padding:16px;margin-bottom:12px;
+  box-shadow:0 2px 12px rgba(0,0,0,.09);
+  transition:background .25s
 }
 .card h2{
-  font-size:.85em;
-  color:#7b84a3;
-  margin-bottom:10px;
-  text-transform:uppercase;
-  letter-spacing:.08em
+  font-size:.88em;color:var(--tx3);font-weight:700;
+  margin-bottom:10px;text-transform:uppercase;letter-spacing:.09em
 }
-.row{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:12px;
-  padding:8px 0
-}
-.row+.row{border-top:1px solid #1a1a2e}
-.labelWrap{
-  display:flex;
-  flex:1 1 auto;
-  flex-direction:column;
-  gap:2px;
-  min-width:0
-}
-.label{
-  color:#cfd5e6;
-  font-size:.92em;
-  line-height:1.3;
-  overflow-wrap:anywhere
-}
-.meta{
-  color:#7b84a3;
-  font-size:.72em;
-  line-height:1.35
-}
-.val{
-  flex:0 0 auto;
-  font-weight:600;
-  font-size:1.05em;
-  text-align:right
-}
-.on{color:#00d4aa}
-.off{color:#555}
-.sw{
-  position:relative;
-  flex:0 0 auto;
-  width:48px;
-  height:26px
-}
+
+/* ── Row ── */
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0}
+.row+.row{border-top:1px solid var(--row-sep)}
+.child-row{padding-left:16px}
+.child2-row{padding-left:28px}
+.labelWrap{display:flex;flex:1 1 auto;flex-direction:column;gap:2px;min-width:0}
+.label{color:var(--tx2);font-size:1.0em;line-height:1.3;overflow-wrap:anywhere}
+.meta{color:var(--tx3);font-size:.76em;line-height:1.35}
+.val{flex:0 0 auto;font-weight:700;font-size:1.1em;text-align:right}
+.on{color:var(--acc2)}.off{color:var(--dot-off)}
+
+/* ── Toggle switch ── */
+.sw{position:relative;flex:0 0 auto;width:48px;height:26px}
 .sw input{opacity:0;width:0;height:0}
-.sl{
-  position:absolute;
-  cursor:pointer;
-  inset:0;
-  background:#333;
-  border-radius:26px;
-  transition:.2s ease
-}
-.sl:before{
-  content:"";
-  position:absolute;
-  height:20px;
-  width:20px;
-  left:3px;
-  bottom:3px;
-  background:#888;
-  border-radius:50%;
-  transition:.2s ease
-}
-input:checked+.sl{background:#00d4aa}
+.sl{position:absolute;cursor:pointer;inset:0;background:var(--sw-off);border-radius:26px;transition:.22s ease}
+.sl:before{content:"";position:absolute;height:20px;width:20px;left:3px;bottom:3px;
+  background:var(--sw-thumb);border-radius:50%;transition:.22s ease}
+input:checked+.sl{background:var(--acc)}
 input:checked+.sl:before{transform:translateX(22px);background:#fff}
-input:disabled+.sl{background:#202438;cursor:not-allowed;opacity:.55}
-input:disabled+.sl:before{background:#5f6680}
-#log{
-  background:#0f0f23;
-  border-radius:8px;
-  padding:10px;
-  height:200px;
-  overflow-y:auto;
-  font-family:"SF Mono",Monaco,Consolas,monospace;
-  font-size:.75em;
-  color:#a8b2d8
-}
-.le{
-  padding:3px 0;
-  border-bottom:1px solid #151528;
-  overflow-wrap:anywhere
-}
-.ts{color:#6a7392;margin-right:6px}
-.dot{
-  width:8px;
-  height:8px;
-  border-radius:50%;
-  display:inline-block
-}
-.dot.on{background:#00d4aa;box-shadow:0 0 6px #00d4aa}
-.dot.off{background:#555}
-.err{
-  color:#ff6b6b;
-  text-align:center;
-  font-size:.8em;
-  padding:8px;
-  display:none
-}
+input:disabled+.sl{opacity:.45;cursor:not-allowed}
+
+/* ── Dot ── */
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.dot.on{background:var(--acc2);box-shadow:0 0 6px var(--acc2)}
+.dot.off{background:var(--dot-off)}
+
+/* ── Connection error ── */
+.err{color:var(--err);text-align:center;font-size:.8em;padding:8px;display:none}
+
+/* ── Channel state pill ── */
+.ch-pill{display:inline-block;padding:2px 9px;border-radius:10px;font-size:.9em;font-weight:700}
+.mux-dot{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;
+  border-radius:50%;font-size:.78em;font-weight:700;border:2px solid var(--bd);
+  background:var(--dot-off);color:var(--tx3);transition:background .3s,color .3s}
+.mux-dot.learned{background:#00d4aa;color:#08111b;border-color:#00d4aa}
+.mux-dot.armed{background:#f5a623;color:#08111b;border-color:#f5a623}
+.ch-ok{background:rgba(61,186,114,.12);color:#3dba72}
+.ch-err{background:rgba(255,107,107,.12);color:#ff6b6b}
+.ch-warn{background:rgba(245,166,35,.12);color:#f5a623}
+.ch-dim{background:rgba(255,255,255,.06);color:var(--tx4)}
+
+/* ── OTA ── */
 .btn{
-  width:100%;
-  margin-top:10px;
-  padding:12px 14px;
-  border:0;
-  border-radius:10px;
-  background:#00d4aa;
-  color:#08111b;
-  font-weight:700;
-  font-size:.95em
+  width:100%;margin-top:10px;padding:12px 14px;
+  border:0;border-radius:10px;
+  background:var(--btn-bg);color:var(--btn-tx);
+  font-weight:700;font-size:.95em;cursor:pointer;font-family:inherit;
+  transition:opacity .18s
 }
-.btn:disabled{background:#2e3755;color:#7a849f}
+.btn:hover{opacity:.88}
+.btn:disabled{background:var(--btn-dis-bg)!important;color:var(--btn-dis-tx)!important;cursor:not-allowed;opacity:1}
 .file{
-  width:100%;
-  padding:12px;
-  border:1px solid #27304d;
-  border-radius:10px;
-  background:#0f0f23;
-  color:#cbd3f0
+  width:100%;padding:12px;border:1.5px solid var(--bd);
+  border-radius:10px;background:var(--file-bg);color:var(--file-tx);
+  font-family:inherit;transition:border .2s
 }
 .hint{
-  color:#7b84a3;
-  font-size:.75em;
-  line-height:1.4
+  color:var(--tx3);font-size:.76em;line-height:1.5;
+  background:var(--hint-bg);border-radius:8px;
+  padding:10px 12px;margin-bottom:10px
 }
-#otaStatus{
-  margin-top:10px;
-  font-size:.8em;
-  color:#a8b2d8;
-  min-height:1.2em
+#otaStatus{margin-top:10px;font-size:.8em;color:var(--log-tx);min-height:1.2em}
+
+/* ── Log ── */
+#log{
+  background:var(--bg2);border-radius:8px;padding:10px;
+  height:200px;overflow-y:auto;
+  font-family:"SF Mono",Monaco,Consolas,monospace;
+  font-size:.75em;color:var(--log-tx);
+  transition:background .25s
 }
-@media (max-width:380px){
-  body{padding:12px}
-  .card{padding:14px}
-  .label{font-size:.88em}
-  .meta{font-size:.69em}
+.le{padding:3px 0;border-bottom:1px solid var(--le-bd);overflow-wrap:anywhere}
+.ts{color:var(--tx4);margin-right:6px}
+
+/* ── CAN Sniffer ── */
+.ui-select{
+  flex:0 0 140px;background:var(--bg2);border:1.5px solid var(--bd);border-radius:8px;
+  padding:7px 10px;color:var(--tx);font-size:12px;font-family:inherit;
 }
+.ui-select:disabled{opacity:.45;cursor:not-allowed}
+.s-ts{color:var(--tx4);font-size:10px;padding-top:1px}
+.s-id{color:var(--acc);font-weight:700}
+.s-data{color:var(--log-tx);word-break:break-all}
+.s-name{color:var(--acc2);font-size:10px;margin-top:2px;font-weight:600}
+
+.btn-row{display:flex;gap:8px}
+.btn-action{
+  flex:1;padding:10px 8px;border:1.5px solid var(--bd);border-radius:9px;
+  background:transparent;font-family:inherit;font-size:12px;font-weight:600;
+  cursor:pointer;color:var(--tx3);transition:all .18s;
+  text-align:center;text-decoration:none;display:block
+}
+.btn-action:hover{border-color:var(--acc);color:var(--acc)}
+.btn-action.rec-active{border-color:var(--err)!important;color:var(--err)!important}
+.btn-dl{border-color:var(--acc2)!important;color:var(--acc2)!important}
+.btn-dl:hover{background:var(--acc2)!important;color:#fff!important;border-color:var(--acc2)!important}
+/* Nag v2 소형 버튼 */
+.btn-sm{font:inherit;cursor:pointer;background:var(--card);color:var(--txt);border:1px solid var(--bd);border-radius:6px;padding:5px 10px;font-size:12px}
+.btn-sm.primary{background:var(--acc);color:#0d1117;border-color:transparent;font-weight:600}
+.btn-sm.danger{color:var(--err);border-color:#3a1f23}
+.btn-sm:hover{filter:brightness(1.15)}
+/* Nag v2 stat 박스 */
+.stat{background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:6px 8px}
+.stat .k{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.stat .v{font-size:15px;font-weight:600;margin-top:2px}
+
+.btn-emergency{
+  width:100%;padding:12px 14px;border:1px solid rgba(255,255,255,.2);border-radius:10px;
+  background:linear-gradient(135deg,var(--emg-bg),var(--emg-bg2));color:var(--emg-tx);
+  font-family:inherit;font-weight:800;font-size:.95em;letter-spacing:.01em;cursor:pointer;
+  box-shadow:0 0 0 1px rgba(255,255,255,.08) inset,0 8px 20px rgba(185,28,28,.35);
+  transition:transform .12s ease,filter .15s ease,box-shadow .15s ease;
+}
+.btn-emergency:hover{filter:brightness(1.07);transform:translateY(-1px);box-shadow:0 0 0 1px rgba(255,255,255,.15) inset,0 10px 24px rgba(185,28,28,.42)}
+.btn-emergency:active{transform:translateY(0)}
+.btn-emergency:disabled{opacity:.6;cursor:not-allowed;transform:none}
+
+.btn-restore{
+  width:100%;padding:12px 14px;border:1px solid rgba(255,255,255,.2);border-radius:10px;
+  background:linear-gradient(135deg,var(--acc2),#1a8a4a);color:#fff;
+  font-family:inherit;font-weight:800;font-size:.95em;letter-spacing:.01em;cursor:pointer;
+  box-shadow:0 0 0 1px rgba(255,255,255,.08) inset,0 8px 20px rgba(22,163,74,.35);
+  transition:transform .12s ease,filter .15s ease,box-shadow .15s ease;
+}
+.btn-restore:hover{filter:brightness(1.07);transform:translateY(-1px);box-shadow:0 0 0 1px rgba(255,255,255,.15) inset,0 10px 24px rgba(22,163,74,.42)}
+.btn-restore:active{transform:translateY(0)}
+.btn-restore:disabled{opacity:.6;cursor:not-allowed;transform:none}
+
+@media(max-width:380px){
+  body{padding:12px}.card{padding:14px}
+  .label{font-size:.95em}.meta{font-size:.72em}
+}
+
+/* ── Collapsible cards ── */
+.card>h2{display:flex;align-items:center}
+.collapse-btn{
+  background:none;border:1px solid var(--bd);border-radius:6px;
+  color:var(--tx3);font-size:10px;padding:2px 6px;
+  cursor:pointer;margin-left:auto;flex-shrink:0;
+  font-family:inherit;line-height:1.4;transition:all .15s
+}
+.collapse-btn:hover{border-color:var(--acc);color:var(--acc)}
+.card.collapsed>*:not(h2){display:none}
+.card.collapsed>h2{margin-bottom:0}
+/* ── Status strip ── */
+#hdr-status{display:flex;align-items:center;gap:6px;font-size:.82em;color:var(--tx3);margin-bottom:10px}
+.sdot{width:7px;height:7px;border-radius:50%;flex-shrink:0;transition:background .4s,box-shadow .4s}
+.dot-live{background:var(--acc2);box-shadow:0 0 7px var(--acc2)}
+.dot-wait{background:var(--dot-off)}
+/* ── FPS bar ── */
+.fps-bars{display:flex;flex-direction:column;gap:4px;margin-bottom:14px}
+.fps-row{display:flex;align-items:center;gap:6px}
+.fps-lbl{font-size:9px;color:var(--tx4);letter-spacing:.5px;width:14px;text-align:right;flex-shrink:0}
+.fps-bar{flex:1;height:3px;background:var(--bd);border-radius:2px;overflow:hidden}
+.fps-fill{height:100%;border-radius:2px;transition:width .5s;width:0%}
+.fps-fill-a{background:var(--acc2)}
+.fps-fill-b{background:var(--acc)}
+/* ── Stat grid ── */
+.stat-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px}
+.stat{background:var(--card);border-radius:10px;padding:10px 12px}
+.stat-lbl{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px}
+.stat-val{font-size:14px;font-weight:600;color:var(--tx)}
+/* ── 진단 카드 (옵션 B): 접이식 + chip 압축 ─────────────────────── */
+.diag-card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:8px 12px;margin-bottom:12px}
+.diag-card>summary{cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;list-style:none;outline:none;padding:2px 0}
+.diag-card>summary::-webkit-details-marker{display:none}
+.diag-card>summary::before{content:'▸';display:inline-block;margin-right:6px;color:var(--tx3);transition:transform .15s}
+.diag-card[open]>summary::before{transform:rotate(90deg)}
+.diag-title{font-weight:700;color:var(--tx)}
+.diag-sum{font-size:11px;color:var(--tx3);margin-left:auto;text-align:right}
+.diag-sum.warn{color:var(--warn);font-weight:600}
+.diag-sum.err{color:var(--err);font-weight:700}
+.diag-sum.ok{color:var(--acc2)}
+.diag-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px}
+.diag-lbl{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.8px;min-width:42px}
+.chip{display:inline-block;font-size:11px;font-weight:600;padding:3px 8px;border-radius:12px;border:1px solid transparent;line-height:1.4;white-space:nowrap;font-family:monospace}
+.chip.ok{background:rgba(76,175,80,.12);color:var(--acc2);border-color:rgba(76,175,80,.3)}
+.chip.warn{background:rgba(230,126,34,.15);color:var(--warn);border-color:rgba(230,126,34,.4)}
+.chip.err{background:rgba(244,67,54,.18);color:var(--err);border-color:rgba(244,67,54,.5);animation:chipPulse 1.5s infinite}
+@keyframes chipPulse{50%{opacity:.55}}
+.v-ok{color:var(--acc2)}.v-err{color:var(--err)}.v-acc{color:var(--acc)}.v-dim{color:var(--tx3)}.v-warn{color:var(--warn)}
 </style>
 </head>
 <body>
-<h1>TeslaCAN</h1>
+
+<div id="page-hdr">
+  <h1>TeslaCAN <span id="hw-badge" style="display:none"></span><span id="ver-badge" style="display:none"></span></h1>
+  <div style="display:flex;gap:8px;align-items:center">
+    <a id="log-save-btn" href="/api/logs-bundle" download="canmod_logs.txt"
+       style="padding:6px 14px;border-radius:20px;border:none;background:#c0392b;color:#fff;font-size:.78em;font-weight:700;cursor:pointer;text-decoration:none;font-family:inherit;white-space:nowrap">&#128190; 로그 저장</a>
+    <button id="theme-btn" onclick="toggleTheme()">&#9728; Light</button>
+  </div>
+</div>
 <div id="connErr" class="err">Connection lost. Retrying...</div>
+
+<!-- OTA 확인 배너 (pending=2: 신 FW 부팅, 3분 확인 창) -->
+<div id="otaConfirmBanner" style="display:none;background:#0d2318;border:2px solid var(--acc2);border-radius:12px;padding:16px;margin-bottom:12px">
+  <div style="font-size:1em;font-weight:700;color:var(--acc2);margin-bottom:6px">&#x26A1; 펌웨어 업데이트 확인</div>
+  <div style="font-size:.85em;color:var(--tx2);margin-bottom:4px">새 펌웨어가 설치되었습니다. 계속 사용하시겠습니까?</div>
+  <div style="font-size:.8em;color:var(--tx3);margin-bottom:2px">현재 파티션: <span id="otaCurLabel">--</span> / 이전: <span id="otaFbLabel">--</span></div>
+  <div style="font-size:.88em;color:var(--warn);margin-bottom:10px">남은 시간: <span id="otaConfirmCountdown">--</span> (시간 초과 시 자동 롤백)</div>
+  <div style="display:flex;gap:8px">
+    <button class="btn" onclick="otaConfirmFw()" style="background:var(--acc2);flex:1">&#x2705; 예, 이 펌웨어 사용</button>
+    <button class="btn" onclick="otaRollbackFw()" style="background:var(--err);flex:1">&#x21A9; 아니오, 이전으로 복구</button>
+  </div>
+</div>
+<!-- OTA 복구완료 확인 배너 (pending=4: 복구 파티션 부팅, 1분 확인 창) -->
+<div id="otaRollbackConfirmBanner" style="display:none;background:#0d1a2e;border:2px solid var(--warn);border-radius:12px;padding:16px;margin-bottom:12px">
+  <div style="font-size:1em;font-weight:700;color:var(--warn);margin-bottom:6px">&#x1F504; 펌웨어 복구 완료</div>
+  <div style="font-size:.85em;color:var(--tx2);margin-bottom:10px">이전 펌웨어로 복구되었습니다. 정상 동작을 확인해주세요.</div>
+  <div style="font-size:.88em;color:var(--warn);margin-bottom:10px">남은 시간: <span id="otaRollbackCountdown">--</span> (시간 초과 시 OTA 복구모드 진입)</div>
+  <div style="display:flex;gap:8px">
+    <button class="btn" onclick="otaRecoveryConfirmFw()" style="background:var(--acc2);flex:1">&#x2705; 예, 복구 완료 확인</button>
+    <button class="btn" onclick="otaEnterRecoveryFw()" style="background:var(--err);flex:1">&#x26A0; OTA 복구모드 진입</button>
+  </div>
+</div>
+
+<div id="hdr-status">
+  <span class="sdot dot-wait" id="sdot"></span>
+  <span id="hdr-desc">Waiting for CAN frames</span>
+</div>
+<div class="fps-bars">
+  <div class="fps-row"><span class="fps-lbl">A</span><div class="fps-bar"><div class="fps-fill fps-fill-a" id="fps-fill-a"></div></div></div>
+  <div class="fps-row"><span class="fps-lbl">B</span><div class="fps-bar"><div class="fps-fill fps-fill-b" id="fps-fill-b"></div></div></div>
+</div>
+<div class="stat-grid">
+  <div class="stat" title="A채널(MCP2515) 버스 상태 ✅OK=정상 ❌에러=나쁨"><div class="stat-lbl">CAN BUS A</div><div class="stat-val v-dim" id="s-can">--</div></div>
+  <div class="stat" title="MCP2515 에러 플래그 ✅OK=정상 ⚠️WARN≥96=경고 ❌ERR-P/BUS-OFF=나쁨"><div class="stat-lbl">MCP EFLG A</div><div class="stat-val v-dim" id="s-a-eflg">--</div></div>
+  <div class="stat" title="EAP 기능 활성화 여부 ✅ON=정상"><div class="stat-lbl">EAP</div><div class="stat-val v-dim" id="s-eap">--</div></div>
+  <div class="stat" title="Nag Killer 활성화 여부 ✅ON=정상"><div class="stat-lbl">NAG KILLER</div><div class="stat-val v-dim" id="s-nag">--</div></div>
+  <div class="stat" title="A채널 수신 프레임 속도. ✅높을수록 좋음(정상 ~100Hz)"><div class="stat-lbl">FRAME RATE A</div><div class="stat-val v-dim" id="s-ahz">0.0 Hz</div></div>
+  <div class="stat" title="A채널 수신 누적. ✅증가=정상 수신 중"><div class="stat-lbl">RX A</div><div class="stat-val v-acc" id="s-arx">0</div></div>
+  <div class="stat" title="EAP 패킷 송신 누적. ✅증가=EAP 정상 동작 중"><div class="stat-lbl">EAP TX</div><div class="stat-val v-acc" id="s-atx">0</div></div>
+  <div class="stat" title="B채널 수신 프레임 속도. ✅높을수록 좋음(정상 ~100Hz)"><div class="stat-lbl">FRAME RATE B</div><div class="stat-val v-dim" id="s-bhz">0.0 Hz</div></div>
+  <div class="stat" title="B채널 수신 누적. ✅증가=정상 수신 중"><div class="stat-lbl">RX B</div><div class="stat-val v-acc" id="s-brx">0</div></div>
+  <div class="stat" title="에코 패킷 송신 누적. ✅증가=나그킬러 동작 중"><div class="stat-lbl">ECHO TX</div><div class="stat-val v-acc" id="s-btx">0</div></div>
+  <div class="stat" title="ECU TX 충돌 방지로 6ms 초과 드롭된 에코 수. ✅증가=충돌 방지 정상 작동(좋음)"><div class="stat-lbl">ECHO DROP</div><div class="stat-val v-dim" id="s-bdrop">0</div></div>
+  <div class="stat" title="B채널 TWAI 드라이버 상태. ✅running=정상 ❌bus_off=나쁨"><div class="stat-lbl">TWAI</div><div class="stat-val v-dim" id="s-twai">--</div></div>
+  <div class="stat" title="기기 부팅 후 경과 시간"><div class="stat-lbl">UPTIME</div><div class="stat-val v-dim" id="s-up">--</div></div>
+  <div class="stat" title="B채널 BUS-OFF 누적 발생 횟수. ✅0=최상 ❌증가=나쁨"><div class="stat-lbl">BUS-OFF</div><div class="stat-val v-dim" id="s-busoff">0</div></div>
+</div>
+<div style="font-size:10px;color:var(--muted);line-height:1.7;margin-bottom:8px;padding:6px 8px;background:var(--card);border-radius:6px;border:1px solid var(--bd)">
+  <b>지표 해설</b> &nbsp;|
+  <span style="color:#4caf50">✅ 증가=정상</span>: FRAME RATE A/B &nbsp;·&nbsp; RX A/B &nbsp;·&nbsp; EAP TX &nbsp;·&nbsp; ECHO TX &nbsp;·&nbsp; <b>ECHO DROP</b>(충돌 방지 동작 중 = 좋음) &nbsp;|
+  <span style="color:#f44336">❌ 증가=나쁨</span>: BUS-OFF &nbsp;·&nbsp; MCP EFLG A(ERR-P/BUS-OFF 표시 시)
+</div>
+
+<!-- ═══ 진단 신호 패널 (옵션 B): A/B 채널 진단 카운터를 chip 형태로 압축 ═══
+     기본은 접혀있고, 헤더 요약(diag-sum)에 비정상 항목만 한 줄로 노출.
+     ┌─ A: TX OK/Fail · TEC · MERRF · RX-OVR
+     └─ B: ARB-LOST · BUS-ERR · TX-FAIL · RX-MISS
+     0 = 녹색(ok), >0 = 주황(warn), 임계값 초과 = 빨강(err) -->
+<details class="diag-card" id="diag-card">
+  <summary>
+    <span class="diag-title">🔬 진단 신호</span>
+    <span class="diag-sum" id="diag-sum">분석 대기…</span>
+  </summary>
+  <div class="diag-row">
+    <span class="diag-lbl">A채널</span>
+    <span class="chip ok" id="d-a-tx"     title="TX 결과 OK/Fail. Fail↑ → 송신 큐 포화 또는 하드 실패">TX 0/0</span>
+    <span class="chip ok" id="d-a-tec"    title="TEC 현재/피크. ≥96 경고, ≥128 에러패시브">TEC 0/0</span>
+    <span class="chip ok" id="d-a-merrf"  title="MERRF 누적. ↑ = ACK 부재 또는 동일 ID 충돌">MERRF 0</span>
+    <span class="chip ok" id="d-a-rxovr"  title="RX 버퍼 오버런 누적. clear 후 재발 시 폴링 부족">RX-OVR 0</span>
+    <span class="chip ok" id="d-a-rec"    title="REC 현재/피크. ↑ = 수신 에러(배선/종단 문제)">REC 0/0</span>
+    <span class="chip ok" id="d-a-eflgev" title="EFLG 0→비제로 전환 횟수. 에러 발생 이벤트 빈도">EFLG-EV 0</span>
+  </div>
+  <div class="diag-row">
+    <span class="diag-lbl">B채널</span>
+    <span class="chip ok" id="d-b-arb"    title="Arbitration Lost. ↑ = 동일 ID 충돌">ARB 0</span>
+    <span class="chip ok" id="d-b-err"    title="Bus Error 누적. ↑ = 배선/ACK 부재">BUS-ERR 0</span>
+    <span class="chip ok" id="d-b-txf"    title="TX-FAILED 누적. Single-shot 충돌 회피 동작 검증">TX-FAIL 0</span>
+    <span class="chip ok" id="d-b-rxm"    title="RX-MISSED 누적. ↑ = nagKillerTask 폴링 부족">RX-MISS 0</span>
+  </div>
+</details>
 
 <div class="card">
   <h2>Status</h2>
-  <div class="row"><span class="label">FSD Active</span><span class="val" id="fsd">--</span></div>
-  <div class="row"><span class="label">Bypass TLSSC</span><span class="val" id="ffsd">--</span></div>
-  <div class="row"><span class="label">ISA Chime Suppress</span><span class="val" id="isa">--</span></div>
-  <div class="row"><span class="label">Emergency Detection</span><span class="val" id="evd">--</span></div>
   <div class="row"><span class="label">Enhanced Autopilot</span><span class="val" id="eap">--</span></div>
   <div class="row"><span class="label">Autosteer Nag Killer</span><span class="val" id="nag">--</span></div>
-  <div class="row"><span class="label">Speed Profile</span><span class="val" id="prof">--</span></div>
-  <div class="row"><span class="label">Speed Offset</span><span class="val" id="soff">--</span></div>
   <div class="row"><span class="label">Uptime</span><span class="val" id="up">--</span></div>
+  <div class="row"><button class="btn-emergency" id="emStopBtn" onclick="emergencyToggle()">즉시 기능해제</button></div>
 </div>
 
-<div class="card">
-  <h2>CAN Bus</h2>
-  <div class="row"><span class="label">State</span><span class="val" id="canst">--</span></div>
-  <div class="row"><span class="label">Frames Received</span><span class="val" id="canfr">0</span></div>
-  <div class="row"><span class="label">Frames Modified</span><span class="val" id="canfs">0</span></div>
-  <div class="row"><span class="label">RX Errors</span><span class="val" id="canrx">0</span></div>
-  <div class="row"><span class="label">TX Errors</span><span class="val" id="cantx">0</span></div>
-  <div class="row"><span class="label">Bus Errors</span><span class="val" id="canbe">0</span></div>
-  <div class="row"><span class="label">RX Missed</span><span class="val" id="canrm">0</span></div>
-</div>
-
-<div class="card">
+<div class="card collapsed">
   <h2>Controls</h2>
   <div class="row">
     <div class="labelWrap">
-      <span class="label">Bypass TLSSC</span>
-      <span class="meta" id="metaFsd">--</span>
+      <span class="label">A Channel TX <span style="font-size:10px;color:var(--muted)">[1021 EAP/TSLLC]</span></span>
+      <span class="meta" id="metaAChTx">A채널 1021 수정 송신 전체 ON/OFF</span>
     </div>
-    <label class="sw"><input type="checkbox" id="tFsd" onchange="togSwitch('/api/bypass-tlssc',this,'Bypass TLSSC requirement?')"><span class="sl"></span></label>
+    <label class="sw"><input type="checkbox" id="tAChTx" onchange="togSwitch('/api/a-channel-tx',this)"><span class="sl"></span></label>
   </div>
-  <div class="row">
-    <div class="labelWrap">
-      <span class="label">ISA Speed Chime Suppress</span>
-      <span class="meta" id="metaIsa">--</span>
-    </div>
-    <label class="sw"><input type="checkbox" id="tIsa" onchange="togSwitch('/api/isa-speed-chime-suppress',this)"><span class="sl"></span></label>
-  </div>
-  <div class="row">
-    <div class="labelWrap">
-      <span class="label">Emergency Vehicle Detection</span>
-      <span class="meta" id="metaEvd">--</span>
-    </div>
-    <label class="sw"><input type="checkbox" id="tEvd" onchange="togSwitch('/api/emergency-vehicle-detection',this)"><span class="sl"></span></label>
-  </div>
-  <div class="row">
+  <div class="row child-row">
     <div class="labelWrap">
       <span class="label">Enhanced Autopilot</span>
       <span class="meta" id="metaEap">--</span>
     </div>
     <label class="sw"><input type="checkbox" id="tEap" onchange="togSwitch('/api/enhanced-autopilot',this)"><span class="sl"></span></label>
   </div>
+  <div class="row child-row">
+    <div class="labelWrap">
+      <span class="label">TSLLC (stop signs/lights)</span>
+      <span class="meta" id="metaTsllc">Enable FSD stops control (stop signs/lights). TSLLC proven.</span>
+    </div>
+    <label class="sw"><input type="checkbox" id="tTsllc" onchange="togSwitch('/api/tsllc',this)"><span class="sl"></span></label>
+  </div>
   <div class="row">
     <div class="labelWrap">
-      <span class="label">Autosteer Nag Killer</span>
+      <span class="label">Autosteer Nag Killer <span style="font-size:10px;color:var(--muted)">[B채널 Target ID / bus4]</span></span>
       <span class="meta" id="metaNag">--</span>
     </div>
     <label class="sw"><input type="checkbox" id="tNag" onchange="togSwitch('/api/nag-killer',this)"><span class="sl"></span></label>
+  </div>
+  <!-- Nag Killer 실시간 통계 + 모드 선택 -->
+  <div class="row child-row" id="nagModePanel">
+    <div style="width:100%">
+      <!-- 모드 토글 버튼 -->
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <span style="font-size:11px;color:var(--muted)">동작 모드:</span>
+        <button class="btn" id="btnNagA" onclick="setNagMode(0)" title="Mode A: PRNG 스텔스 — 항상 버스 상주, 유기적 토크">A 스텔스</button>
+        <button class="btn" id="btnNagB" onclick="setNagMode(1)" title="Mode B: 스마트 — DAS AP state+조향각 기반 조건부 주입">B 스마트</button>
+        <span style="font-size:11px;font-weight:bold" id="nagModeLabel">--</span>
+      </div>
+      <!-- Mode A 설명 -->
+      <div id="nagDescA" style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:8px;padding:5px 7px;background:rgba(0,0,0,.12);border-radius:5px">
+        <b>Mode A (스텔스 PRNG)</b>: DAS 핸즈온 감지 시 유기적 PRNG 토크(0.5~1.8Nm) 상시 주입. handsOnLevel=1 강제.
+      </div>
+      <!-- Mode B 설명 + 상태 -->
+      <div id="nagDescB" style="font-size:11px;line-height:1.6;margin-bottom:8px;padding:5px 7px;background:rgba(0,0,0,.12);border-radius:5px;display:none">
+        <div style="color:var(--muted);margin-bottom:6px"><b>Mode B (스마트 상태머신)</b>: AP state 3-6 게이트 + HandsOnState별 조건부 토크 주입. 조건 불충족 시 버스 비개입.</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:5px;margin-top:6px">
+          <div class="stat" title="DAS_autopilotState (ID 921). 3-6일 때 Mode B 허용"><div class="k">AP state</div><div class="v" id="ns_apst">--</div></div>
+          <div class="stat" title="SCCM 조향각도 (ID 297). 방향 결정에 사용"><div class="k">steer angle</div><div class="v" id="ns_angle">--</div></div>
+          <div class="stat" title="주입 페이즈: 0=idle 1=grace 2=delay 3=mild 4=sDelay 5=ramp 6=hold"><div class="k">phase</div><div class="v" id="ns_mbphase">--</div></div>
+          <div class="stat" title="Mode B 누적 토크 주입 횟수"><div class="k">주입 횟수</div><div class="v" id="ns_mbinject">0</div></div>
+          <div class="stat" title="Mode B 가장 최근 주입 토크 (Nm). 양수=우, 음수=좌"><div class="k">마지막 Nm</div><div class="v" id="ns_mbnm">--</div></div>
+          <div class="stat" title="ID 297 SCCM 수신 프레임 수"><div class="k">rx (297)</div><div class="v" id="ns_rx297">0</div></div>
+        </div>
+      </div>
+      <!-- 공통 실시간 Nag Stats -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:6px;margin-bottom:6px">
+        <div class="stat" title="차량이 보낸 880 프레임 수. ✅증가=차량 연결 정상"><div class="k">rx (880)</div><div class="v" id="ns_rx">0</div></div>
+        <div class="stat" title="나그킬러가 발사한 에코 수. ✅증가=동작 중"><div class="k">echo sent</div><div class="v" id="ns_echo">0</div></div>
+        <div class="stat" title="드라이버 레벨 TX 실패 누적. ❌증가=나쁨(큐 포화/BUS-OFF)"><div class="k">tx fail</div><div class="v" id="ns_fail">0</div></div>
+        <div class="stat" title="TWAI 드라이버 상태. ✅running=정상 ❌bus_off=나쁨"><div class="k">can state</div><div class="v" id="ns_cs">--</div></div>
+        <div class="stat" title="ID 921 DAS 핸즈온 판정. ✅1=스티어링감지(성공) ✅0/8=정상 ❌2=나그감지 ⚠️0xFF=미수신"><div class="k">DAS 921</div><div class="v" id="ns_das">--</div></div>
+        <div class="stat" title="TX 에러 카운터 현재/피크. ✅0=최상 ⚠️≥96=경고 ❌≥128=에러패시브"><div class="k">TEC now/peak</div><div class="v" id="ns_tec">0 / 0</div></div>
+      </div>
+      <div style="font-size:10px;color:var(--muted);line-height:1.7;margin-bottom:4px;padding:5px 7px;background:rgba(0,0,0,.15);border-radius:5px">
+        ✅ <b>증가=좋음</b>: rx · echo sent &nbsp;|
+        ❌ <b>증가=나쁨</b>: tx fail · BUS-OFF &nbsp;|
+        ❌ <b>높을수록 나쁨</b>: TEC(≥96경고, ≥128에러패시브) &nbsp;|
+        ⚠️ <b>주의</b>: DAS 921 = 0xFF 이면 921 미수신 상태에서 에코 발사 중
+      </div>
+    </div>
   </div>
   <div class="row">
     <div class="labelWrap">
@@ -252,30 +456,149 @@ input:disabled+.sl:before{background:#5f6680}
     <label class="sw"><input type="checkbox" id="tLog" checked onchange="togLog(this)"><span class="sl"></span></label>
   </div>
 </div>
+<div id="log"></div>
 
-<div class="card">
-  <h2>OTA Update</h2>
-  <p class="hint">Upload a compiled firmware binary to flash the device over WiFi. The board will reboot automatically after a successful update.</p>
-  <input class="file" type="file" id="otaFile" accept=".bin,application/octet-stream">
-  <button class="btn" id="otaBtn" onclick="uploadOta()">Upload Firmware</button>
-  <div id="otaStatus"></div>
+<!-- CAN 자가 진단 패널 -->
+<div class="card collapsed" id="diagCard">
+  <h2>&#x1F52C; CAN 통신 자가 진단</h2>
+  <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6">
+    버스 트래픽 &middot; 에코 동작 &middot; TEC/REC &middot; BUS-OFF 이력을 순서대로 체크합니다.
+    차량 현장에서 컴퓨터 없이 이 페이지만으로 통신 이슈를 진단할 수 있습니다 (~19초 소요).
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+    <button class="btn" id="diagBtn" onclick="startCanDiag()">CAN 진단</button>
+    <button class="btn" onclick="resetTimeseries()">🗑 로그 초기화</button>
+    <button class="btn" id="recBtn" onclick="toggleTimeseriesRec()">⏺ 기록 시작</button>
+    <button class="btn" id="markBtn" onclick="markApWarning()">⚠ 경고 기록</button>
+    <a class="btn" href="/api/logs-bundle" download="canmod_logs.txt" style="text-decoration:none;display:inline-flex;align-items:center">💾 전체 저장</a>
+    <span id="recStatus" style="font-size:12px;color:var(--muted)"></span>
+    <span id="diagStatus" style="font-size:12px;color:var(--muted)"></span>
+  </div>
+  <div id="diagLogWrap" style="display:none">
+    <div id="diagLogEl" style="background:#0d1117;border:1px solid var(--border);border-radius:4px;padding:10px;max-height:340px;overflow-y:auto;font-family:monospace;font-size:11px;line-height:1.7;white-space:pre-wrap;color:#c9d1d9"></div>
+  </div>
 </div>
 
-<div class="card">
-  <h2>Log</h2>
-  <div id="log"></div>
+<div class="card collapsed">
+  <h2>&#x1F535; A 채널 (MCP2515)</h2>
+  <div class="row"><span class="label">수신 속도</span><span class="val" id="aHz">-- Hz</span></div>
+  <div class="row"><span class="label">ID 1021 (EAP)</span><span class="val" id="a1021Period">--</span></div>
+  <div class="row"><span class="label">EAP 주입 (누적)</span><span class="val" id="aMod">0</span></div>
+  <div class="row"><span class="label">TX 마스터</span><span class="val" id="aTxMaster">--</span></div>
+  <div class="row">
+    <div class="labelWrap">
+
+      <span class="label">MCP2515 SPI 8MHz</span>
+      <span class="meta" id="metaASpi8">ON=8MHz, OFF=10MHz · 재부팅 후 적용</span>
+    </div>
+    <label class="sw"><input type="checkbox" id="tASpi8" onchange="togSwitch('/api/a-spi-8mhz',this,'A채널 MCP2515 SPI 설정을 저장합니다. 적용하려면 재부팅이 필요합니다.')"><span class="sl"></span></label>
+  </div>
+  <div class="row">
+    <div class="labelWrap">
+      <span class="label">MCP2515 One-Shot</span>
+      <span class="meta" id="metaAOneShot">재전송 억제 모드</span>
+    </div>
+    <label class="sw"><input type="checkbox" id="tAOneShot" onchange="togSwitch('/api/a-oneshot',this,'A채널 MCP2515 모드를 변경합니다. 정차 상태에서만 바꾸는 것을 권장합니다.')"><span class="sl"></span></label>
+  </div>
+  <div class="row">
+    <div class="labelWrap">
+      <span class="label">A TX Guard</span>
+      <span class="meta" id="metaATxGuard">TEC/EFLG 상승 시 1021 주입 일시 보류</span>
+    </div>
+    <label class="sw"><input type="checkbox" id="tATxGuard" onchange="togSwitch('/api/a-tx-guard',this)"><span class="sl"></span></label>
+  </div>
+  <div class="row"><span class="label">자동 캡처 진행</span><span class="val" id="aAutoCap">-</span></div>
 </div>
 
+<div class="card collapsed" id="bChCard">
+  <h2 id="bChHdr">&#x1F534; B 채널 (TWAI)</h2>
+  <div class="row"><span class="label">TWAI 상태</span><span class="val" id="bTwai">--</span></div>
+  <div class="row"><span class="label">수신 속도</span><span class="val" id="bHz">-- Hz</span></div>
+  <div class="row"><span class="label">필터링 프레임 (Target/921)</span><span class="val" id="bFilt">0</span></div>
+  <div class="row"><span class="label" id="bTargetLbl">ID 880 (NAG)</span><span class="val" id="b880Info">0 / --</span></div>
+  <div class="row"><span class="label">ID 921 (DAS)</span><span class="val" id="b921Info">0 / --</span></div>
+  <div class="row"><span class="label">토크 모드</span><span class="val" id="bMode">--</span></div>
+  <div class="row"><span class="label">에코 전송 (누적)</span><span class="val" id="bEcho">0</span></div>
+  <div class="row"><span class="label">BUS-OFF 발생</span><span class="val" id="bBusOff">0</span></div>
+  <div class="row"><span class="label">복구 (시도/성공/실패)</span><span class="val" id="bRecStat">0 / 0 / 0</span></div>
+  <div class="row"><span class="label">최근 복구 소요</span><span class="val" id="bRecMs">-- ms</span></div>
+  <div class="row"><span class="label">오류 피크 (RX/TX)</span><span class="val" id="bErrPeak">0 / 0</span></div>
+
+  <div class="row" style="display:none;border-top:1px solid var(--bd);margin-top:6px;padding-top:8px">
+    <div class="labelWrap">
+      <span class="label">&#9201; BUS-OFF 쿨다운 (ms)</span>
+      <span class="meta">300~10000ms, 기본 1000ms. 재부팅 후에도 유지됨</span>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center">
+      <input type="number" id="boCoolMs" min="300" max="10000" step="100" value="1000"
+             style="width:80px;padding:4px 6px;background:var(--bg2);color:var(--tx);border:1px solid var(--bd);border-radius:4px;font-size:13px">
+      <button onclick="applyBusCooldown()" style="padding:4px 10px;font-size:12px;background:var(--acc);color:#fff;border:none;border-radius:4px;cursor:pointer">적용</button>
+    </div>
+  </div>
+  <div class="row" style="border-top:1px solid var(--bd);margin-top:6px;padding-top:8px">
+    <div class="labelWrap">
+      <span class="label">&#128260; BUS-OFF 복구 모드</span>
+      <span class="meta" id="metaBoMode">Hard=하드 재설치(기본/안전) | Soft=ESP권장 소프트복구+폴백</span>
+      <span class="meta" id="metaBoModeCurrent">현재: Hard(기본)</span>
+      <span class="meta" id="boFallbackInfo"></span>
+    </div>
+    <label class="sw"><input type="checkbox" id="tBoMode" onchange="toggleBoMode(this)"><span class="sl"></span></label>
+  </div>
+  <!-- [v4.4 실험 토글] Single Shot TX -->
+  <div class="row" style="display:none;border-top:1px solid var(--bd);margin-top:4px;padding-top:6px"
+       title="ON: echo TX 충돌 시 자동 재전송 금지(TEC 억제 기대) | OFF: 기본(TWAI 자동 재전송)">
+    <div class="labelWrap">
+      <span class="label">&#9889; Single Shot TX</span>
+      <span class="meta">ON=충돌 시 재전송 금지(TEC억제 실험) | OFF=기본(자동재전송)</span>
+      <span class="meta" id="metaSsTxCurrent">현재: OFF(기본)</span>
+    </div>
+    <label class="sw"><input type="checkbox" id="tSsTx" onchange="toggleSsTx(this)"><span class="sl"></span></label>
+  </div>
+  <!-- [v4.4 실험 토글] BUS-OFF stop skip -->
+  <div class="row" style="display:none;border-top:1px solid var(--bd);margin-top:4px;padding-top:6px"
+       title="ON: BUS-OFF 상태에서 twai_stop() 생략(v4.4 state machine 준수) | OFF: 기본">
+    <div class="labelWrap">
+      <span class="label">&#128683; BUS-OFF stop skip</span>
+      <span class="meta">ON=BUS-OFF 시 stop() 생략(v4.4준수 실험) | OFF=기본</span>
+      <span class="meta" id="metaBoStopCurrent">현재: OFF(기본)</span>
+    </div>
+    <label class="sw"><input type="checkbox" id="tBoStop" onchange="toggleBoStop(this)"><span class="sl"></span></label>
+  </div>
+  <div class="row" style="justify-content:center;gap:8px;margin-top:4px;flex-wrap:wrap">
+    <button onclick="loadBusOffLog()" style="padding:5px 12px;font-size:12px;background:var(--acc);color:#fff;border:none;border-radius:4px;cursor:pointer">&#8635; 새로고침</button>
+    <button onclick="clearBusOffLog()" style="padding:5px 12px;font-size:12px;background:#c0392b;color:#fff;border:none;border-radius:4px;cursor:pointer">&#128465; 로그 클리어</button>
+    <a href="/api/busoff-log-dl" download="busoff_log.csv"
+       style="padding:5px 12px;font-size:12px;background:var(--bg2);color:var(--tx);border:1px solid var(--bd);border-radius:4px;text-decoration:none">&#128229; CSV 다운로드</a>
+  </div>
+  <div style="display:flex;justify-content:center;margin-top:2px">
+    <span id="boLogMeta" style="font-size:11px;color:var(--tx4)"></span>
+  </div>
+  <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr style="background:var(--bg2);color:var(--tx4)">
+          <th style="padding:4px 8px;text-align:left">#</th>
+          <th style="padding:4px 8px;text-align:left">시각(s)</th>
+          <th style="padding:4px 8px;text-align:left">TEC</th>
+          <th style="padding:4px 8px;text-align:left">REC</th>
+          <th style="padding:4px 8px;text-align:left">복구(ms)</th>
+          <th style="padding:4px 8px;text-align:left">간격(s)</th>
+          <th style="padding:4px 8px;text-align:left">결과</th>
+        </tr>
+      </thead>
+      <tbody id="boLogBody"></tbody>
+      </table>
+    </div>
+</div>
 <script>
 var logSince=0,errCount=0;
-var profNames=['Chill','Normal','Hurry','Max','Sloth'];
-
+var baseUptimeMs=0,baseUptimeTs=0,detailPollingStarted=false;
 function fmt(s){
   var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;
   return h+':'+(m<10?'0':'')+m+':'+(sec<10?'0':'')+sec;
 }
-
 function setDot(el,on){
+  if(!el)return;
   el.textContent='';
   var d=document.createElement('span');
   d.className='dot '+(on?'on':'off');
@@ -283,168 +606,531 @@ function setDot(el,on){
   el.appendChild(document.createTextNode(' '+(on?'Active':'Off')));
   el.className='val '+(on?'on':'off');
 }
-
-function setFeatureState(el,feature){
-  if(!feature||!feature.supported){
-    el.textContent='Unavailable';
-    el.className='val off';
-    return;
-  }
-  setDot(el,feature.enabled);
+async function togSwitch(path,el,confirmMsg){
+  if(el.disabled)return;
+  if(confirmMsg&&el.checked&&!confirm(confirmMsg)){el.checked=!el.checked;return;}
+  try{
+    var r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:el.checked})});
+    if(!r.ok)throw new Error('toggle');
+  }catch(e){el.checked=!el.checked;}
 }
-
-function setFeatureToggle(toggleId,metaId,feature){
-  var toggle=document.getElementById(toggleId);
-  var meta=document.getElementById(metaId);
-  if(!feature){
-    toggle.checked=false;
-    toggle.disabled=true;
-    meta.textContent='Unavailable';
-    return;
-  }
-  toggle.checked=!!feature.enabled;
-  toggle.disabled=!feature.supported;
-  if(!feature.supported){
-    meta.textContent='Not available in this build';
-  }else if(feature.build_enabled){
-    meta.textContent='Included in this build';
-  }else{
-    meta.textContent='Runtime switch';
-  }
+function toggleTheme(){
+  var html=document.documentElement;
+  var cur=html.getAttribute('data-theme')||'dark';
+  var next=cur==='dark'?'light':'dark';
+  html.setAttribute('data-theme',next);
+  var btn=document.getElementById('theme-btn');
+  if(btn)btn.textContent=next==='dark'?'\u2600 Light':'\ud83c\udf19 Dark';
+  fetch('/api/theme?v='+next,{method:'POST'}).catch(function(){});
 }
-
-function setOtaStatus(msg,isErr){
-  var el=document.getElementById('otaStatus');
-  el.textContent=msg||'';
-  el.style.color=isErr?'#ff6b6b':'#a8b2d8';
+var _nagMode=0;
+var _nagModePhaseLabels=['idle','grace','s2지연','s2mild','s3지연','ramp','hold'];
+function updateNagModeUi(mode){
+  _nagMode=mode;
+  var dA=document.getElementById('nagDescA');
+  var dB=document.getElementById('nagDescB');
+  var bA=document.getElementById('btnNagA');
+  var bB=document.getElementById('btnNagB');
+  var lbl=document.getElementById('nagModeLabel');
+  if(dA)dA.style.display=(mode===0)?'block':'none';
+  if(dB)dB.style.display=(mode===1)?'block':'none';
+  if(bA){bA.style.outline=mode===0?'2px solid var(--acc2)':'';bA.style.fontWeight=mode===0?'bold':'';}
+  if(bB){bB.style.outline=mode===1?'2px solid var(--acc2)':'';bB.style.fontWeight=mode===1?'bold':'';}
+  if(lbl)lbl.textContent=mode===1?'B 스마트 활성':'A 스텔스 활성';
+  if(lbl)lbl.style.color=mode===1?'var(--acc2)':'var(--muted)';
 }
-
+function setNagMode(m){
+  fetch('/api/nag-mode?m='+m,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+    updateNagModeUi(d.mode||0);
+  }).catch(function(){alert('모드 전환 실패');});
+}
+function tickNagStats(){
+  fetch('/api/nag-stats').then(function(r){return r.json();}).then(function(d){
+    var stateColors={'running':'var(--acc2)','bus_off':'var(--err)','recovering':'var(--warn)','init':'var(--tx3)'};
+    var bTwai=document.getElementById('bTwai');
+    if(bTwai){bTwai.textContent=d.canState||'--';bTwai.style.color=stateColors[d.canState]||'';}
+    var bHz=document.getElementById('bHz');if(bHz)bHz.textContent=d.rx>0?d.rx+' 프레임':'--';
+    var bFilt=document.getElementById('bFilt');if(bFilt)bFilt.textContent=(d.rx||0)+'/'+(d.frames921||0);
+    var a880=d.last880AgeMs||0;
+    var b880=document.getElementById('b880Info');if(b880)b880.textContent=(d.rx||0)+' / '+(a880>0?(a880/1000).toFixed(1)+'s':'--');
+    var a921=d.last921AgeMs||0;
+    var b921=document.getElementById('b921Info');if(b921)b921.textContent=(d.frames921||0)+' / '+(a921>0?(a921/1000).toFixed(1)+'s':'--');
+    var bMode=document.getElementById('bMode');if(bMode)bMode.textContent=d.torqueNm!==undefined?d.torqueNm.toFixed(1)+'Nm':'--';
+    var bEcho=document.getElementById('bEcho');if(bEcho)bEcho.textContent=d.echo||0;
+    var bBusOff=document.getElementById('bBusOff');if(bBusOff)bBusOff.textContent=d.busoffCount||0;
+    var bRecMs=document.getElementById('bRecMs');if(bRecMs)bRecMs.textContent='-- ms';
+    var bErrPeak=document.getElementById('bErrPeak');if(bErrPeak)bErrPeak.textContent=(d.recNow||0)+' / '+(d.tecPeak||0);
+    if(d.boSoftMode!==undefined&&_boSoftMode!==!!d.boSoftMode){_boSoftMode=!!d.boSoftMode;updateBoModeUi();}
+    if(d.singleShotTx!==undefined&&_singleShotTx!==!!d.singleShotTx){_singleShotTx=!!d.singleShotTx;updateSsTxUi();}
+    if(d.busOffStopSkip!==undefined&&_busOffStopSkip!==!!d.busOffStopSkip){_busOffStopSkip=!!d.busOffStopSkip;updateBoStopUi();}
+    // 모드 업데이트
+    var newMode=(d.mode===1)?1:0;
+    if(newMode!==_nagMode)updateNagModeUi(newMode);
+    // Mode B 상태 업데이트
+    var eApst=document.getElementById('ns_apst');if(eApst)eApst.textContent=d.dasApState!==undefined?d.dasApState:'--';
+    var eAngle=document.getElementById('ns_angle');if(eAngle)eAngle.textContent=d.steerAngleDeg!==undefined?d.steerAngleDeg.toFixed(1)+'°':'--';
+    var eMbph=document.getElementById('ns_mbphase');
+    if(eMbph){var ph=d.modeBPhase||0;eMbph.textContent=_nagModePhaseLabels[ph]||ph;}
+    var eMbInj=document.getElementById('ns_mbinject');if(eMbInj)eMbInj.textContent=d.modeBInjects||0;
+    var eMbNm=document.getElementById('ns_mbnm');if(eMbNm)eMbNm.textContent=d.modeBLastNm!==undefined?d.modeBLastNm.toFixed(2)+'Nm':'--';
+    var eRx297=document.getElementById('ns_rx297');if(eRx297)eRx297.textContent=d.frames297||0;
+    // nag-stats 공통 필드
+    var nsRx=document.getElementById('ns_rx');if(nsRx)nsRx.textContent=d.rx||0;
+    var nsEcho=document.getElementById('ns_echo');if(nsEcho)nsEcho.textContent=d.echo||0;
+    var nsFail=document.getElementById('ns_fail');if(nsFail)nsFail.textContent=d.txFail||0;
+    var nsCs=document.getElementById('ns_cs');if(nsCs){nsCs.textContent=d.canState||'--';var c={'running':'var(--ok)','bus_off':'var(--err)','recovering':'var(--warn)'};nsCs.style.color=c[d.canState]||'';}
+    var nsDas=document.getElementById('ns_das');if(nsDas)nsDas.textContent=d.dasHandsState!==undefined?d.dasHandsState:'--';
+    var nsTec=document.getElementById('ns_tec');if(nsTec)nsTec.textContent=(d.tecNow||0)+' / '+(d.tecPeak||0);
+  }).catch(function(){});
+}
+function loadBusOffLog(){
+  fetch('/api/busoff-log').then(function(r){return r.json();}).then(function(d){
+    var tbody=document.getElementById('boLogBody');
+    var meta=document.getElementById('boLogMeta');
+    if(meta)meta.textContent='BUS-OFF 이벤트: '+(d.count||0)+'건';
+    if(!tbody)return;
+    if(!d.events||d.events.length===0){
+      tbody.innerHTML='<tr><td colspan="7" style="padding:10px;text-align:center;color:var(--muted)">BUS-OFF 이벤트 없음</td></tr>';
+      return;
+    }
+    tbody.innerHTML=d.events.map(function(e){
+      return '<tr style="border-bottom:1px solid var(--bd)">'
+        +'<td style="padding:4px 8px">'+e.seq+'</td>'
+        +'<td style="padding:4px 8px">'+(e.ts/1000).toFixed(1)+'s</td>'
+        +'<td style="padding:4px 8px;color:'+(e.tec>=128?'var(--bad)':'var(--tx)')+'">'+e.tec+'</td>'
+        +'<td style="padding:4px 8px">'+e.rec+'</td>'
+        +'<td style="padding:4px 8px">'+e.dur_ms+'ms</td>'
+        +'<td style="padding:4px 8px">'+(e.since_ms>0?(e.since_ms/1000).toFixed(1)+'s':'--')+'</td>'
+        +'<td style="padding:4px 8px;color:'+(e.ok?'var(--ok)':'var(--bad)')+'">'+(e.ok?'&#x2705; 성공':'&#x274C; 실패')+'</td>'
+        +'</tr>';
+    }).join('');
+  }).catch(function(){});
+}
 async function poll(){
   try{
     var r=await fetch('/api/status?log_since='+logSince);
     if(!r.ok)throw new Error('status');
     var d=await r.json();
-    var f=d.features||{};
-
-    setDot(document.getElementById('fsd'),d.fsd_enabled);
-    setFeatureState(document.getElementById('ffsd'),f.bypass_tlssc_requirement);
-    setFeatureState(document.getElementById('isa'),f.isa_speed_chime_suppress);
-    setFeatureState(document.getElementById('evd'),f.emergency_vehicle_detection);
-    setFeatureState(document.getElementById('eap'),f.enhanced_autopilot);
-    setFeatureState(document.getElementById('nag'),f.nag_killer);
-    document.getElementById('prof').textContent=profNames[d.speed_profile]||('P'+d.speed_profile);
-    document.getElementById('soff').textContent=d.speed_offset;
-    document.getElementById('up').textContent=fmt(d.uptime_s);
-
-    setFeatureToggle('tFsd','metaFsd',f.bypass_tlssc_requirement);
-    setFeatureToggle('tIsa','metaIsa',f.isa_speed_chime_suppress);
-    setFeatureToggle('tEvd','metaEvd',f.emergency_vehicle_detection);
-    setFeatureToggle('tEap','metaEap',f.enhanced_autopilot);
-    setFeatureToggle('tNag','metaNag',f.nag_killer);
-    document.getElementById('tLog').checked=d.enable_print;
-
-    if(d.can){
-      var cs=document.getElementById('canst');
-      cs.textContent='';
-      var cd=document.createElement('span');
-      cd.className='dot '+(d.can.state==='RUNNING'?'on':'off');
-      cs.appendChild(cd);
-      cs.appendChild(document.createTextNode(' '+d.can.state));
-      cs.className='val '+(d.can.state==='RUNNING'?'on':(d.can.state==='BUS_OFF'?'off':''));
-      document.getElementById('canfr').textContent=d.can.frames_received;
-      document.getElementById('canfs').textContent=d.can.frames_sent;
-      document.getElementById('canrx').textContent=d.can.rx_errors;
-      document.getElementById('cantx').textContent=d.can.tx_errors;
-      document.getElementById('canbe').textContent=d.can.bus_errors;
-      document.getElementById('canrm').textContent=d.can.rx_missed;
+    var elFsd=document.getElementById('fsd');
+    if(elFsd){elFsd.textContent=d.fsd_enabled?'활성':'비활성';elFsd.className='val '+(d.fsd_enabled?'on':'off');}
+    var elEap=document.getElementById('eap');
+    if(elEap){elEap.textContent=d.enhanced_autopilot?'활성':'비활성';elEap.className='val '+(d.enhanced_autopilot?'on':'off');}
+    var elNag=document.getElementById('nag');
+    if(elNag){elNag.textContent=d.nag_killer?'활성':'비활성';elNag.className='val '+(d.nag_killer?'on':'off');}
+    var sEap=document.getElementById('s-eap');
+    if(sEap){sEap.textContent=d.enhanced_autopilot?'ON':'OFF';sEap.className='stat-val '+(d.enhanced_autopilot?'v-ok':'v-err');}
+    var sNag=document.getElementById('s-nag');
+    if(sNag){sNag.textContent=d.nag_killer?'ON':'OFF';sNag.className='stat-val '+(d.nag_killer?'v-ok':'v-err');}
+    var tAChTx=document.getElementById('tAChTx');if(tAChTx)tAChTx.checked=!!d.a_channel_tx;
+    var tEap=document.getElementById('tEap');if(tEap)tEap.checked=!!d.enhanced_autopilot;
+    var tTsllc=document.getElementById('tTsllc');if(tTsllc)tTsllc.checked=!!d.tsllc_enabled;
+    var tNag=document.getElementById('tNag');if(tNag)tNag.checked=!!d.nag_killer;
+    var tLog=document.getElementById('tLog');if(tLog)tLog.checked=!!d.enable_print;
+    if(d.uptime_ms&&baseUptimeTs===0){baseUptimeMs=d.uptime_ms;baseUptimeTs=Date.now();}
+    var hwBadge=document.getElementById('hw-badge');
+    if(hwBadge&&d.hw_handler){hwBadge.textContent=d.hw_handler;hwBadge.style.display='inline';}
+    var verBadge=document.getElementById('ver-badge');
+    if(verBadge&&d.firmware_version){verBadge.textContent='v'+d.firmware_version;verBadge.style.display='inline';}
+    if(d.theme&&d.theme!==document.documentElement.getAttribute('data-theme')){
+      document.documentElement.setAttribute('data-theme',d.theme);
+      var btn=document.getElementById('theme-btn');
+      if(btn)btn.textContent=d.theme==='dark'?'\u2600 Light':'\ud83c\udf19 Dark';
     }
-
     if(d.logs&&d.logs.length){
       var logEl=document.getElementById('log');
-      for(var i=0;i<d.logs.length;i++){
-        var e=document.createElement('div');
-        e.className='le';
-        var ts=document.createElement('span');
-        ts.className='ts';
-        ts.textContent=fmt(Math.floor(d.logs[i].ts/1000));
-        e.appendChild(ts);
-        e.appendChild(document.createTextNode(d.logs[i].msg));
-        logEl.insertBefore(e,logEl.firstChild);
+      if(logEl){
+        for(var i=0;i<d.logs.length;i++){
+          var le=document.createElement('div');le.className='le';
+          var ts=document.createElement('span');ts.className='ts';
+          ts.textContent='['+new Date(d.logs[i].ts).toLocaleTimeString()+'] ';
+          le.appendChild(ts);le.appendChild(document.createTextNode(d.logs[i].msg));
+          logEl.insertBefore(le,logEl.firstChild);
+        }
+        while(logEl.children.length>100)logEl.removeChild(logEl.lastChild);
       }
-      while(logEl.children.length>100)logEl.removeChild(logEl.lastChild);
     }
-
-    logSince=d.log_head;
+    logSince=d.log_head||logSince;
     errCount=0;
-    document.getElementById('connErr').style.display='none';
+    var ce=document.getElementById('connErr');if(ce)ce.style.display='none';
+    if(typeof updateOtaConfirmBanner==='function')updateOtaConfirmBanner(d);
   }catch(e){
     errCount++;
-    if(errCount>3)document.getElementById('connErr').style.display='block';
+    if(errCount>3){var ce2=document.getElementById('connErr');if(ce2)ce2.style.display='block';}
   }
+}
+function clearBusOffLog(){
+  if(!confirm('BUS-OFF 로그를 모두 삭제하시겠습니까?'))return;
+  fetch('/api/busoff-log',{method:'DELETE'}).then(function(){loadBusOffLog();}).catch(function(){alert('클리어 실패');});
+}
+function applyBusCooldown(){
+  var ms=parseInt(document.getElementById('boCoolMs').value)||1000;
+  fetch('/api/busoff-cooldown',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ms:ms})})
+    .then(function(r){return r.json();}).then(function(d){
+      if(d.ok)alert('쿨다운 '+d.ms+'ms 적용 완료');
+    }).catch(function(){alert('적용 실패');});
+}
+// BUS-OFF 복구 모드 토글 (Hard ↔ Soft)
+var _boSoftMode=false;
+function updateBoModeUi(){
+  var sw=document.getElementById('tBoMode');
+  if(sw)sw.checked=!!_boSoftMode;
+  var meta=document.getElementById('metaBoModeCurrent');
+  if(meta)meta.textContent='현재: '+(_boSoftMode?'Soft(ESP권장)':'Hard(기본)');
+}
+function toggleBoMode(el){
+  var nextSoft=!!el.checked;
+  if(nextSoft&&!confirm('소프트 복구(ESP권장)로 전환합니다.\nGND 미접지 환경에서 RECOVERING 고착 위험이 있습니다.\n계속하시겠습니까?')){el.checked=false;return;}
+  fetch('/api/busoff-mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({soft:nextSoft})})
+    .then(function(r){return r.json();}).then(function(d){
+      if(!d.ok)throw new Error('mode');
+      _boSoftMode=!!d.soft;
+      updateBoModeUi();
+    }).catch(function(){el.checked=!nextSoft;alert('전환 실패');});
+}
+// [v4.4 실험] Single Shot TX 토글
+var _singleShotTx=false;
+function updateSsTxUi(){
+  var sw=document.getElementById('tSsTx');
+  if(sw)sw.checked=!!_singleShotTx;
+  var meta=document.getElementById('metaSsTxCurrent');
+  if(meta)meta.textContent='현재: '+(_singleShotTx?'ON(재전송금지)':'OFF(기본)');
+}
+function toggleSsTx(el){
+  var next=!!el.checked;
+  fetch('/api/twai-ss-tx?v='+(next?1:0),{method:'POST'})
+    .then(function(r){if(!r.ok)throw new Error('ss');return r.text();}).then(function(){
+      _singleShotTx=next;
+      updateSsTxUi();
+    }).catch(function(){el.checked=!next;alert('전환 실패');});
+}
+// [v4.4 실험] BUS-OFF stop skip 토글
+var _busOffStopSkip=false;
+function updateBoStopUi(){
+  var sw=document.getElementById('tBoStop');
+  if(sw)sw.checked=!!_busOffStopSkip;
+  var meta=document.getElementById('metaBoStopCurrent');
+  if(meta)meta.textContent='현재: '+(_busOffStopSkip?'ON(v4.4준수)':'OFF(기본)');
+}
+function toggleBoStop(el){
+  var next=!!el.checked;
+  fetch('/api/twai-busoff-stop?v='+(next?1:0),{method:'POST'})
+    .then(function(r){if(!r.ok)throw new Error('stop');return r.text();}).then(function(){
+      _busOffStopSkip=next;
+      updateBoStopUi();
+    }).catch(function(){el.checked=!next;alert('전환 실패');});
 }
 
-async function togSwitch(path,el,confirmMsg){
-  if(el.disabled)return;
-  if(confirmMsg&&el.checked&&!confirm(confirmMsg)){el.checked=false;return;}
+// ── CAN 자가 진단 ──────────────────────────────────────────────────────────
+var diagPollTimer=null,diagLogSince=0;
+async function resetTimeseries(){
+  if(!confirm('시계열/이벤트 로그와 기록 기준점을 초기화합니다. 드라이버 누적 상태와 토글 설정은 유지됩니다.'))return;
+  var st=document.getElementById('diagStatus');
+  try{var r=await fetch('/api/timeseries/reset',{method:'POST'});
+    var d=await r.json();
+    st.textContent=d.ok?'✓ 로그 초기화 완료':'초기화 실패';
+    updateRecStatus();
+  }catch(e){st.textContent='서버 오류';}
+}
+var recTimer=null;
+function fmtElapsed(ms){
+  var s=Math.floor(ms/1000);var h=Math.floor(s/3600);var m=Math.floor((s%3600)/60);s=s%60;
+  return (h?h+':':'')+(m<10?'0':'')+m+':'+(s<10?'0':'')+s;
+}
+async function updateRecStatus(){
+  try{var r=await fetch('/api/timeseries/status');var d=await r.json();
+    var btn=document.getElementById('recBtn');var st=document.getElementById('recStatus');
+    if(d.rec){btn.textContent='⏹ 기록 정지';btn.style.background='#c0392b';
+      st.textContent='🔴 REC '+fmtElapsed(d.elapsed_ms)+' · '+d.samples+'샘플';
+    }else{btn.textContent='⏺ 기록 시작';btn.style.background='';
+      st.textContent=d.start_ms?'⏹ 정지됨 · '+d.samples+'샘플':'';
+    }
+  }catch(e){}
+}
+async function toggleTimeseriesRec(){
+  var btn=document.getElementById('recBtn');
+  var starting=btn.textContent.indexOf('시작')>=0;
+  if(starting&&!confirm('기록을 시작합니다. 기존 로그가 초기화됩니다.'))return;
+  try{await fetch('/api/timeseries/rec',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({start:starting})});
+    updateRecStatus();
+    if(starting){if(!recTimer)recTimer=setInterval(updateRecStatus,1000);}
+    else{if(recTimer){clearInterval(recTimer);recTimer=null;}}
+  }catch(e){}
+}
+async function markApWarning(){
+  var btn=document.getElementById('markBtn');
+  var st=document.getElementById('diagStatus');
+  if(btn){btn.disabled=true;btn.textContent='✓ 기록됨';}
   try{
-    var r=await fetch(path,{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({enabled:el.checked})
-    });
-    if(!r.ok)throw new Error('toggle');
-  }catch(e){
-    el.checked=!el.checked;
-  }
+    var r=await fetch('/api/user-marker?type=ap_warning',{method:'POST'});
+    var d=await r.json();
+    if(st)st.textContent=d.ok?('✓ 경고 시점 기록됨 · '+d.timestamp_ms+'ms'):'마커 실패';
+  }catch(e){if(st)st.textContent='마커 서버 오류';}
+  setTimeout(function(){if(btn){btn.disabled=false;btn.textContent='⚠ 경고 기록';}},1200);
+}
+// 페이지 로드 시 REC 상태 한 번 조회
+setTimeout(function(){updateRecStatus();},1500);
+async function startCanDiag(){
+  var btn=document.getElementById('diagBtn');
+  var logEl=document.getElementById('diagLogEl');
+  var wrap=document.getElementById('diagLogWrap');
+  var st=document.getElementById('diagStatus');
+  btn.disabled=true;btn.textContent='진단 실행 중...';
+  wrap.style.display='block';logEl.textContent='';diagLogSince=0;
+  st.textContent='시작 요청 중...';
+  try{var r=await fetch('/api/can-diag/start',{method:'POST'});
+    var d=await r.json();
+    st.textContent=d.msg||'진단 시작됨';
+  }catch(e){st.textContent='서버 오류 — 재시도';}
+  if(diagPollTimer)clearInterval(diagPollTimer);
+  diagPollTimer=setInterval(pollDiagLog,800);
+}
+async function pollDiagLog(){
+  try{
+    var r=await fetch('/api/can-diag/log?since='+diagLogSince);
+    var d=await r.json();
+    var logEl=document.getElementById('diagLogEl');
+    var st=document.getElementById('diagStatus');
+    if(d.lines&&d.lines.length>0){
+      d.lines.forEach(function(e){logEl.textContent+=e.msg+'\n';});
+      logEl.scrollTop=logEl.scrollHeight;
+      diagLogSince=d.head;
+    }
+    if(d.state===2){
+      clearInterval(diagPollTimer);diagPollTimer=null;
+      var btn=document.getElementById('diagBtn');
+      btn.disabled=false;btn.textContent='다시 진단';
+      st.textContent='✔ 진단 완료';
+    }else if(d.state===1){
+      st.textContent='실행 중 — 임시로 다른 탭 열어도 됩니다';
+    }
+  }catch(e){}
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+function startDetailPolling(){
+  if(detailPollingStarted)return;
+  detailPollingStarted=true;
+  // Nag 실시간 stats 폴링
+  setInterval(tickNagStats,500);
+  tickNagStats();
 }
 
-async function togLog(el){
-  try{
-    var r=await fetch('/api/enable-print',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({enabled:el.checked})
-    });
-    if(!r.ok)throw new Error('log');
-  }catch(e){
-    el.checked=!el.checked;
+function renderUptimeTick(){
+  if(baseUptimeTs===0)return;
+  var elapsed=Date.now()-baseUptimeTs;
+  var seconds=Math.floor((baseUptimeMs+elapsed)/1000);
+  var s=fmt(seconds);
+  document.getElementById('up').textContent=s;
+  var sUpEl=document.getElementById('s-up');
+  if(sUpEl)sUpEl.textContent=s;
+}
+
+// ── OTA 확인/롤백 JS ──────────────────────────────────────────────────────────
+var _otaConfirmTimer=null,_otaRollbackTimer=null;
+var _otaConfirmDeadline=0,_otaRollbackDeadline=0;
+function fmtCountdown(ms){
+  if(ms<=0)return '0:00';
+  var s=Math.ceil(ms/1000);var m=Math.floor(s/60);s=s%60;
+  return m+':'+(s<10?'0':'')+s;
+}
+function updateOtaConfirmBanner(d){
+  var state=d.ota_pending_state||0;
+  var cb=document.getElementById('otaConfirmBanner');
+  var rb=document.getElementById('otaRollbackConfirmBanner');
+  if(state===2&&cb){
+    cb.style.display='block';if(rb)rb.style.display='none';
+    var cl=document.getElementById('otaCurLabel');if(cl)cl.textContent=d.ota_current_label||'--';
+    var fl=document.getElementById('otaFbLabel');if(fl)fl.textContent=d.ota_fallback_label||'--';
+    _otaConfirmDeadline=Date.now()+(d.ota_confirm_remaining_ms||0);
+    if(!_otaConfirmTimer)_otaConfirmTimer=setInterval(function(){
+      var el=document.getElementById('otaConfirmCountdown');
+      if(el)el.textContent=fmtCountdown(_otaConfirmDeadline-Date.now());
+    },500);
+  } else if(state===4&&rb){
+    rb.style.display='block';if(cb)cb.style.display='none';
+    _otaRollbackDeadline=Date.now()+(d.ota_rollback_remaining_ms||0);
+    if(!_otaRollbackTimer)_otaRollbackTimer=setInterval(function(){
+      var el=document.getElementById('otaRollbackCountdown');
+      if(el)el.textContent=fmtCountdown(_otaRollbackDeadline-Date.now());
+    },500);
+  } else {
+    if(cb)cb.style.display='none';if(rb)rb.style.display='none';
+    if(_otaConfirmTimer){clearInterval(_otaConfirmTimer);_otaConfirmTimer=null;}
+    if(_otaRollbackTimer){clearInterval(_otaRollbackTimer);_otaRollbackTimer=null;}
   }
 }
+function otaConfirmFw(){
+  if(!confirm('이 펌웨어를 계속 사용합니다. 확인하시겠습니까?'))return;
+  fetch('/api/ota-confirm',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+    if(d.ok){var b=document.getElementById('otaConfirmBanner');if(b)b.style.display='none';}
+  }).catch(function(){alert('요청 실패');});
+}
+function otaRollbackFw(){
+  if(!confirm('이전 펌웨어로 되돌립니다. 기기가 재부팅됩니다.'))return;
+  fetch('/api/ota-rollback',{method:'POST'}).catch(function(){});
+}
+function otaRecoveryConfirmFw(){
+  if(!confirm('복구가 완료되었음을 확인합니다.'))return;
+  fetch('/api/ota-recovery-confirm',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+    if(d.ok){var b=document.getElementById('otaRollbackConfirmBanner');if(b)b.style.display='none';}
+  }).catch(function(){alert('요청 실패');});
+}
+function otaEnterRecoveryFw(){
+  if(!confirm('OTA 복구모드로 전환합니다. CAN 기능이 비활성화됩니다.'))return;
+  fetch('/api/ota-enter-recovery',{method:'POST'}).catch(function(){});
+}
+
+setInterval(poll,3000);poll();
+setInterval(renderUptimeTick,250);
+setTimeout(startDetailPolling,15000);
+
+/* wall-clock 동기화: 페이지 로드 시 브라우저 epoch_ms를 디바이스에 POST.
+ * 디바이스는 이를 baseline으로 저장해 logRing 타임스탬프를 ISO 형식으로 변환.
+ * 페이지 재로드/새 클라이언트 접속 시마다 갱신 (드리프트 보정).
+ */
+(function syncDeviceTime(){
+  try{
+    fetch('/api/time?ms='+Date.now(), {method:'POST'}).catch(function(){});
+  }catch(e){}
+})();
+setInterval(function(){
+  try{ fetch('/api/time?ms='+Date.now(), {method:'POST'}).catch(function(){}); }catch(e){}
+}, 60000); // 1분마다 재동기화 (디바이스 millis 드리프트 보정)
+
+
+/* ── Collapsible cards ── */
+(function(){
+  document.querySelectorAll('.card').forEach(function(card){
+    var hdr=card.querySelector(':scope>h2');
+    if(!hdr)return;
+    var titleEl=hdr.tagName==='H2'?hdr:hdr.querySelector('h2');
+    var title=titleEl?titleEl.textContent.trim().slice(0,40):'';
+    var lsKey='tcan-card-'+title.replace(/[^\w\uAC00-\uD7A3]/g,'-').replace(/-+/g,'-').toLowerCase();
+    try{
+      var saved=localStorage.getItem(lsKey);
+      if(saved==='0')card.classList.remove('collapsed');
+      else if(saved==='1')card.classList.add('collapsed');
+    }catch(e){}
+    var btn=document.createElement('button');
+    btn.className='collapse-btn';
+    btn.textContent=card.classList.contains('collapsed')?'\u25BC':'\u25B2';
+    btn.addEventListener('click',function(){
+      var c=card.classList.toggle('collapsed');
+      btn.textContent=c?'\u25BC':'\u25B2';
+      try{localStorage.setItem(lsKey,c?'1':'0');}catch(e){}
+      // B채널 카드 열릴 때 BUS-OFF 로그 자동 로드
+      if(!c && card.id==='bChCard')loadBusOffLog();
+    });
+    hdr.appendChild(btn);
+  });
+})();
+</script>
+</body>
+</html>)rawliteral";
+
+// ── OTA 복구모드 전용 최소 UI ─────────────────────────────────────────────────
+// gOtaRecoveryModeActive==true 일 때 rootHandler 가 이 HTML 을 응답한다.
+// CAN 기능 없이 OTA 업로드 + 재부팅 + 상태 확인만 제공한다.
+const char WEB_RECOVERY_UI_HTML[] = R"rawliteral(<!DOCTYPE html>
+<html lang="ko" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>TeslaCAN — OTA 복구모드</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#1a1a2e;--card:#16213e;--bd:#27304d;--tx:#e0e0e0;--tx2:#cfd5e6;--tx3:#7b84a3;
+  --acc:#00d4aa;--err:#ff6b6b;--warn:#f5a623;--ok:#3dba72;--btn:#00d4aa;--btn-tx:#08111b;}
+body{background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:24px 16px;}
+h1{font-size:1.4em;color:var(--warn);margin-bottom:4px}
+.sub{font-size:.85em;color:var(--tx3);margin-bottom:20px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:20px;width:100%;max-width:480px;margin-bottom:16px}
+.card h2{font-size:1em;margin-bottom:12px;color:var(--tx2)}
+.btn{display:inline-flex;align-items:center;justify-content:center;padding:10px 20px;border-radius:8px;border:none;background:var(--btn);color:var(--btn-tx);font-size:.9em;font-weight:700;cursor:pointer;width:100%;margin-top:8px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.danger{background:var(--err);color:#fff}
+input[type=file]{width:100%;padding:8px;background:#0f0f23;color:var(--tx);border:1px solid var(--bd);border-radius:6px;font-size:.85em;margin-top:8px}
+.status{font-size:.82em;color:var(--tx3);margin-top:8px;min-height:1.2em}
+.warn-box{background:#1a1200;border:1px solid var(--warn);border-radius:8px;padding:12px;font-size:.82em;color:var(--warn);margin-bottom:12px}
+progress{width:100%;height:8px;border-radius:4px;accent-color:var(--acc);margin-top:6px;display:none}
+</style>
+</head>
+<body>
+<h1>&#x26A0; OTA 복구모드</h1>
+<p class="sub">CAN 기능이 비활성화된 상태입니다. 새 펌웨어를 업로드하거나 재부팅하세요.</p>
+
+<div class="card">
+  <h2>&#x1F4E6; 펌웨어 업로드</h2>
+  <div class="warn-box">복구모드에서도 OTA 업로드가 가능합니다. 올바른 .bin 파일을 선택하세요.</div>
+  <input type="file" id="otaFile" accept=".bin">
+  <progress id="otaProgress" value="0" max="100"></progress>
+  <button class="btn" id="otaBtn" onclick="uploadOta()">&#x2B06; 펌웨어 업로드</button>
+  <div class="status" id="otaStatus"></div>
+</div>
+
+<div class="card">
+  <h2>&#x1F504; 재부팅</h2>
+  <p style="font-size:.82em;color:var(--tx3);margin-bottom:8px">재부팅 후 OTA 상태가 초기화되면 정상 모드로 진입할 수 있습니다.</p>
+  <button class="btn danger" onclick="rebootDevice()">&#x1F501; 재부팅</button>
+  <div class="status" id="rebootStatus"></div>
+</div>
+
+<div class="card">
+  <h2>&#x2139; 현재 상태</h2>
+  <div style="font-size:.82em;color:var(--tx3)" id="recInfo">로드 중...</div>
+</div>
+
+<script>
+async function loadRecInfo(){
+  try{
+    var r=await fetch('/api/status');
+    var d=await r.json();
+    var info=document.getElementById('recInfo');
+    if(info){
+      info.innerHTML='<b>파티션:</b> '+(d.ota_current_label||'--')
+        +'<br><b>이전 파티션:</b> '+(d.ota_fallback_label||'--')
+        +'<br><b>OTA 상태:</b> pending='+(d.ota_pending_state||0)
+        +'<br><b>펌웨어:</b> '+(d.firmware_version||'--')+' ('+( d.firmware_build_id||'--')+')';
+    }
+  }catch(e){var i=document.getElementById('recInfo');if(i)i.textContent='상태 조회 실패';}
+}
+loadRecInfo();
 
 function uploadOta(){
   var file=document.getElementById('otaFile').files[0];
-  if(!file){setOtaStatus('Select a firmware file first',true);return;}
-  if(!confirm('Flash '+file.name+' and reboot the device?'))return;
-
+  var st=document.getElementById('otaStatus');
   var btn=document.getElementById('otaBtn');
-  btn.disabled=true;
-  setOtaStatus('Uploading 0%',false);
-
+  var prog=document.getElementById('otaProgress');
+  if(!file){st.textContent='파일을 선택해주세요.';return;}
+  if(!confirm('펌웨어를 업로드합니다. 업로드 중 전원을 끄지 마세요.'))return;
+  btn.disabled=true;btn.textContent='업로드 중...';
+  prog.style.display='block';prog.value=0;
+  st.textContent='업로드 시작...';
   var xhr=new XMLHttpRequest();
   xhr.open('POST','/api/ota');
-  xhr.setRequestHeader('Content-Type','application/octet-stream');
-  xhr.upload.onprogress=function(ev){
-    if(ev.lengthComputable){
-      setOtaStatus('Uploading '+Math.round((ev.loaded/ev.total)*100)+'%',false);
+  xhr.upload.onprogress=function(e){
+    if(e.lengthComputable){
+      prog.value=Math.round(e.loaded/e.total*100);
+      st.textContent='업로드 중: '+prog.value+'%';
     }
   };
   xhr.onload=function(){
-    btn.disabled=false;
-    if(xhr.status>=200&&xhr.status<300){
-      setOtaStatus('Upload complete. Device is rebooting...',false);
-    }else{
-      setOtaStatus(xhr.responseText||'OTA upload failed',true);
-    }
+    try{var d=JSON.parse(xhr.responseText);
+      if(d.ok){st.textContent='업로드 완료 — 재부팅 중...';prog.value=100;}
+      else{st.textContent='실패: '+(d.error||'알 수 없음');btn.disabled=false;}
+    }catch(ex){st.textContent='응답 파싱 오류';btn.disabled=false;}
   };
-  xhr.onerror=function(){
-    btn.disabled=false;
-    setOtaStatus('OTA upload failed',true);
-  };
-  xhr.send(file);
+  xhr.onerror=function(){st.textContent='네트워크 오류';btn.disabled=false;};
+  var fd=new FormData();fd.append('firmware',file);
+  xhr.send(fd);
 }
-
-setInterval(poll,500);
-poll();
+function rebootDevice(){
+  if(!confirm('재부팅합니다.'))return;
+  var st=document.getElementById('rebootStatus');
+  st.textContent='재부팅 중...';
+  fetch('/api/reboot',{method:'POST'}).catch(function(){});
+}
 </script>
 </body>
 </html>)rawliteral";

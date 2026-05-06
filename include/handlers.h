@@ -1,8 +1,7 @@
+// A채널(HW3Handler) 및 B채널(NagHandler) CAN 프레임 핸들러 정의
 #pragma once
 
 #include <memory>
-#include <algorithm>
-#include "can_frame_types.h"
 #include "drivers/can_driver.h"
 #include "can_helpers.h"
 #include "shared_types.h"
@@ -10,402 +9,482 @@
 
 #ifndef NATIVE_BUILD
 #include <Arduino.h>
+#else
+#include <chrono>
+inline unsigned long millis() {
+    return (unsigned long)std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+inline void delayMicroseconds(unsigned int) {}
+inline unsigned long micros() {
+    return (unsigned long)std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 #endif
 
 inline LogRingBuffer logRing;
 
+// 모든 CAN 핸들러의 기본 클래스
 struct CarManagerBase
 {
-    Shared<int> speedProfile{1};
-    Shared<bool> FSDEnabled{false};
-    Shared<bool> enablePrint{true};
-    Shared<uint32_t> frameCount{0};
-    Shared<uint32_t> framesSent{0};
-    Shared<int> speedOffset{0};
-    virtual void handleMessage(CanFrame &frame, CanDriver &driver) = 0;
-    virtual const uint32_t *filterIds() const = 0;
-    virtual uint8_t filterIdCount() const = 0;
+    Shared<int> speedProfile{1};        // (미사용) 속도 프로필
+    Shared<bool> FSDEnabled{false};     // (미사용) FSD 활성화 상태
+    Shared<bool> enablePrint{true};     // 시리얼 출력 활성화 여부
+    Shared<uint32_t> frameCount{0};     // 수신 프레임 카운터
+    Shared<uint32_t> framesSent{0};     // 전송 프레임 카운터
+    Shared<int> speedOffset{0};         // (미사용) 속도 오프셋
+
+    virtual void handleMessage(CanFrame &frame, CanDriver &driver) = 0;  // 프레임 처리 핵심 메소드
+    virtual const uint32_t *filterIds() const = 0;   // 수신 필터 ID 배열
+    virtual uint8_t filterIdCount() const = 0;        // 수신 필터 ID 개수
     virtual ~CarManagerBase() = default;
 };
 
-struct LegacyHandler : public CarManagerBase
-{
-    const uint32_t *filterIds() const override
-    {
-        static constexpr uint32_t ids[] = {69, 1006};
-        return ids;
-    }
-    uint8_t filterIdCount() const override { return 2; }
-
-    void handleMessage(CanFrame &frame, CanDriver &driver) override
-    {
-        // STW_ACTN_RQ (0x045 = 69): Follow-Distance-Stalk as Source for Profile Mapping
-        // byte[1]: 0x00=Pos1, 0x21=Pos2, 0x42=Pos3, 0x64=Pos4, 0x85=Pos5, 0xA6=Pos6, 0xC8=Pos7
-        if (frame.id == 69)
-        {
-            if (frame.dlc < 2)
-                return;
-            uint8_t pos = frame.data[1] >> 5;
-            if (pos <= 1)
-                speedProfile = 2;
-            else if (pos == 2)
-                speedProfile = 1;
-            else
-                speedProfile = 0;
-            return;
-        }
-        if (frame.id == 1006)
-        {
-            if (frame.dlc < 8)
-                return;
-            auto index = readMuxID(frame);
-            if (index == 0)
-                FSDEnabled = isFSDSelectedInUI(frame);
-            if (index == 0 && FSDEnabled)
-            {
-                setBit(frame, 46, true);
-                setSpeedProfileV12V13(frame, speedProfile);
-                framesSent++;
-                driver.send(frame);
-            }
-            if (index == 1)
-            {
-                setBit(frame, 19, false);
-                framesSent++;
-                driver.send(frame);
-            }
-            if (index == 0 && enablePrint)
-            {
-                char buf[LogRingBuffer::kMaxMsgLen];
-                snprintf(buf, sizeof(buf), "LegacyHandler: FSD: %d, Profile: %d",
-                         (bool)FSDEnabled, (int)speedProfile);
-                logRing.push(buf,
-#ifndef NATIVE_BUILD
-                             millis()
-#else
-                             0
-#endif
-                );
-#ifndef NATIVE_BUILD
-                Serial.println(buf);
-#endif
-            }
-        }
-    }
-};
-
+// ===================================================================
+// [A채널] HW3Handler (EAP)
+// ===================================================================
 struct HW3Handler : public CarManagerBase
 {
-    const uint32_t *filterIds() const override
+    bool shouldSkipATx(const char *featureName)
     {
-        static constexpr uint32_t ids[] = {787, 1016, 1021};
-        return ids;
+        uint32_t nowMs = millis();
+        if (!aChannelTxRuntime) {
+            static unsigned long lastAOffLog = 0;
+            if (nowMs - lastAOffLog > 5000) {
+                char buf[80];
+                snprintf(buf, sizeof(buf), "[A-CH] %s 주입 보류: A TX OFF", featureName);
+                logRing.push(buf, nowMs);
+                lastAOffLog = nowMs;
+            }
+            return true;
+        }
+        if (!aTxGuardActive(nowMs)) return false;
+
+        aChannelDiag.aTxGuardSkipCount = (uint32_t)aChannelDiag.aTxGuardSkipCount + 1;
+        static unsigned long lastGuardSkipLog = 0;
+        if (nowMs - lastGuardSkipLog > 5000) {
+            char buf[96];
+            snprintf(buf, sizeof(buf), "🛡️ [A-CH] %s 주입 보류: TX guard active (%s)",
+                     featureName, aTxGuardReasonName((uint8_t)aChannelDiag.aTxGuardLastReason));
+            logRing.push(buf, nowMs);
+            lastGuardSkipLog = nowMs;
+        }
+        return true;
     }
-    uint8_t filterIdCount() const override { return 3; }
-
-    void handleMessage(CanFrame &frame, CanDriver &driver) override
-    {
-        if (frame.id == 787)
-        {
-            if (frame.dlc < 8)
-                return;
-            setTrackModeRequest(frame, kTrackModeRequestOn);
-            frame.data[7] = computeTeslaChecksum(frame);
-            framesSent++;
-            driver.send(frame);
-            return;
-        }
-        if (frame.id == 1016)
-        {
-            if (frame.dlc < 6)
-                return;
-            uint8_t followDistance = (frame.data[5] & 0b11100000) >> 5;
-            switch (followDistance)
-            {
-            case 1:
-                speedProfile = 2;
-                break;
-            case 2:
-                speedProfile = 1;
-                break;
-            case 3:
-                speedProfile = 0;
-                break;
-            default:
-                break;
-            }
-            return;
-        }
-        if (frame.id == 1021)
-        {
-            if (frame.dlc < 8)
-                return;
-            auto index = readMuxID(frame);
-            if (index == 0)
-               // FSDEnabled = isFSDSelectedInUI(frame);
-                FSDEnabled = false; // web UI에서 FSD 선택 여부를 읽는 대신, 항상 false로 고정하여 FSD 모드 진입 자체를 막습니다.
-
-            /*if (index == 0 && FSDEnabled)
-            {
-                speedOffset = std::max(std::min(((uint8_t)((frame.data[3] >> 1) & 0x3F) - 30) * 5, 100), 0);
-                setBit(frame, 46, true);
-                setSpeedProfileV12V13(frame, speedProfile);
-                framesSent++;
-                driver.send(frame);
-            }
-            */
-           
-            if (index == 1)
-            {
-                bool modified = false;
-#if defined(ENHANCED_AUTOPILOT)
-                if (enhancedAutopilotRuntime)
-                {
-                    setBit(frame, 19, false);
-                    setBit(frame, 46, true);
-                    modified = true;
-                }
-#endif
-                if (modified)
-                {
-                    framesSent++;
-                    driver.send(frame);
-                }
-            }
-            if (index == 2 && FSDEnabled)
-            {
-                frame.data[0] &= ~(0b11000000);
-                frame.data[1] &= ~(0b00111111);
-                frame.data[0] |= (speedOffset & 0x03) << 6;
-                frame.data[1] |= (speedOffset >> 2);
-                framesSent++;
-                driver.send(frame);
-            }
-            if (index == 0 && enablePrint)
-            {
-                char buf[LogRingBuffer::kMaxMsgLen];
-                snprintf(buf, sizeof(buf), "HW3Handler: FSD: %d, Profile: %d, Offset: %d",
-                         (bool)FSDEnabled, (int)speedProfile, (int)speedOffset);
-                logRing.push(buf,
-#ifndef NATIVE_BUILD
-                             millis()
-#else
-                             0
-#endif
-                );
-#ifndef NATIVE_BUILD
-                Serial.println(buf);
-#endif
-            }
-        }
-    }
-};
-
-/**
- * NagHandler — Autosteer nag suppression (counter+1 echo method)
- *
- * Replicates the Chinese TSL6P module behavior:
- * - Listens for CAN 880 (0x370) = EPAS3P_sysStatus
- * - When handsOnLevel = 0 (nag would trigger):
- *   1. Copies the real frame
- *   2. Sets byte 3 = 0xB6 (fixed torsionBarTorque = 1.80 Nm)
- *   3. Sets byte 4 |= 0x40 (handsOnLevel = 1)
- *   4. Increments counter (byte 6 lower nibble + 1)
- *   5. Recalculates checksum (byte 7)
- * - The real EPAS frame with the same counter arrives AFTER -> rejected as duplicate
- *
- * Tested: Model Y Performance 2022 HW3, Basic Autopilot
- * Bus: X179 pin 2/3 (CAN bus 4)
- *
- * Enable with build flag: -D NAG_KILLER
- */
-struct NagHandler : public CarManagerBase
-{
-    Shared<bool> nagKillerActive{true};
-    Shared<uint32_t> nagEchoCount{0};
 
     const uint32_t *filterIds() const override
     {
-        static constexpr uint32_t ids[] = {880};
+        static constexpr uint32_t ids[] = {1021};
         return ids;
     }
     uint8_t filterIdCount() const override { return 1; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
-        if (frame.id != 880 || frame.dlc < 8)
-            return;
+        aChannelDiag.framesReceivedTotal++;
+        aChannelDiag.lastFrameIdReceived = frame.id;
 
-        uint8_t handsOn = (frame.data[4] >> 6) & 0x03;
+        aChannelDiag.frames1021++;
 
-        if (!nagKillerActive || !nagKillerRuntime || handsOn != 0)
-            return;
+        if (readMuxID(frame) == 0) {
+#if defined(ENHANCED_AUTOPILOT)
+            if (tsllcRuntime) {
+                if (shouldSkipATx("TSLLC")) return;
+                setBit(frame, 38, true);  // UI_fsdStopsControlEnabled: 스톱사인/신호등 자동 정지 제어 활성화 (TSLLC 검증)
+                setBit(frame, 39, true);  // UI_fsdContinueOnGreenWithCIPV: 앞차 있을 때 녹색신호 자동 출발 활성화 (TSLLC 검증)
+                aChannelDiag.tsllcModifiedCount++;
+                framesSent++;
+                // sendCheck: ERROR_OK=true → aTxOk++, ALLTXBUSY/FAILTX=false → aTxFail++
+                if (driver.sendCheck(frame)) { aChannelDiag.aTxOk++; aChannelDiag.lastTxMs = millis(); }
+                else                           aChannelDiag.aTxFail++;
 
-        CanFrame echo;
-        echo.id = 880;
-        echo.dlc = 8;
-
-        echo.data[0] = frame.data[0];
-        echo.data[1] = frame.data[1];
-        echo.data[2] = (frame.data[2] & 0xF0) | 0x08;
-        echo.data[5] = frame.data[5];
-
-        // Fixed torque = 1.80 Nm (tRaw = 0x08B6)
-        echo.data[3] = 0xB6;
-
-        // handsOnLevel = 1
-        echo.data[4] = frame.data[4] | 0x40;
-
-        // Counter + 1
-        uint8_t cnt = (frame.data[6] & 0x0F);
-        cnt = (cnt + 1) & 0x0F;
-        echo.data[6] = (frame.data[6] & 0xF0) | cnt;
-
-        // Checksum: sum(byte0..byte6) + 0x73
-        uint16_t sum = echo.data[0] + echo.data[1] + echo.data[2] + echo.data[3] + echo.data[4] + echo.data[5] + echo.data[6];
-        echo.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
-
-        framesSent++;
-        nagEchoCount++;
-        driver.send(echo);
-
-        if (enablePrint && (nagEchoCount % 500 == 1))
-        {
-            char buf[LogRingBuffer::kMaxMsgLen];
-            snprintf(buf, sizeof(buf), "NagHandler: echo=%u",
-                     (unsigned int)(uint32_t)nagEchoCount);
-            logRing.push(buf,
-#ifndef NATIVE_BUILD
-                         millis()
-#else
-                         0
+                static unsigned long lastTsllcAction = 0;
+                if (millis() - lastTsllcAction > 5000) {
+                    logRing.push("🟢⚡ [A-CH] TSLLC 주입 완료: 정지/출발 제어 활성", millis());
+                    lastTsllcAction = millis();
+                }
+            }
 #endif
-            );
-#ifndef NATIVE_BUILD
-            Serial.println(buf);
+        }
+
+        if (readMuxID(frame) == 1) {
+#if defined(ENHANCED_AUTOPILOT)
+            if (enhancedAutopilotRuntime) {
+                if (shouldSkipATx("EAP")) return;
+                setBit(frame, 19, false);  // UI_applyEceR79=0 (ECE R79 적용 해제, HW3/HW4 공통)
+#if defined(HW3)
+                setBit(frame, 46, true);   // UI_hardCoreSummon HW3용 스마트 서먼 해제 비트
+#elif defined(HW4)
+                setBit(frame, 47, true);   // UI_hardCoreSummon HW4 전용 비트
+#endif
+                aChannelDiag.eapModifiedCount++;
+                framesSent++;
+                if (driver.sendCheck(frame)) { aChannelDiag.aTxOk++; aChannelDiag.lastTxMs = millis(); }
+                else                           aChannelDiag.aTxFail++;
+
+                static unsigned long lastAAction = 0;
+                if (millis() - lastAAction > 5000) {
+                    logRing.push("🔵⚡ [A-CH] 작동 OK: EAP 규제 완화 주입 완료", millis());
+                    lastAAction = millis();
+                }
+            }
 #endif
         }
     }
 };
+ 
 
-struct HW4Handler : public CarManagerBase
+// ===================================================================
+// [B채널] NagHandler (유기적 스텔스 나그 킬러)
+// ===================================================================
+
+struct NagHandler : public CarManagerBase
 {
-    const uint32_t *filterIds() const override
-    {
-#if defined(ISA_SPEED_CHIME_SUPPRESS)
-        static constexpr uint32_t ids[] = {921, 1016, 1021};
+    Shared<bool> nagKillerActive{true};
+    Shared<uint32_t> nagEchoCount{0};
+    Shared<uint8_t> dasHandsOnState{0xFF};
+
+    uint32_t _prngState = 0xDEADBEEF;
+    int16_t _torqWalk = 2230;
+    uint8_t _excFrames = 0;
+    uint16_t _framesUntilExc = 175;
+
+    // ── Mode B 상태머신 변수 ────────────────────────────────────────────────
+    uint8_t  _mbApState    = 0;       // DAS_autopilotState (ID 921 data[0]&0x0F)
+    float    _mbAngleDeg   = 0.0f;    // SCCM_steeringAngle (ID 297)
+    uint8_t  _mbPrevHoSt   = 0xFF;    // 직전 HandsOnState (전이 감지용)
+
+    uint32_t _mbState1EnterMs  = 0;   // 상태1 진입 시각 (500ms grace)
+    uint32_t _mbState1HoldTorq = 2048;
+    uint8_t  _mbState1HoldHo   = 0;
+
+    uint32_t _mbState2EnterMs  = 0;   // 상태2 진입 시각 (2s 딜레이)
+    int16_t  _mbMildWalkRaw    = 2098;// 상태2 random-walk 현재값
+    uint32_t _mbS2HoldUntilMs  = 0;
+    uint32_t _mbS2HoldTorqRaw  = 2048;
+    uint8_t  _mbS2HoldHo       = 0;
+    bool     _mbS2L2WasActive  = false;
+
+    uint32_t _mbStrongEnterMs  = 0;   // 상태3-5 진입 시각 (1s 딜레이)
+    uint32_t _mbStrongActiveMs = 0;   // 강 토크 패턴 시작 시각 (ramp)
+
+    uint32_t _mbLastGeneratedTorqRaw = 2048;
+    uint8_t  _mbLastSpoofedHo        = 0;
+
+    const uint32_t *filterIds() const override {
+        // Mode B는 297(SCCM_steeringAngle)도 필요. 항상 3개 등록해 두면
+        // Mode A에서 297은 handleMessage 내 조기 반환으로 처리된다.
+        static constexpr uint32_t ids[] = {880, 921, 297};
         return ids;
     }
+
     uint8_t filterIdCount() const override { return 3; }
-#else
-        static constexpr uint32_t ids[] = {1016, 1021};
-        return ids;
+
+    // ── 내부 헬퍼 ───────────────────────────────────────────────────────────
+    static bool _mbIsStrongState(uint8_t s) { return s == 3 || s == 4 || s == 5; }
+
+    // Mode B: 수신된 EPAS 880 프레임을 변조해 버스에 주입
+    // torqRaw: 12비트 raw (center=2048), hoLevel: 0-3
+    void _mbSendEcho(const CanFrame &frame, CanDriver &driver, uint16_t torqRaw, uint8_t hoLevel) {
+        CanFrame echo = frame;
+        echo.data[2] = (frame.data[2] & 0xF0) | static_cast<uint8_t>((torqRaw >> 8) & 0x0F);
+        echo.data[3] = static_cast<uint8_t>(torqRaw & 0xFF);
+        echo.data[4] = (frame.data[4] & 0x3F) | static_cast<uint8_t>((hoLevel & 0x03) << 6);
+        echo.data[5] = frame.data[5];
+        uint8_t cnt = ((frame.data[6] & 0x0F) + 1) & 0x0F;
+        echo.data[6] = (frame.data[6] & 0xF0) | cnt;
+        uint16_t sum = echo.data[0] + echo.data[1] + echo.data[2] + echo.data[3]
+                     + echo.data[4] + echo.data[5] + echo.data[6];
+        echo.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
+        driver.send(echo);
+        framesSent++;
+        nagEchoCount++;
+        bChannelDiag.echoCount++;
+        bChannelDiag.lastEchoTxMs = millis();
+        bChannelDiag.modeBInjectCount = (uint32_t)bChannelDiag.modeBInjectCount + 1;
+        // Nm = (raw - 2048) * 0.01
+        bChannelDiag.modeBLastTorqueNm = (static_cast<int32_t>(torqRaw) - 2048) * 0.01f;
     }
-    uint8_t filterIdCount() const override { return 2; }
-#endif
+
+    // Mode B 메인 로직: 880 프레임 처리
+    void _handleModeB(const CanFrame &frame, CanDriver &driver) {
+        // 전역 허용 조건: AP state 3-6 + HandsOnState 활성
+        if (_mbApState < 3 || _mbApState > 6) {
+            bChannelDiag.modeBPhase = 0;
+            bChannelDiag.nagLastDecision = kNagDecisionDasIdle;
+            return;
+        }
+        uint8_t hoSt = (uint8_t)dasHandsOnState;
+        if (hoSt == 0 || hoSt == 8 || hoSt == 15 || hoSt == 0xFF) {
+            // DAS 미수신(0xFF)은 fallback: 스킵(Mode B는 보수적)
+            bChannelDiag.modeBPhase = 0;
+            bChannelDiag.nagLastDecision = (hoSt == 0xFF) ? kNagDecisionNo921 : kNagDecisionDasIdle;
+            return;
+        }
+        // 실제 핸즈온 감지 시 주입 중단
+        uint8_t realHo = (frame.data[4] >> 6) & 0x03;
+        if (realHo != 0) {
+            bChannelDiag.skipHandsOn++;
+            bChannelDiag.modeBPhase = 0;
+            bChannelDiag.nagLastDecision = kNagDecisionHandsOn;
+            return;
+        }
+
+        uint32_t nowMs = millis();
+
+        // ── 상태 전이 처리 ────────────────────────────────────────────────
+        if (_mbPrevHoSt != hoSt) {
+            // 상태1 진입
+            if (hoSt == 1) {
+                _mbState1EnterMs  = nowMs;
+                _mbState1HoldTorq = _mbLastGeneratedTorqRaw;
+                _mbState1HoldHo   = _mbLastSpoofedHo;
+            }
+            if (hoSt != 1) { _mbState1EnterMs = 0; _mbState1HoldTorq = 2048; _mbState1HoldHo = 0; }
+
+            // 상태2 진입
+            if (hoSt == 2) { _mbState2EnterMs = nowMs; }
+            if (hoSt != 2) {
+                _mbState2EnterMs = 0; _mbS2HoldUntilMs = 0;
+                _mbS2HoldTorqRaw = 2048; _mbS2HoldHo = 0; _mbS2L2WasActive = false;
+            }
+
+            // 상태3-5 진입 (그룹 내 이동은 타이머 유지)
+            if (!_mbIsStrongState(_mbPrevHoSt) && _mbIsStrongState(hoSt)) {
+                _mbStrongEnterMs = nowMs;
+                _mbStrongActiveMs = 0;
+            }
+            if (!_mbIsStrongState(hoSt)) { _mbStrongEnterMs = 0; _mbStrongActiveMs = 0; }
+            _mbPrevHoSt = hoSt;
+        }
+
+        uint16_t torqRaw = 2048;
+        uint8_t  hoLevel = 0;
+
+        // ── 상태1: idle (500ms grace만) ───────────────────────────────────
+        if (hoSt == 1) {
+            if (_mbState1EnterMs != 0 && (nowMs - _mbState1EnterMs) < 500UL) {
+                torqRaw = static_cast<uint16_t>(_mbState1HoldTorq);
+                hoLevel = _mbState1HoldHo;
+                bChannelDiag.modeBPhase = 1;
+            } else {
+                // grace 종료 — 주입 없음
+                _mbLastGeneratedTorqRaw = 2048;
+                _mbLastSpoofedHo = 0;
+                bChannelDiag.modeBPhase = 0;
+                bChannelDiag.nagLastDecision = kNagDecisionNoEcho;
+                return;
+            }
+        }
+        // ── 상태2: mild random-walk ──────────────────────────────────────
+        else if (hoSt == 2) {
+            // 2초 딜레이
+            if (_mbState2EnterMs != 0 && (nowMs - _mbState2EnterMs) < 2000UL) {
+                bChannelDiag.modeBPhase = 2;
+                bChannelDiag.nagLastDecision = kNagDecisionNoEcho;
+                return;
+            }
+            bChannelDiag.modeBPhase = 3;
+            // level-2 hold
+            if (nowMs < _mbS2HoldUntilMs) {
+                torqRaw = static_cast<uint16_t>(_mbS2HoldTorqRaw);
+                hoLevel = _mbS2HoldHo;
+            } else {
+                // random-walk in direction opposite steering
+                int16_t minR = 2098, maxR = 2198; // +0.5 ~ +1.5 Nm
+                if (_mbAngleDeg > 0.0f) { minR = 1898; maxR = 1998; } // -1.5 ~ -0.5 Nm
+                if (_mbMildWalkRaw < minR || _mbMildWalkRaw > maxR)
+                    _mbMildWalkRaw = static_cast<int16_t>((minR + maxR) / 2);
+                // xorshift step (재사용)
+                uint32_t r = _prngState; r ^= r<<13; r ^= r>>17; r ^= r<<5; _prngState = r;
+                _mbMildWalkRaw += static_cast<int16_t>(r % 25) - 12;
+                if (_mbMildWalkRaw < minR) _mbMildWalkRaw = minR;
+                if (_mbMildWalkRaw > maxR) _mbMildWalkRaw = maxR;
+                torqRaw = static_cast<uint16_t>(_mbMildWalkRaw);
+                int32_t absR = abs(static_cast<int32_t>(torqRaw) - 2048);
+                hoLevel = (absR >= 200) ? 2 : (absR >= 100) ? 1 : 0;
+                // level-2 최초 진입 → 1초 hold
+                if (hoLevel == 2 && !_mbS2L2WasActive) {
+                    _mbS2HoldUntilMs = nowMs + 1000UL;
+                    _mbS2HoldTorqRaw = torqRaw;
+                    _mbS2HoldHo = 2;
+                    _mbS2L2WasActive = true;
+                }
+            }
+        }
+        // ── 상태3-5: 강 ramp-and-hold ────────────────────────────────────
+        else if (_mbIsStrongState(hoSt)) {
+            // 1초 초기 대기
+            if (_mbStrongEnterMs != 0 && (nowMs - _mbStrongEnterMs) < 1000UL) {
+                bChannelDiag.modeBPhase = 4;
+                bChannelDiag.nagLastDecision = kNagDecisionNoEcho;
+                return;
+            }
+            bChannelDiag.modeBPhase = 5;
+            if (_mbStrongActiveMs == 0) _mbStrongActiveMs = nowMs;
+            uint32_t activeMs = nowMs - _mbStrongActiveMs;
+            uint32_t phase = activeMs % 1500UL;
+            // 0-500ms: ramp 0→2.1Nm, 500-1500ms: hold 2.1Nm
+            uint16_t magnitude; // raw delta from center
+            if (phase < 500UL) {
+                magnitude = static_cast<uint16_t>(210UL * phase / 500UL);  // 0→210 (=2.10Nm)
+            } else {
+                magnitude = 210;
+                bChannelDiag.modeBPhase = 6;
+            }
+            torqRaw = (_mbAngleDeg > 0.0f)
+                      ? static_cast<uint16_t>(2048 - magnitude)
+                      : static_cast<uint16_t>(2048 + magnitude);
+            // 범위 클램프 (abs 최대 2.1Nm = raw ±210)
+            if (torqRaw < 1838) torqRaw = 1838;
+            if (torqRaw > 2258) torqRaw = 2258;
+            int32_t absR2 = abs(static_cast<int32_t>(torqRaw) - 2048);
+            hoLevel = (absR2 >= 200) ? 2 : (absR2 >= 100) ? 1 : 0;
+        } else {
+            bChannelDiag.modeBPhase = 0;
+            bChannelDiag.nagLastDecision = kNagDecisionNoEcho;
+            return;
+        }
+
+        _mbLastGeneratedTorqRaw = torqRaw;
+        _mbLastSpoofedHo = hoLevel;
+        _mbSendEcho(frame, driver, torqRaw, hoLevel);
+        bChannelDiag.nagLastDecision = kNagDecisionEcho;
+        bChannelDiag.realHo = realHo;
+
+        static uint32_t lastMBLog = 0;
+        if (millis() - lastMBLog > 3000) {
+            char buf[96];
+            snprintf(buf, sizeof(buf), "🎯 [B-CH] Mode B 주입 hoSt=%u torq=%u ho=%u ap=%u",
+                     hoSt, torqRaw, hoLevel, _mbApState);
+            logRing.push(buf, millis());
+            lastMBLog = millis();
+        }
+    }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
-#if defined(ISA_SPEED_CHIME_SUPPRESS)
-        if (frame.id == 921)
-        {
-            if (frame.dlc < 8)
-                return;
-            if (!isaSpeedChimeSuppressRuntime)
-                return;
-            frame.data[1] |= 0x20;
-            uint8_t sum = 0;
-            for (int i = 0; i < 7; i++)
-                sum += frame.data[i];
-            sum += (921 & 0xFF) + (921 >> 8);
-            frame.data[7] = sum & 0xFF;
-            framesSent++;
-            driver.send(frame);
+        // ── ID 297 SCCM_steeringAngleSensor: 조향각 갱신 (Mode B용) ─────────
+        if (frame.id == 297) {
+            if (frame.dlc >= 4) {
+                // SCCM_steeringAngle: 16|14@1+ (0.1,-819.2) Little-Endian
+                uint16_t raw = static_cast<uint16_t>(
+                    (frame.data[2] | (static_cast<uint16_t>(frame.data[3]) << 8)) & 0x3FFF);
+                _mbAngleDeg = raw * 0.1f - 819.2f;
+                bChannelDiag.steeringAngleDeg = _mbAngleDeg;
+                bChannelDiag.frames297 = (uint32_t)bChannelDiag.frames297 + 1;
+            }
             return;
         }
+
+        // ── ID 921 DAS_status: AP state + HandsOn state 갱신 ───────────────
+        if (frame.id == 921) {
+            if (frame.dlc >= 6) {
+                uint8_t apSt = frame.data[0] & 0x0F;
+                uint8_t hoSt = (frame.data[5] >> 2) & 0x0F;
+                _mbApState = apSt;
+                bChannelDiag.dasAutopilotStateRx = apSt;
+                dasHandsOnState = hoSt;
+                bChannelDiag.dasHandsOnStateRx = hoSt;
+                bChannelDiag.last921RxMs = millis();
+            }
+            return;
+        }
+
+        // ── ID 880 EPAS3P_sysStatus: 조건부 echo ────────────────────────────
+        if (frame.id != 880 || frame.dlc < 8) return;
+
+        uint8_t handsOn = (frame.data[4] >> 6) & 0x03;
+        uint16_t tRaw = static_cast<uint16_t>(((frame.data[2] & 0x0F) << 8) | frame.data[3]);
+        bChannelDiag.last880RxMs = millis();
+        bChannelDiag.realHo = handsOn;
+        bChannelDiag.realTorqueNm = tRaw * 0.01f - 20.5f;
+
+        if (!nagKillerActive || !nagKillerRuntime) {
+            bChannelDiag.skipRuntimeOrInactive++;
+            bChannelDiag.nagLastDecision = kNagDecisionRuntimeOff;
+            return;
+        }
+
+        // 현재 모드 스냅샷 (portMUX 아래서 읽기)
+        uint8_t currentMode;
+#ifndef NATIVE_BUILD
+        portENTER_CRITICAL(&nagCfgMux);
+        currentMode = nagConfig.mode;
+        portEXIT_CRITICAL(&nagCfgMux);
+#else
+        currentMode = nagConfig.mode;
 #endif
-        if (frame.id == 1016)
-        {
-            if (frame.dlc < 6)
-                return;
-            auto fd = (frame.data[5] & 0b11100000) >> 5;
-            switch (fd)
-            {
-            case 1:
-                speedProfile = 3;
-                break;
-            case 2:
-                speedProfile = 2;
-                break;
-            case 3:
-                speedProfile = 1;
-                break;
-            case 4:
-                speedProfile = 0;
-                break;
-            case 5:
-                speedProfile = 4;
-                break;
+        bChannelDiag.nagMode = currentMode;
+
+        if (currentMode == kNagModeB) {
+            _handleModeB(frame, driver);
+            return;
+        }
+
+        // ── Mode A: 기존 스텔스 PRNG ────────────────────────────────────────
+        if (handsOn != 0) {
+            bChannelDiag.skipHandsOn++;
+            bChannelDiag.nagLastDecision = kNagDecisionHandsOn;
+            return;
+        }
+
+        uint8_t dasState = dasHandsOnState;
+        if (dasState == 0 || dasState == 8) {
+            bChannelDiag.skipDasState++;
+            bChannelDiag.nagLastDecision = kNagDecisionDasIdle;
+            return;
+        }
+        if (dasState == 0xFF) {
+            bChannelDiag.nagFiredNoDas++;
+        }
+
+        uint32_t r = _prngState;
+        r ^= r << 13; r ^= r >> 17; r ^= r << 5;
+        _prngState = r;
+
+        if (_excFrames > 0) {
+            _torqWalk = static_cast<int16_t>(2350 + static_cast<int16_t>(r % 41) - 20);
+            _excFrames--;
+        } else {
+            _torqWalk += static_cast<int16_t>(r % 31) - 15;
+            if (_torqWalk < 2150) _torqWalk = 2150;
+            if (_torqWalk > 2290) _torqWalk = 2290;
+
+            if (_framesUntilExc == 0) {
+                _excFrames = 3 + static_cast<uint8_t>(r % 3);
+                _framesUntilExc = 125 + static_cast<uint16_t>(r % 101);
+            } else {
+                _framesUntilExc--;
             }
         }
-        if (frame.id == 1021)
-        {
-            if (frame.dlc < 8)
-                return;
-            auto index = readMuxID(frame);
-            if (index == 0)
-                FSDEnabled = isFSDSelectedInUI(frame);
-            if (index == 0 && FSDEnabled)
-            {
-                setBit(frame, 46, true);
-                setBit(frame, 60, true);
-#if defined(EMERGENCY_VEHICLE_DETECTION)
-                if (emergencyVehicleDetectionRuntime)
-                    setBit(frame, 59, true);
-#endif
-                framesSent++;
-                driver.send(frame);
-            }
-            if (index == 1)
-            {
-                bool modified = false;
-#if defined(ENHANCED_AUTOPILOT)
-                if (enhancedAutopilotRuntime)
-                {
-                    setBit(frame, 19, false);
-                    setBit(frame, 47, true);
-                    modified = true;
-                }
-#endif
-                if (modified)
-                {
-                    framesSent++;
-                    driver.send(frame);
-                }
-            }
-            if (index == 2)
-            {
-                frame.data[7] &= ~(0x07 << 4);
-                frame.data[7] |= (speedProfile & 0x07) << 4;
-                framesSent++;
-                driver.send(frame);
-            }
-            if (index == 0 && enablePrint)
-            {
-                char buf[LogRingBuffer::kMaxMsgLen];
-                snprintf(buf, sizeof(buf), "HW4Handler: FSD: %d, Profile: %d",
-                         (bool)FSDEnabled, (int)speedProfile);
-                logRing.push(buf,
-#ifndef NATIVE_BUILD
-                             millis()
-#else
-                             0
-#endif
-                );
-#ifndef NATIVE_BUILD
-                Serial.println(buf);
-#endif
-            }
+        uint16_t torqRaw = static_cast<uint16_t>(_torqWalk);
+
+        // --- 에코 프레임 생성 및 데이터 변조 ---
+        CanFrame echo = frame;
+        echo.data[2] = (frame.data[2] & 0xF0) | static_cast<uint8_t>(torqRaw >> 8);
+        echo.data[3] = static_cast<uint8_t>(torqRaw & 0xFF);
+        echo.data[4] = frame.data[4] | 0x40;
+        echo.data[5] = frame.data[5];
+        uint8_t cnt = (frame.data[6] & 0x0F);
+        cnt = (cnt + 1) & 0x0F;
+        echo.data[6] = (frame.data[6] & 0xF0) | cnt;
+        uint16_t sum = echo.data[0] + echo.data[1] + echo.data[2] + echo.data[3] +
+                       echo.data[4] + echo.data[5] + echo.data[6];
+        echo.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
+        driver.send(echo);
+        framesSent++;
+        nagEchoCount++;
+        bChannelDiag.echoCount++;
+        bChannelDiag.lastEchoTxMs = millis();
+        bChannelDiag.nagLastDecision = kNagDecisionEcho;
+
+        static unsigned long lastBAction = 0;
+        if (millis() - lastBAction > 3000) {
+            char buf[80];
+            snprintf(buf, sizeof(buf), "🔥 [B-CH] 나그 방어 발사 (토크=%d)", torqRaw);
+            logRing.push(buf, millis());
+            lastBAction = millis();
         }
     }
 };
