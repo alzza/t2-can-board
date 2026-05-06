@@ -246,14 +246,14 @@ pio run -e lilygo_t2can
 
 ### 유틸리티 스크립트
 
-#### C 주석 박스 정렬 생성기 (`/tmp/gen_box2.py`)
+#### C 주석 박스 정렬 생성기 (`/scripts/gen_box2.py`)
 
 C/C++ 주석 내 박스 다이어그램 (`┌─ ... ─┐ / │ ... │ / └─...─┘`)을 **유니코드 동아시아 문자 너비를 고려해** 오른쪽 `│`가 정확히 열 맞춤되도록 생성한다.
 
 **한글 포함 주석에서 열 맞춤이 어긋날 때** 이 스크립트를 사용한다.
 
 ```python
-# /tmp/gen_box2.py 핵심 구조
+# /scripts/gen_box2.py 핵심 구조
 import unicodedata
 
 def vw(s):  # 시각적 너비: 한글·전각 = 2, 그 외 = 1
@@ -281,7 +281,7 @@ def box_footer():
 1. `lines_c1`, `lines_c0` 리스트에 내용 줄 편집 (유니코드 이스케이프 또는 직접 한글)
 2. `max_w = max(vw(l) for l in all_lines)` 로 최대 너비 확인
 3. `INNER = max_w + 2` 로 여유 설정
-4. `python3 /tmp/gen_box2.py --file` → `/tmp/box_out.txt` 생성
-5. `/tmp/apply_box.py` 로 `src/main.cpp` 내 해당 섹션 교체
+4. `python3 /scripts/gen_box2.py --file` → `/tmp/box_out.txt` 생성
+5. `scripts/gen_box2.py` 로 `src/main.cpp` 내 해당 섹션 교체
 
 **주의**: `heredoc << 'EOF'` 방식은 한글+유니코드 혼용 시 터미널에서 깨짐 → 반드시 `.py` 파일로 저장 후 `python3 파일.py` 실행.
