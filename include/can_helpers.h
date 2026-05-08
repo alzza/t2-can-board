@@ -227,6 +227,9 @@ struct BChannelDiagnostics {
     Shared<uint8_t>  modeBPhase{0};
     Shared<uint32_t> modeBInjectCount{0};            // Mode B 토크 주입 횟수
     Shared<float>    modeBLastTorqueNm{0.0f};        // Mode B 최근 주입 토크 (Nm)
+    Shared<uint32_t> modeBStateEnterMs{0};           // 현재 DAS hands-on state 진입 시각
+    Shared<uint32_t> modeBPhaseEnterMs{0};           // 현재 Mode B phase 진입 시각
+    Shared<uint32_t> modeBFirstEchoDelayMs{0};       // 현재 state 진입 후 첫 Mode B echo까지 걸린 시간(ms), 0=아직 없음
     // BUS-OFF 복구 쿨다운 (ms): 웹 UI /api/busoff-cooldown으로 런타임 조정 가능
     // 300~10000ms 범위, 기본 1000ms. nagKillerTask → driverB->setCooldownMs() 경로로 적용
     Shared<uint32_t> busoffCooldownMs{1000};
@@ -305,7 +308,7 @@ inline const char* aTxGuardReasonName(uint8_t reason)
 
 // ===================================================================
 // BUS-OFF 이벤트 자동 로그 (차량 운행 중 발생 시 자동 기록, 16개 링 버퍼)
-// nagKillerTask에서 busoffCount 증가 감지 시 push, 웹에서 CSV 다운로드
+// nagKillerTask에서 busoffCount 증가 감지 시 push, 통합 로그에 포함
 // ===================================================================
 struct BusOffEvent {
     uint32_t timestampMs;   // 발생 시각 (millis)
@@ -417,6 +420,10 @@ inline constexpr uint8_t  kNagMaxTorqueEntries = 8;
 inline constexpr uint8_t kNagModeA      = 0;
 inline constexpr uint8_t kNagModeB      = 1;
 
+inline constexpr uint16_t kNagModeBState1GraceMs = 500;
+inline constexpr uint16_t kNagModeBState2DelayMs = 2000;
+inline constexpr uint16_t kNagModeBStrongDelayMs = 1000;
+inline constexpr uint16_t kNagModeBStrongRampMs = 500;
 struct NagConfig {
     uint8_t  mode;                              // 현재 항상 kNagModeA
     uint16_t targetId;                          // 현재 항상 kNagFixedTargetId(880)

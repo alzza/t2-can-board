@@ -16,63 +16,65 @@
  *  RTOS 태스크 배치  (★ 중요: 우선순위는 "코어"가 아닌 "태스크"에 부여됨)
  * ═══════════════════════════════════════════════════════════════════════════
  *
- *  ┌── Core 1 (CAN 전용) ───────────────────────────────────────────────────┐
- *  │                                                                        │
- *  │  [nagKillerTask]  prio = 10  ← 이 태스크가 10, Core 1 자체가 10 아님   │
- *  │   │                                                                    │
- *  │   ├─ CAN-A 폴링 (매 iter)                                              │
- *  │   │   └─ appLoop<MCP2515Driver>()                                      │
- *  │   │       └─ HW3Handler (ID 0x3FD / 1021)                              │
- *  │   │           ├─ Mux 0 → TSLLC  bit38/39 인젝션 (스톱사인/초록불)      │
- *  │   │           └─ Mux 1 → EAP    bit19/46 인젝션 (Enhanced Autopilot)   │
- *  │       └─ EFLG/TEC/REC/MERRF 1초 주기 폴링 + TXBO recovery hook       │
- *  │                                                                        │
- *  │   └─ CAN-B 폴링 (매 iter)                                              │
- *  │       └─ TWAI RX (twai_receive, timeout=1ms)                           │
- *  │           ├─ SW 필터: ID 0x370(880) · 0x399(921) 외 즉시 skip          │
- *  │           ├─ NagHandler                                                │
- *  │           │   ├─ Mode A (Stealth PRNG): 나그 메시지 억제               │
- *  │           │   ├─ Mode B (Smart FSM): 상태머신 기반 적응형 억제         │
- *  │           │   └─ checksum: (sum + 0x73) & 0xFF                         │
- *  │           ├─ BUS-OFF 복구: soft(twai_initiate_recovery) → hard fallback│
- *  │           └─ TEC ≥ 96 조기 경고 / BUS-OFF 이벤트 로그 push             │
- *  │                                                                        │
- *  │  [loopTask]  prio = 1  (Arduino 기본)                                  │
- *  │   └─ setup() 완료 후 loop()에서 vTaskDelete(NULL) → 즉시 종료          │
- *  │       (태스크 스택 ~8KB 해제, nagKillerTask 간섭 없음)                 │
- *  │                                                                        │
- *  │  [TWAI ISR]  IRAM flag 조건부 사용                                     │
- *  │   └─ CONFIG_TWAI_ISR_IN_IRAM=y 빌드에서만 ESP_INTR_FLAG_IRAM 설정      │
- *  │       (Arduino-ESP32 기본 S3 sdkconfig 비활성 시 flag 미설정)          │
- *  └────────────────────────────────────────────────────────────────────────┘
+ *  ┌─ Core 1 (CAN 전용) ──────────────────────────────────────────────────────┐
+ *  │                                                                          │
+ *  │  [nagKillerTask]  prio = 10  stack = 8192  pinned Core 1                 │
+ *  │   │                                                                      │
+ *  │   ├─ CAN-A 폴링 (매 iter, MCP2515/SPI)                                   │
+ *  │   │   └─ appLoop<MCP2515Driver>()                                        │
+ *  │   │       ├─ HW3Handler (ID 0x3FD / 1021)                                │
+ *  │   │       │   ├─ Mux 0 → TSLLC  bit38/39 인젝션 (스톱사인/초록불)        │
+ *  │   │       │   └─ Mux 1 → EAP    bit19/46 인젝션 (Enhanced Autopilot)     │
+ *  │   │       └─ EFLG/TEC/REC/MERRF 1초 폴링 + TX guard + TXBO 복구          │
+ *  │   │                                                                      │
+ *  │   └─ CAN-B 폴링 (매 iter, TWAI accept-all + SW 필터)                     │
+ *  │       └─ TWAIDriver::read() → twai_receive(timeout=0)                    │
+ *  │           ├─ RX 제한: iter당 최대 30프레임 처리로 WDT 보호               │
+ *  │           ├─ SW 필터: 880(EPAS) · 921/923(DAS) · 297(SCCM)               │
+ *  │           ├─ NagHandler                                                  │
+ *  │           │   ├─ Mode A (Stealth PRNG): DAS/AP gate 기반 echo            │
+ *  │           │   ├─ Mode B (Smart FSM): AP/phase/torque/angle 기반 echo     │
+ *  │           │   └─ checksum: (sum + 0x73) & 0xFF                           │
+ *  │           ├─ BUS-OFF 복구: soft(twai_initiate_recovery) → hard fallback  │
+ *  │           └─ TEC ≥ 96 조기 경고 / BUS-OFF 이벤트 로그 push               │
+ *  │                                                                          │
+ *  │  [loopTask]  prio = 1  (Arduino 기본)                                    │
+ *  │   └─ setup() 완료 후 loop()에서 vTaskDelete(NULL) → 즉시 종료            │
+ *  │       (태스크 스택 ~8KB 해제, nagKillerTask 간섭 없음)                   │
+ *  │                                                                          │
+ *  │  [TWAI ISR]  IRAM flag 조건부 사용                                       │
+ *  │   └─ CONFIG_TWAI_ISR_IN_IRAM=y 빌드에서만 ESP_INTR_FLAG_IRAM 설정        │
+ *  │       (Arduino-ESP32 기본 S3 sdkconfig 비활성 시 flag 미설정)            │
+ *  └──────────────────────────────────────────────────────────────────────────┘
  *
- *  ┌── Core 0 (WiFi / HTTP / 보조 태스크) ──────────────────────────────────┐
- *  │                                                                        │
- *  │  [WiFi task]      prio = 23  (ESP-IDF 내부 — 직접 생성 아님)           │
- *  │                                                                        │
- *  │  [esp_http_server]  stack = 16384                                      │
- *  │   └─ Web Dashboard (single-file SPA, web_ui.h / web_server.h)          │
- *  │       ├─ GET  /                     → 대시보드 HTML                    │
- *  │       ├─ GET  /api/status           → 통합 상태 JSON (3s polling)      │
- *  │       ├─ POST /api/nag-mode|update  → NagConfig 변경                   │
- *  │       ├─ POST /api/enhanced-autopilot | /api/tsllc | /api/nag-killer   │
- *  │       ├─ POST /api/busoff-mode|cooldown                                │
- *  │       ├─ GET  /api/busoff-log[-dl]  DELETE /api/busoff-log             │
- *  │       ├─ POST /api/twai-ss-tx | /api/twai-busoff-stop                  │
- *  │       ├─ POST /api/can-diag/start   GET /api/can-diag/log              │
- *  │       ├─ GET  /api/logs-bundle | /api/timeseries-csv                   │
- *  │       └─ POST /api/ota | /api/reboot | /api/ota-confirm|rollback       │
- *  │                                                                        │
- *  │  [canAlertTask]   prio = 1  (20ms 주기)                                │
- *  │   └─ TWAIDriver::pollAlerts() → eventLog 기록                          │
- *  │       (nagKillerTask 핫패스와 완전 분리)                               │
- *  │                                                                        │
- *  │  [statusLogTask]  prio = 1  (5s 주기, T2CAN_STATUS_LOG_TASK=0 시 OFF)  │
- *  │   └─ 5초 상태 요약 Serial 출력                                         │
- *  │                                                                        │
- *  │  [timeseriesTask] prio = 1  (5s 주기)                                  │
- *  │   └─ B채널 Hz/에러카운터/결정분포 수집 (최근 30분, CSV 다운로드)       │
- *  └────────────────────────────────────────────────────────────────────────┘
+ *  ┌─ Core 0 (WiFi / HTTP / 보조 태스크) ─────────────────────────────────────┐
+ *  │                                                                          │
+ *  │  [WiFi AP]        SSID = TeslaCAN  AP-only (STA 비활성)                  │
+ *  │                                                                          │
+ *  │  [esp_http_server]  stack = 16384                                        │
+ *  │   └─ Web Dashboard (single-file SPA, web_ui.h / web_server.h)            │
+ *  │       ├─ GET  /                     → 대시보드 HTML                      │
+ *  │       ├─ GET  /api/status           → 통합 상태 JSON (3s polling)        │
+ *  │       ├─ GET  /api/nag-stats        → B채널 Mode A/B 진단 JSON           │
+ *  │       ├─ POST /api/nag-mode|update|reset → NagConfig 변경                │
+ *  │       ├─ POST /api/enhanced-autopilot | /api/tsllc | /api/nag-killer     │
+ *  │       ├─ POST /api/busoff-mode|cooldown | /api/twai-ss-tx                │
+ *  │       ├─ GET  /api/busoff-log[-dl]  DELETE /api/busoff-log               │
+ *  │       ├─ POST /api/can-diag/start   GET /api/can-diag/log                │
+ *  │       ├─ GET  /api/logs-bundle      → [1]~[5] 통합 로그 다운로드         │
+ *  │       ├─ GET  /api/timeseries.csv | /api/events.csv (디버그 보조)        │
+ *  │       └─ POST /api/ota | /api/reboot | /api/ota-confirm|rollback         │
+ *  │                                                                          │
+ *  │  [canAlertTask]   prio = 1  (20ms 주기)                                  │
+ *  │   └─ TWAIDriver::pollAlerts() → eventLog [5] 기록                        │
+ *  │       (nagKillerTask 핫패스와 분리)                                      │
+ *  │                                                                          │
+ *  │  [statusLogTask]  prio = 1  (5s 주기, T2CAN_STATUS_LOG_TASK=0 시 OFF)    │
+ *  │   └─ 5초 상태 요약 Serial 출력                                           │
+ *  │                                                                          │
+ *  │  [timeseriesTask] prio = 1  (5s 주기)                                    │
+ *  │   └─ RAM 120샘플 × 5초 = 최근 10분, 통합 로그 [4] 섹션에 포함            │
+ *  └──────────────────────────────────────────────────────────────────────────┘
  *
  * ═══════════════════════════════════════════════════════════════════════════
  *  NVS (namespace "canmod")  — 전원 OFF 후에도 설정 유지
@@ -462,6 +464,7 @@ void nagKillerTask(void* pvParameters) {
 //   3 → 4  : 복구 파티션 첫 부팅, 복구 확인 창 시작
 //   4 → 5  : 복구 확인 창 중 재부팅 → 복구모드 진입
 //   5      : 복구모드 유지
+// USB 시리얼 플래시 감지: pending!=0 이지만 현재 파티션이 ota_expect_pt와 다를 때 → 클리어
 #if defined(DRIVER_TWAI) && !defined(NATIVE_BUILD)
 static void otaBootCheck()
 {
@@ -471,11 +474,30 @@ static void otaBootCheck()
     uint8_t pending = 0;
     nvs_get_u8(nh, kNvsKeyOtaPending, &pending);
 
+    // USB 시리얼 플래시 감지: OTA 대기 상태인데 현재 파티션이 기대 파티션과 다른 경우
+    // → USB로 다른 파티션에 플래시됐거나 같은 슬롯에 재플래시된 것이므로 OTA 상태 클리어
+    if (pending >= 1 && pending <= 2) {
+        char expectPart[32] = {};
+        size_t sz = sizeof(expectPart);
+        nvs_get_str(nh, kNvsKeyOtaExpectPart, expectPart, &sz);
+        const esp_partition_t *runPart = esp_ota_get_running_partition();
+        if (strlen(expectPart) > 0 && runPart && strcmp(runPart->label, expectPart) != 0) {
+            nvs_set_u8(nh,  kNvsKeyOtaPending,    0);
+            nvs_set_str(nh, kNvsKeyOtaFallback,   "");
+            nvs_set_str(nh, kNvsKeyOtaExpectPart, "");
+            nvs_commit(nh);
+            nvs_close(nh);
+            Serial.printf("[OTA] USB 플래시 감지 (run=%s expect=%s) → OTA 상태 클리어\n",
+                          runPart->label, expectPart);
+            return;
+        }
+    }
+
     if (pending == 1) {
         nvs_set_u8(nh, kNvsKeyOtaPending, 2);
         nvs_commit(nh);
         nvs_close(nh);
-        Serial.println("[OTA] 신 펌웨어 첫 부팅 → pending=2 (3분 확인 시작)");
+        Serial.println("[OTA] 신 펌웨어 첫 부팅 → pending=2 (1분 확인 시작)");
     } else if (pending == 2) {
         // 확인 창 중 재부팅 → 자동 롤백
         char fallback[32] = {};
@@ -623,7 +645,7 @@ void setup() {
     logRing.push("[WEB] 모든 런타임 초기화 완료. 웹 서버 시작", millis());
     webServerInit(gOtaRecoveryModeActive ? nullptr : driverB.get());
     if (!gOtaRecoveryModeActive) {
-        timeseriesStart();  // 5초 간격 시계열 수집 (최근 30분)
+        timeseriesStart();  // 5초 간격 시계열 수집 (최근 10분)
         // [v4.4 ALERT] alert 폴링 태스크 시작 (20ms 주기, Core 0, prio 1)
         gAlertDrv = driverB.get();
         xTaskCreatePinnedToCore(canAlertTask, "alert", 2048, nullptr, 1, nullptr, 0);

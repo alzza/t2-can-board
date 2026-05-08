@@ -117,15 +117,17 @@ static_assert(sizeof(kNvsKeyAChTx) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyASpiMhz) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyAOneShot) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyATxGuard) - 1 <= 15, "NVS key too long");
-static constexpr char kNvsKeyOtaPending[]  = "ota_pending";   // 0=normal 1=written 2=booting
-static constexpr char kNvsKeyOtaFallback[] = "ota_fallback";  // previous partition label
-static constexpr char kNvsKeyBoCool[]      = "bo_cool";       // BUS-OFF 쿨다운 (ms)
-static_assert(sizeof(kNvsKeyBoCool)      - 1 <= 15, "NVS key too long");
-static_assert(sizeof(kNvsKeyOtaPending)  - 1 <= 15, "NVS key too long");
-static_assert(sizeof(kNvsKeyOtaFallback) - 1 <= 15, "NVS key too long");
+static constexpr char kNvsKeyOtaPending[]    = "ota_pending";    // 0=normal 1=written 2=booting
+static constexpr char kNvsKeyOtaFallback[]   = "ota_fallback";   // previous partition label
+static constexpr char kNvsKeyOtaExpectPart[] = "ota_expect_pt";  // expected new partition label
+static constexpr char kNvsKeyBoCool[]        = "bo_cool";        // BUS-OFF 쿨다운 (ms)
+static_assert(sizeof(kNvsKeyBoCool)        - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyOtaPending)    - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyOtaFallback)   - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyOtaExpectPart) - 1 <= 15, "NVS key too long");
 
 // OTA 상태 머신 타이밍 상수
-static constexpr uint32_t kOtaConfirmWindowMs  = 180000;  // 신 FW 확인 창 (3분)
+static constexpr uint32_t kOtaConfirmWindowMs  = 60000;   // 신 FW 확인 창 (1분)
 static constexpr uint32_t kOtaRollbackWindowMs = 60000;   // 복구 확인 창 (1분)
 // OTA 상태 머신 전역 변수
 static uint32_t gOtaConfirmDeadlineMs  = 0;   // pending==2 일 때 만료 시각 (millis)
@@ -1063,6 +1065,9 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "modeBPhase",  (uint8_t)bChannelDiag.modeBPhase);
     cJSON_AddNumberToObject(root, "modeBInjects",(uint32_t)bChannelDiag.modeBInjectCount);
     cJSON_AddNumberToObject(root, "modeBLastNm", (double)(float)bChannelDiag.modeBLastTorqueNm);
+    cJSON_AddNumberToObject(root, "modeBStateAgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.modeBStateEnterMs));
+    cJSON_AddNumberToObject(root, "modeBPhaseAgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.modeBPhaseEnterMs));
+    cJSON_AddNumberToObject(root, "modeBFirstEchoDelayMs", (uint32_t)bChannelDiag.modeBFirstEchoDelayMs);
     // BUS-OFF 복구 모드 상태
     bool isSoftMode = gWebDriverB ? gWebDriverB->getSoftRecovery() : false;
     cJSON_AddBoolToObject(root, "boSoftMode", isSoftMode);
@@ -1306,7 +1311,7 @@ static void shortBuildId(const char *buildId, char *out, size_t out_n) {
 static esp_err_t userMarkerHandler(httpd_req_t *req) {
     uint32_t now = millis();
     uint32_t detail = kUserMarkerApWarning;
-    // 이벤트 링이 alert 폭주로 밀려도 timeseries의 dUserMark가 30분 동안 기준점을 보존한다.
+    // 이벤트 링이 alert 폭주로 밀려도 timeseries의 dUserMark가 10분 동안 기준점을 보존한다.
     userMarkerCount = (uint32_t)userMarkerCount + 1;
     userMarkerLastMs = now;
     userMarkerLastDetail = detail;
@@ -1315,13 +1320,21 @@ static esp_err_t userMarkerHandler(httpd_req_t *req) {
     uint16_t rec = (uint16_t)(uint32_t)bChannelDiag.twaiRxErrNow;
     eventLogPush(EV_USER_MARK, tec, rec, detail);
 
-    char msg[128];
+    char msg[256];
     snprintf(msg, sizeof(msg),
-        "[USER-MARK] AP_WARNING 880=%u 921=%u HO=%u DAS=0x%02X E=%u D=%u Last=%s TEC=%u/REC=%u",
+        "[USER-MARK] AP_WARNING Mode=%c AP=%u Phase=%u 880=%u 921=%u 923=%u 297=%u HO=%u DAS=0x%02X Angle=%.1fdeg Real=%.2fNm MB=%.2fNm E=%u D=%u Last=%s TEC=%u/REC=%u",
+        ((uint8_t)bChannelDiag.nagMode == kNagModeB) ? 'B' : 'A',
+        (unsigned)(uint8_t)bChannelDiag.dasAutopilotStateRx,
+        (unsigned)(uint8_t)bChannelDiag.modeBPhase,
         (unsigned)bChannelDiag.frames880,
         (unsigned)bChannelDiag.frames921,
+        (unsigned)bChannelDiag.frames923,
+        (unsigned)bChannelDiag.frames297,
         (unsigned)(uint8_t)bChannelDiag.realHo,
         (unsigned)(uint8_t)bChannelDiag.dasHandsOnStateRx,
+        (double)(float)bChannelDiag.steeringAngleDeg,
+        (double)(float)bChannelDiag.realTorqueNm,
+        (double)(float)bChannelDiag.modeBLastTorqueNm,
         (unsigned)bChannelDiag.echoCount,
         (unsigned)bChannelDiag.echoDroppedLate,
         nagDecisionName((uint8_t)bChannelDiag.nagLastDecision),
@@ -1337,7 +1350,7 @@ static esp_err_t userMarkerHandler(httpd_req_t *req) {
     return ESP_OK;
 }
 
-// GET /api/logs-bundle — 통합 로그 번들 (런타임 로그 + BUS-OFF 이벤트 + 채널 상태 스냅샷)
+// GET /api/logs-bundle — 통합 로그 번들 (런타임 + BUS-OFF + 스냅샷 + 시계열 + 이벤트)
 static esp_err_t logsBundleHandler(httpd_req_t *req) {
     const uint32_t handlerStartMs = millis();
     webHealthMark(gWebLogsBundleReqCount, gWebLogsBundleLastMs, handlerStartMs);
@@ -1357,7 +1370,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
             "attachment; filename=\"canmod_uptime%u.txt\"", (unsigned)millis());
     }
     httpd_resp_set_hdr(req, "Content-Disposition", fname);
-    char line[384];
+    char line[640];
     char tsBuf[40];
 
     // 메타 정보 (Generated at = wall-clock, Boot at = wall-clock baseline)
@@ -1573,8 +1586,8 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         httpd_resp_sendstr_chunk(req, line);
     }
 
-    // 섹션 4: 30분 시계열 로그 (5초 × 360 샘플)
-    httpd_resp_sendstr_chunk(req, "\r\n=== [4] 30분 시계열 로그 ===\r\n");
+    // 섹션 4: 10분 시계열 로그 (5초 × 120 샘플)
+    httpd_resp_sendstr_chunk(req, "\r\n=== [4] 10분 시계열 로그 ===\r\n");
     size_t tsN = 0;
     size_t tsSnapHead = 0;
     uint32_t tsSnapResetMs = 0;
@@ -1587,7 +1600,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         tsSnapRecording ? "ON" : "OFF", (unsigned)tsN);
     httpd_resp_sendstr_chunk(req, line);
     httpd_resp_sendstr_chunk(req,
-        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,nagMode,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision\r\n");
+        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,nagMode,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,f297,apState,modeBPhase,steerDeg,realTorqueNm,modeBInject,modeBLastNm,age880Ms,ageDasMs,age297Ms,ageEchoMs,modeBStateAgeMs,modeBPhaseAgeMs,modeBFirstEchoDelayMs,modeBDelayTargetMs,d297,dModeBInject\r\n");
     {
         size_t start = (tsN < TS_CAP) ? 0 : tsSnapHead;
         if (tsN == 0) {
@@ -1597,7 +1610,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                 TsSample s;
                 timeseriesCopyAt(start + i, s);
                 formatLogTimestamp(s.t_ms, tsBuf, sizeof(tsBuf));
-                snprintf(line, sizeof(line), "%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+                snprintf(line, sizeof(line), "%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%.1f,%.2f,%u,%.2f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
                     tsBuf, (unsigned)s.t_ms,
                     (unsigned)s.busoff, (unsigned)s.tec, (unsigned)s.rec,
                     (unsigned)s.arbLost, (unsigned)s.busErr, (unsigned)s.txFail,
@@ -1612,7 +1625,14 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                     (unsigned)s.dSkipAp, (unsigned)s.dSkipHandsOn, (unsigned)s.dSkipDas,
                     (unsigned)s.dNoDasEcho, (unsigned)s.dUserMark,
                     (unsigned)s.lastDecision,
-                    (unsigned)s.intervalDecision);
+                    (unsigned)s.intervalDecision,
+                    (unsigned)s.f297, (unsigned)s.apState, (unsigned)s.modeBPhase,
+                    (double)s.steerDeg, (double)s.realTorqueNm,
+                    (unsigned)s.modeBInject, (double)s.modeBLastNm,
+                    (unsigned)s.age880Ms, (unsigned)s.ageDasMs, (unsigned)s.age297Ms,
+                    (unsigned)s.ageEchoMs, (unsigned)s.modeBStateAgeMs, (unsigned)s.modeBPhaseAgeMs,
+                    (unsigned)s.modeBFirstEchoDelayMs, (unsigned)s.modeBDelayTargetMs,
+                    (unsigned)s.d297, (unsigned)s.dModeBInject);
                 httpd_resp_sendstr_chunk(req, line);
             }
         }
@@ -1621,8 +1641,8 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
     // 섹션 5: 밀리초 이벤트 로그 (BUS-OFF/Recovery/TWAI alert)
     httpd_resp_sendstr_chunk(req, "\r\n=== [5] 밀리초 이벤트 로그 ===\r\n");
     httpd_resp_sendstr_chunk(req,
-        "# type: 0=BUSOFF 1=REC_OK 2=REC_FAIL 3=REC_SOFT 4=ERR_PASS 5=ARB_LOST 6=BUS_ERR 7=TX_FAIL 8=RX_FULL 9=TX_BACKOFF 10=USER_MARK 11=NAG_MODE\r\n");
-    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING | NAG_MODE detail: 0=A 1=B\r\n");
+        "# type: 0=BUSOFF 1=REC_OK 2=REC_FAIL 3=REC_SOFT 4=ERR_PASS 5=ARB_LOST 6=BUS_ERR 7=TX_FAIL 8=RX_FULL 9=TX_BACKOFF 10=USER_MARK 11=NAG_MODE 12=MODEB_STATE 13=MODEB_PHASE 14=MODEB_FIRST_ECHO\r\n");
+    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING | NAG_MODE detail: 0=A 1=B | MODEB_STATE detail: ap<<16|oldHo<<8|newHo | MODEB_PHASE detail: phase<<24|ap<<16|ho<<8|decision | FIRST_ECHO detail: delay_ms\r\n");
     httpd_resp_sendstr_chunk(req, "wall_time,timestamp_ms,type,typeName,tec,rec,detail\r\n");
     {
         size_t evtN = 0;
@@ -2025,15 +2045,18 @@ static esp_err_t otaHandler(httpd_req_t *req)
     // 만약 새 펌웨어가 크래시로 부팅 완료를 못하면 다음 부팅 시 ota_pending==2를 발견 → 롤백
     {
         const esp_partition_t *running = esp_ota_get_running_partition();
+        const esp_partition_t *nextPart = esp_ota_get_next_update_partition(NULL);
         if (running) {
             nvs_handle_t wh;
             if (nvs_open(kNvsNamespace, NVS_READWRITE, &wh) == ESP_OK) {
                 nvs_set_u8(wh,  kNvsKeyOtaPending,  1);
                 nvs_set_str(wh, kNvsKeyOtaFallback, running->label);
+                nvs_set_str(wh, kNvsKeyOtaExpectPart, nextPart ? nextPart->label : "");
                 nvs_commit(wh);
                 nvs_close(wh);
                 char buf[80];
-                snprintf(buf, sizeof(buf), "[OTA] 롤백 대기 설정: fallback=%s", running->label);
+                snprintf(buf, sizeof(buf), "[OTA] 롤백 대기 설정: fallback=%s expect=%s",
+                         running->label, nextPart ? nextPart->label : "?");
                 Serial.println(buf);
                 logRing.push(buf, millis());
             }

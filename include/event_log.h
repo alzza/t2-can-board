@@ -1,5 +1,5 @@
 // 밀리초 단위 CAN 이벤트 링버퍼 (B채널 진단용)
-// BUS-OFF/Recovery/Alert 발생 시 push, GET /api/events.csv 로 회수
+// 통합 로그 [5] 섹션에 포함되며, /api/events.csv는 디버그용 보조 엔드포인트다.
 // 외과적 추가: 기존 구조 변경 없음
 #pragma once
 #include <stdint.h>
@@ -26,6 +26,9 @@ enum CanEventType : uint8_t {
     EV_TX_BACKOFF     = 9, // TX 백오프 진입
     EV_USER_MARK      = 10, // 사용자가 경고 발생 시점 표시 버튼을 누름
     EV_NAG_MODE       = 11, // Nag 모드 전환 (detail: 0=A, 1=B)
+    EV_MODEB_STATE    = 12, // Mode B DAS hands-on state 전이 (detail: ap<<16 | old<<8 | new)
+    EV_MODEB_PHASE    = 13, // Mode B phase 전이 (detail: phase<<24 | ap<<16 | ho<<8 | decision)
+    EV_MODEB_FIRST_ECHO = 14, // 현재 DAS state 진입 후 첫 echo 지연(ms)
 };
 
 // CSV/통합 번들에서 숫자 event type만 보고 해석하지 않도록 사람이 읽는 이름도 같이 출력한다.
@@ -43,6 +46,9 @@ inline const char* eventTypeName(uint8_t type) {
     case EV_TX_BACKOFF: return "TX_BACKOFF";
     case EV_USER_MARK: return "USER_MARK";
     case EV_NAG_MODE: return "NAG_MODE";
+    case EV_MODEB_STATE: return "MODEB_STATE";
+    case EV_MODEB_PHASE: return "MODEB_PHASE";
+    case EV_MODEB_FIRST_ECHO: return "MODEB_FIRST_ECHO";
     default: return "UNKNOWN";
     }
 }
@@ -118,8 +124,8 @@ inline esp_err_t eventLogCsvHandler(httpd_req_t* req) {
         (unsigned)millis(), (unsigned)n);
     httpd_resp_sendstr_chunk(req, meta);
     httpd_resp_sendstr_chunk(req,
-        "# type: 0=BUSOFF 1=REC_OK 2=REC_FAIL 3=REC_SOFT 4=ERR_PASS 5=ARB_LOST 6=BUS_ERR 7=TX_FAIL 8=RX_FULL 9=TX_BACKOFF 10=USER_MARK 11=NAG_MODE\n");
-    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING | NAG_MODE detail: 0=A 1=B\n");
+        "# type: 0=BUSOFF 1=REC_OK 2=REC_FAIL 3=REC_SOFT 4=ERR_PASS 5=ARB_LOST 6=BUS_ERR 7=TX_FAIL 8=RX_FULL 9=TX_BACKOFF 10=USER_MARK 11=NAG_MODE 12=MODEB_STATE 13=MODEB_PHASE 14=MODEB_FIRST_ECHO\n");
+    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING | NAG_MODE detail: 0=A 1=B | MODEB_STATE detail: ap<<16|oldHo<<8|newHo | MODEB_PHASE detail: phase<<24|ap<<16|ho<<8|decision | FIRST_ECHO detail: delay_ms\n");
     httpd_resp_sendstr_chunk(req, "t_ms,type,typeName,tec,rec,detail\n");
     char line[120];
     size_t start = (n < EVT_CAP) ? 0 : head;

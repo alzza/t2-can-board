@@ -80,6 +80,25 @@ h1{font-size:1.55em;color:var(--acc);margin:0;font-weight:700}
 }
 #theme-btn:hover{border-color:var(--acc);color:var(--acc)}
 
+/* ── OTA sticky 배너 ── */
+.ota-top-banner{
+  position:sticky;top:0;z-index:999;
+  margin:-16px -16px 12px -16px;
+  padding:14px 16px;
+  border-bottom:2px solid;
+  border-radius:0;
+}
+.ota-top-banner.ota-confirm{background:#0d2318;border-color:var(--acc2)}
+.ota-top-banner.ota-rollback{background:#0d1a2e;border-color:var(--warn)}
+.ota-top-banner-title{font-size:1em;font-weight:700;margin-bottom:5px}
+.ota-top-banner.ota-confirm .ota-top-banner-title{color:var(--acc2)}
+.ota-top-banner.ota-rollback .ota-top-banner-title{color:var(--warn)}
+.ota-top-banner-sub{font-size:.82em;color:var(--tx2);margin-bottom:3px}
+.ota-top-banner-meta{font-size:.77em;color:var(--tx3);margin-bottom:4px}
+.ota-top-banner-countdown{font-size:.9em;color:var(--warn);font-weight:700;margin-bottom:10px}
+.ota-top-banner-btns{display:flex;gap:8px}
+.ota-top-banner-btns .btn{margin-top:0;flex:1;padding:10px 8px;font-size:.88em}
+
 /* ── Card ── */
 .card{
   background:var(--card);border-radius:12px;
@@ -288,6 +307,27 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
 </head>
 <body>
 
+<!-- OTA 확인 배너 (pending=2: 웹 OTA 신 FW 부팅, 1분 확인 창) - 페이지 최상단 sticky -->
+<div id="otaConfirmBanner" class="ota-top-banner ota-confirm" style="display:none">
+  <div class="ota-top-banner-title">&#x26A1; 펌웨어 업데이트 확인</div>
+  <div class="ota-top-banner-sub">새 펌웨어가 설치되었습니다. 계속 사용하시겠습니까?</div>
+  <div class="ota-top-banner-meta">현재: <span id="otaCurLabel">--</span> / 이전: <span id="otaFbLabel">--</span></div>
+  <div class="ota-top-banner-countdown">남은 시간: <span id="otaConfirmCountdown">--</span> (초과 시 자동 롤백)</div>
+  <div class="ota-top-banner-btns">
+    <button class="btn" onclick="otaConfirmFw()" style="background:var(--acc2)">&#x2705; 이 펌웨어 사용</button>
+    <button class="btn" onclick="otaRollbackFw()" style="background:var(--err)">&#x21A9; 이전으로 복구</button>
+  </div>
+</div>
+<!-- OTA 복구완료 확인 배너 (pending=4) - 페이지 최상단 sticky -->
+<div id="otaRollbackConfirmBanner" class="ota-top-banner ota-rollback" style="display:none">
+  <div class="ota-top-banner-title">&#x1F504; 펌웨어 복구 완료</div>
+  <div class="ota-top-banner-sub">이전 펌웨어로 복구되었습니다. 정상 동작을 확인해주세요.</div>
+  <div class="ota-top-banner-countdown">남은 시간: <span id="otaRollbackCountdown">--</span> (초과 시 OTA 복구모드 진입)</div>
+  <div class="ota-top-banner-btns">
+    <button class="btn" onclick="otaRecoveryConfirmFw()" style="background:var(--acc2)">&#x2705; 복구 완료 확인</button>
+    <button class="btn" onclick="otaEnterRecoveryFw()" style="background:var(--err)">&#x26A0; 복구모드 진입</button>
+  </div>
+</div>
 <div id="page-hdr">
   <h1>TeslaCAN <span id="hw-badge" style="display:none"></span><span id="ver-badge" style="display:none"></span></h1>
   <div style="display:flex;gap:8px;align-items:center">
@@ -297,28 +337,6 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   </div>
 </div>
 <div id="connErr" class="err">Connection lost. Retrying...</div>
-
-<!-- OTA 확인 배너 (pending=2: 신 FW 부팅, 3분 확인 창) -->
-<div id="otaConfirmBanner" style="display:none;background:#0d2318;border:2px solid var(--acc2);border-radius:12px;padding:16px;margin-bottom:12px">
-  <div style="font-size:1em;font-weight:700;color:var(--acc2);margin-bottom:6px">&#x26A1; 펌웨어 업데이트 확인</div>
-  <div style="font-size:.85em;color:var(--tx2);margin-bottom:4px">새 펌웨어가 설치되었습니다. 계속 사용하시겠습니까?</div>
-  <div style="font-size:.8em;color:var(--tx3);margin-bottom:2px">현재 파티션: <span id="otaCurLabel">--</span> / 이전: <span id="otaFbLabel">--</span></div>
-  <div style="font-size:.88em;color:var(--warn);margin-bottom:10px">남은 시간: <span id="otaConfirmCountdown">--</span> (시간 초과 시 자동 롤백)</div>
-  <div style="display:flex;gap:8px">
-    <button class="btn" onclick="otaConfirmFw()" style="background:var(--acc2);flex:1">&#x2705; 예, 이 펌웨어 사용</button>
-    <button class="btn" onclick="otaRollbackFw()" style="background:var(--err);flex:1">&#x21A9; 아니오, 이전으로 복구</button>
-  </div>
-</div>
-<!-- OTA 복구완료 확인 배너 (pending=4: 복구 파티션 부팅, 1분 확인 창) -->
-<div id="otaRollbackConfirmBanner" style="display:none;background:#0d1a2e;border:2px solid var(--warn);border-radius:12px;padding:16px;margin-bottom:12px">
-  <div style="font-size:1em;font-weight:700;color:var(--warn);margin-bottom:6px">&#x1F504; 펌웨어 복구 완료</div>
-  <div style="font-size:.85em;color:var(--tx2);margin-bottom:10px">이전 펌웨어로 복구되었습니다. 정상 동작을 확인해주세요.</div>
-  <div style="font-size:.88em;color:var(--warn);margin-bottom:10px">남은 시간: <span id="otaRollbackCountdown">--</span> (시간 초과 시 OTA 복구모드 진입)</div>
-  <div style="display:flex;gap:8px">
-    <button class="btn" onclick="otaRecoveryConfirmFw()" style="background:var(--acc2);flex:1">&#x2705; 예, 복구 완료 확인</button>
-    <button class="btn" onclick="otaEnterRecoveryFw()" style="background:var(--err);flex:1">&#x26A0; OTA 복구모드 진입</button>
-  </div>
-</div>
 
 <div id="hdr-status">
   <span class="chan-status"><span class="sdot dot-wait" id="sdot-a"></span><span id="hdr-a">A WAIT</span></span>
@@ -639,6 +657,24 @@ async function togSwitch(path,el,confirmMsg){
     var r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:el.checked})});
     if(!r.ok)throw new Error('toggle');
   }catch(e){el.checked=!el.checked;}
+}
+async function emergencyToggle(){
+  var targets=[
+    {id:'tNag',   path:'/api/nag-killer'},
+    {id:'tEap',   path:'/api/enhanced-autopilot'},
+    {id:'tTsllc', path:'/api/tsllc'},
+    {id:'tAChTx', path:'/api/a-channel-tx'}
+  ];
+  var btn=document.getElementById('emStopBtn');
+  if(btn){btn.disabled=true;btn.textContent='해제 중...';}
+  for(var i=0;i<targets.length;i++){
+    var el=document.getElementById(targets[i].id);
+    if(el&&el.checked){
+      el.checked=false;
+      try{await fetch(targets[i].path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:false})});}catch(e){}
+    }
+  }
+  if(btn){btn.disabled=false;btn.textContent='즉시 기능해제';}
 }
 function toggleTheme(){
   var html=document.documentElement;

@@ -1,5 +1,5 @@
-// 5초 간격 시계열 통계 수집 (최근 30분, RAM wrap-around)
-// 부팅 시 자동 시작 → GET /api/timeseries.csv 로 회수
+// 5초 간격 시계열 통계 수집 (최근 10분, RAM wrap-around)
+// 통합 로그 [4] 섹션에 포함되며, /api/timeseries.csv는 디버그용 보조 엔드포인트다.
 // 외과적 추가: 기존 구조 변경 없음
 #pragma once
 #include "can_helpers.h"
@@ -51,6 +51,23 @@ struct TsSample {
     uint8_t  lastDecision;
     // intervalDecision은 5초 구간 요약, lastDecision은 마지막 880 처리 분기다.
     uint8_t  intervalDecision;
+    uint32_t f297;
+    uint32_t modeBInject;
+    uint16_t d297;
+    uint16_t dModeBInject;
+    uint8_t  apState;
+    uint8_t  modeBPhase;
+    float    steerDeg;
+    float    realTorqueNm;
+    float    modeBLastNm;
+    uint16_t age880Ms;
+    uint16_t ageDasMs;
+    uint16_t age297Ms;
+    uint16_t ageEchoMs;
+    uint16_t modeBStateAgeMs;
+    uint16_t modeBPhaseAgeMs;
+    uint16_t modeBFirstEchoDelayMs;
+    uint16_t modeBDelayTargetMs;
 };
 
 static constexpr size_t TS_CAP = 120;  // 120 × 5s = 10분 (메모리 절약: 31KB → 10.5KB)
@@ -70,6 +87,8 @@ inline volatile uint32_t tsBaseEcho = 0;
 inline volatile uint32_t tsBaseF880 = 0;
 inline volatile uint32_t tsBaseF921 = 0;
 inline volatile uint32_t tsBaseF923 = 0;
+inline volatile uint32_t tsBaseF297 = 0;
+inline volatile uint32_t tsBaseModeBInject = 0;
 inline volatile uint32_t tsBaseEchoDrop = 0;
 inline volatile uint32_t tsBaseSkipRuntime = 0;
 inline volatile uint32_t tsBaseSkipAp = 0;
@@ -82,6 +101,8 @@ inline volatile uint32_t tsPrevEcho = 0;
 inline volatile uint32_t tsPrevF880 = 0;
 inline volatile uint32_t tsPrevF921 = 0;
 inline volatile uint32_t tsPrevF923 = 0;
+inline volatile uint32_t tsPrevF297 = 0;
+inline volatile uint32_t tsPrevModeBInject = 0;
 inline volatile uint32_t tsPrevEchoDrop = 0;
 inline volatile uint32_t tsPrevSkipRuntime = 0;
 inline volatile uint32_t tsPrevSkipAp = 0;
@@ -97,6 +118,18 @@ inline uint32_t tsDelta(uint32_t current, uint32_t base) {
 inline uint16_t tsDelta16(uint32_t current, uint32_t base) {
     uint32_t value = current - base;
     return value > 65535U ? 65535U : (uint16_t)value;
+}
+
+inline uint16_t tsElapsed16(uint32_t nowMs, uint32_t startMs) {
+    if (startMs == 0 || nowMs < startMs) return 0;
+    return tsDelta16(nowMs, startMs);
+}
+
+inline uint16_t tsModeBDelayTargetMs(uint8_t phase) {
+    if (phase == 1) return kNagModeBState1GraceMs;
+    if (phase == 2) return kNagModeBState2DelayMs;
+    if (phase == 4) return kNagModeBStrongDelayMs;
+    return 0;
 }
 
 // CSV 메타 라인 콜백 — web_server.h에서 드라이버 토글 상태 주입·
@@ -118,6 +151,8 @@ static void timeseriesTaskFn(void*) {
         uint32_t cur880 = (uint32_t)bChannelDiag.frames880;
         uint32_t cur921 = (uint32_t)bChannelDiag.frames921;
         uint32_t cur923 = (uint32_t)bChannelDiag.frames923;
+        uint32_t cur297 = (uint32_t)bChannelDiag.frames297;
+        uint32_t curModeBInject = (uint32_t)bChannelDiag.modeBInjectCount;
         uint32_t curDrop = (uint32_t)bChannelDiag.echoDroppedLate;
         uint32_t curSkipRuntime = (uint32_t)bChannelDiag.skipRuntimeOrInactive;
         uint32_t curSkipAp = (uint32_t)bChannelDiag.skipApState;
@@ -129,6 +164,8 @@ static void timeseriesTaskFn(void*) {
         s.f880     = tsDelta(cur880, (uint32_t)tsBaseF880);
         s.f921     = tsDelta(cur921, (uint32_t)tsBaseF921);
         s.f923     = tsDelta(cur923, (uint32_t)tsBaseF923);
+        s.f297     = tsDelta(cur297, (uint32_t)tsBaseF297);
+        s.modeBInject = tsDelta(curModeBInject, (uint32_t)tsBaseModeBInject);
         s.echoDrop = tsDelta(curDrop, (uint32_t)tsBaseEchoDrop);
         s.skipRuntime = tsDelta(curSkipRuntime, (uint32_t)tsBaseSkipRuntime);
         s.skipAp = tsDelta(curSkipAp, (uint32_t)tsBaseSkipAp);
@@ -139,6 +176,8 @@ static void timeseriesTaskFn(void*) {
         s.d880 = tsDelta16(cur880, (uint32_t)tsPrevF880);
         s.d921 = tsDelta16(cur921, (uint32_t)tsPrevF921);
         s.d923 = tsDelta16(cur923, (uint32_t)tsPrevF923);
+        s.d297 = tsDelta16(cur297, (uint32_t)tsPrevF297);
+        s.dModeBInject = tsDelta16(curModeBInject, (uint32_t)tsPrevModeBInject);
         s.dEcho = tsDelta16(curEcho, (uint32_t)tsPrevEcho);
         s.dDrop = tsDelta16(curDrop, (uint32_t)tsPrevEchoDrop);
         s.dSkipRuntime = tsDelta16(curSkipRuntime, (uint32_t)tsPrevSkipRuntime);
@@ -155,12 +194,27 @@ static void timeseriesTaskFn(void*) {
         s.intervalDecision = nagIntervalDecision(s.d880, s.d921 + s.d923, s.dEcho, s.dDrop,
             s.dSkipRuntime, s.dSkipHandsOn, s.dSkipDas,
             (bool)nagKillerRuntime, s.dSkipAp);
+        s.apState = (uint8_t)bChannelDiag.dasAutopilotStateRx;
+        s.modeBPhase = (uint8_t)bChannelDiag.modeBPhase;
+        s.steerDeg = (float)bChannelDiag.steeringAngleDeg;
+        s.realTorqueNm = (float)bChannelDiag.realTorqueNm;
+        s.modeBLastNm = (float)bChannelDiag.modeBLastTorqueNm;
+        s.age880Ms = tsElapsed16(s.t_ms, (uint32_t)bChannelDiag.last880RxMs);
+        s.ageDasMs = tsElapsed16(s.t_ms, (uint32_t)bChannelDiag.lastDasStatusRxMs);
+        s.age297Ms = tsElapsed16(s.t_ms, (uint32_t)bChannelDiag.last297RxMs);
+        s.ageEchoMs = tsElapsed16(s.t_ms, (uint32_t)bChannelDiag.lastEchoTxMs);
+        s.modeBStateAgeMs = tsElapsed16(s.t_ms, (uint32_t)bChannelDiag.modeBStateEnterMs);
+        s.modeBPhaseAgeMs = tsElapsed16(s.t_ms, (uint32_t)bChannelDiag.modeBPhaseEnterMs);
+        s.modeBFirstEchoDelayMs = tsDelta16((uint32_t)bChannelDiag.modeBFirstEchoDelayMs, 0);
+        s.modeBDelayTargetMs = tsModeBDelayTargetMs(s.modeBPhase);
         portENTER_CRITICAL(&tsMux);
         tsBuf[tsHead] = s;
         tsPrevEcho = curEcho;
         tsPrevF880 = cur880;
         tsPrevF921 = cur921;
         tsPrevF923 = cur923;
+        tsPrevF297 = cur297;
+        tsPrevModeBInject = curModeBInject;
         tsPrevEchoDrop = curDrop;
         tsPrevSkipRuntime = curSkipRuntime;
         tsPrevSkipAp = curSkipAp;
@@ -193,6 +247,8 @@ inline void timeseriesReset() {
     tsBaseF880 = (uint32_t)bChannelDiag.frames880;
     tsBaseF921 = (uint32_t)bChannelDiag.frames921;
     tsBaseF923 = (uint32_t)bChannelDiag.frames923;
+    tsBaseF297 = (uint32_t)bChannelDiag.frames297;
+    tsBaseModeBInject = (uint32_t)bChannelDiag.modeBInjectCount;
     tsBaseEchoDrop = (uint32_t)bChannelDiag.echoDroppedLate;
     tsBaseSkipRuntime = (uint32_t)bChannelDiag.skipRuntimeOrInactive;
     tsBaseSkipAp = (uint32_t)bChannelDiag.skipApState;
@@ -204,6 +260,8 @@ inline void timeseriesReset() {
     tsPrevF880 = (uint32_t)bChannelDiag.frames880;
     tsPrevF921 = (uint32_t)bChannelDiag.frames921;
     tsPrevF923 = (uint32_t)bChannelDiag.frames923;
+    tsPrevF297 = (uint32_t)bChannelDiag.frames297;
+    tsPrevModeBInject = (uint32_t)bChannelDiag.modeBInjectCount;
     tsPrevEchoDrop = (uint32_t)bChannelDiag.echoDroppedLate;
     tsPrevSkipRuntime = (uint32_t)bChannelDiag.skipRuntimeOrInactive;
     tsPrevSkipAp = (uint32_t)bChannelDiag.skipApState;
@@ -247,14 +305,14 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
         recording?"ON":"OFF", (unsigned)n);
     httpd_resp_sendstr_chunk(req, meta);
     if (tsMetaWriter) tsMetaWriter(req);  // web_server에서 드라이버 토글 등 주입
-    const char* hdr = "t_s,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,nagMode,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision\n";
+    const char* hdr = "t_s,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,nagMode,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,f297,apState,modeBPhase,steerDeg,realTorqueNm,modeBInject,modeBLastNm,age880Ms,ageDasMs,age297Ms,ageEchoMs,modeBStateAgeMs,modeBPhaseAgeMs,modeBFirstEchoDelayMs,modeBDelayTargetMs,d297,dModeBInject\n";
     httpd_resp_sendstr_chunk(req, hdr);
-    char line[384];
+    char line[640];
     size_t start = (n < TS_CAP) ? 0 : head;  // oldest first
     for (size_t i = 0; i < n; ++i) {
         TsSample s;
         timeseriesCopyAt(start + i, s);
-        snprintf(line, sizeof(line), "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+        snprintf(line, sizeof(line), "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%.1f,%.2f,%u,%.2f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
             (unsigned)(s.t_ms / 1000),
             (unsigned)s.busoff, (unsigned)s.tec, (unsigned)s.rec,
             (unsigned)s.arbLost, (unsigned)s.busErr, (unsigned)s.txFail,
@@ -268,7 +326,14 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
             (unsigned)s.dEcho, (unsigned)s.dDrop, (unsigned)s.dSkipRuntime,
             (unsigned)s.dSkipAp, (unsigned)s.dSkipHandsOn, (unsigned)s.dSkipDas,
             (unsigned)s.dNoDasEcho, (unsigned)s.dUserMark, (unsigned)s.lastDecision,
-            (unsigned)s.intervalDecision);
+            (unsigned)s.intervalDecision,
+            (unsigned)s.f297, (unsigned)s.apState, (unsigned)s.modeBPhase,
+            (double)s.steerDeg, (double)s.realTorqueNm,
+            (unsigned)s.modeBInject, (double)s.modeBLastNm,
+            (unsigned)s.age880Ms, (unsigned)s.ageDasMs, (unsigned)s.age297Ms,
+            (unsigned)s.ageEchoMs, (unsigned)s.modeBStateAgeMs, (unsigned)s.modeBPhaseAgeMs,
+            (unsigned)s.modeBFirstEchoDelayMs, (unsigned)s.modeBDelayTargetMs,
+            (unsigned)s.d297, (unsigned)s.dModeBInject);
         httpd_resp_sendstr_chunk(req, line);
     }
     httpd_resp_sendstr_chunk(req, NULL);

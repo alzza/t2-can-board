@@ -4,6 +4,7 @@
 #include <memory>
 #include "drivers/can_driver.h"
 #include "can_helpers.h"
+#include "event_log.h"
 #include "shared_types.h"
 #include "log_buffer.h"
 
@@ -183,9 +184,48 @@ struct NagHandler : public CarManagerBase
     // ── 내부 헬퍼 ───────────────────────────────────────────────────────────
     static bool _mbIsStrongState(uint8_t s) { return s == 3 || s == 4 || s == 5; }
 
+    static uint16_t _mbClampU16(uint32_t v) {
+        return v > 65535UL ? 65535U : static_cast<uint16_t>(v);
+    }
+
+    static uint32_t _mbPackStateDetail(uint8_t apState, uint8_t oldHoState, uint8_t newHoState) {
+        return (static_cast<uint32_t>(apState) << 16)
+             | (static_cast<uint32_t>(oldHoState) << 8)
+             | static_cast<uint32_t>(newHoState);
+    }
+
+    static uint32_t _mbPackPhaseDetail(uint8_t phase, uint8_t apState, uint8_t hoState, uint8_t decision) {
+        return (static_cast<uint32_t>(phase) << 24)
+             | (static_cast<uint32_t>(apState) << 16)
+             | (static_cast<uint32_t>(hoState) << 8)
+             | static_cast<uint32_t>(decision);
+    }
+
+    void _mbPushTimingEvent(uint8_t type, uint32_t detail) {
+        eventLogPush(type,
+                     _mbClampU16((uint32_t)bChannelDiag.twaiTxErrNow),
+                     _mbClampU16((uint32_t)bChannelDiag.twaiRxErrNow),
+                     detail);
+    }
+
+    void _mbSetPhase(uint8_t phase, uint32_t nowMs, uint8_t decision) {
+        uint8_t prevPhase = (uint8_t)bChannelDiag.modeBPhase;
+        bChannelDiag.modeBPhase = phase;
+        if ((uint32_t)bChannelDiag.modeBPhaseEnterMs == 0 || prevPhase != phase) {
+            bChannelDiag.modeBPhaseEnterMs = nowMs;
+            if (prevPhase != phase) {
+                _mbPushTimingEvent(EV_MODEB_PHASE, _mbPackPhaseDetail(phase, _mbApState, (uint8_t)dasHandsOnState, decision));
+            }
+        }
+        if (phase == 0 && prevPhase != 0) {
+            bChannelDiag.modeBFirstEchoDelayMs = 0;
+        }
+    }
+
     // Mode B: 수신된 EPAS 880 프레임을 변조해 버스에 주입
     // torqRaw: 12비트 raw (center=2048), hoLevel: 0-3
     void _mbSendEcho(const CanFrame &frame, CanDriver &driver, uint16_t torqRaw, uint8_t hoLevel) {
+        uint32_t txMs = millis();
         CanFrame echo = frame;
         echo.data[2] = (frame.data[2] & 0xF0) | static_cast<uint8_t>((torqRaw >> 8) & 0x0F);
         echo.data[3] = static_cast<uint8_t>(torqRaw & 0xFF);
@@ -200,41 +240,54 @@ struct NagHandler : public CarManagerBase
         framesSent++;
         nagEchoCount++;
         bChannelDiag.echoCount++;
-        bChannelDiag.lastEchoTxMs = millis();
+        bChannelDiag.lastEchoTxMs = txMs;
         bChannelDiag.modeBInjectCount = (uint32_t)bChannelDiag.modeBInjectCount + 1;
         // Nm = (raw - 2048) * 0.01
         bChannelDiag.modeBLastTorqueNm = (static_cast<int32_t>(torqRaw) - 2048) * 0.01f;
+        uint32_t enterMs = (uint32_t)bChannelDiag.modeBStateEnterMs;
+        if (enterMs != 0 && (uint32_t)bChannelDiag.modeBFirstEchoDelayMs == 0) {
+            uint32_t delayMs = txMs - enterMs;
+            if (delayMs == 0) delayMs = 1;
+            bChannelDiag.modeBFirstEchoDelayMs = delayMs;
+            _mbPushTimingEvent(EV_MODEB_FIRST_ECHO, delayMs);
+        }
     }
 
     // Mode B 메인 로직: 880 프레임 처리
     void _handleModeB(const CanFrame &frame, CanDriver &driver) {
+        uint32_t nowMs = millis();
+
         // 전역 허용 조건: AP state 3-6 + HandsOnState 활성
         if (_mbApState < 3 || _mbApState > 6) {
             bChannelDiag.skipApState++;
-            bChannelDiag.modeBPhase = 0;
+            _mbSetPhase(0, nowMs, kNagDecisionApBlocked);
             bChannelDiag.nagLastDecision = kNagDecisionApBlocked;
             return;
         }
         uint8_t hoSt = (uint8_t)dasHandsOnState;
         if (hoSt == 0 || hoSt == 8 || hoSt == 15 || hoSt == 0xFF) {
             // DAS 미수신(0xFF)은 fallback: 스킵(Mode B는 보수적)
-            bChannelDiag.modeBPhase = 0;
-            bChannelDiag.nagLastDecision = (hoSt == 0xFF) ? kNagDecisionNo921 : kNagDecisionDasIdle;
+            uint8_t decision = (hoSt == 0xFF) ? kNagDecisionNo921 : kNagDecisionDasIdle;
+            _mbSetPhase(0, nowMs, decision);
+            bChannelDiag.nagLastDecision = decision;
             return;
         }
         // 실제 핸즈온 감지 시 주입 중단
         uint8_t realHo = (frame.data[4] >> 6) & 0x03;
         if (realHo != 0) {
             bChannelDiag.skipHandsOn++;
-            bChannelDiag.modeBPhase = 0;
+            _mbSetPhase(0, nowMs, kNagDecisionHandsOn);
             bChannelDiag.nagLastDecision = kNagDecisionHandsOn;
             return;
         }
 
-        uint32_t nowMs = millis();
-
         // ── 상태 전이 처리 ────────────────────────────────────────────────
         if (_mbPrevHoSt != hoSt) {
+            uint8_t oldHoSt = _mbPrevHoSt;
+            bChannelDiag.modeBStateEnterMs = nowMs;
+            bChannelDiag.modeBFirstEchoDelayMs = 0;
+            _mbPushTimingEvent(EV_MODEB_STATE, _mbPackStateDetail(_mbApState, oldHoSt, hoSt));
+
             // 상태1 진입
             if (hoSt == 1) {
                 _mbState1EnterMs  = nowMs;
@@ -264,15 +317,15 @@ struct NagHandler : public CarManagerBase
 
         // ── 상태1: idle (500ms grace만) ───────────────────────────────────
         if (hoSt == 1) {
-            if (_mbState1EnterMs != 0 && (nowMs - _mbState1EnterMs) < 500UL) {
+            if (_mbState1EnterMs != 0 && (nowMs - _mbState1EnterMs) < kNagModeBState1GraceMs) {
                 torqRaw = static_cast<uint16_t>(_mbState1HoldTorq);
                 hoLevel = _mbState1HoldHo;
-                bChannelDiag.modeBPhase = 1;
+                _mbSetPhase(1, nowMs, kNagDecisionEcho);
             } else {
                 // grace 종료 — 주입 없음
                 _mbLastGeneratedTorqRaw = 2048;
                 _mbLastSpoofedHo = 0;
-                bChannelDiag.modeBPhase = 0;
+                _mbSetPhase(0, nowMs, kNagDecisionNoEcho);
                 bChannelDiag.nagLastDecision = kNagDecisionNoEcho;
                 return;
             }
@@ -280,12 +333,12 @@ struct NagHandler : public CarManagerBase
         // ── 상태2: mild random-walk ──────────────────────────────────────
         else if (hoSt == 2) {
             // 2초 딜레이
-            if (_mbState2EnterMs != 0 && (nowMs - _mbState2EnterMs) < 2000UL) {
-                bChannelDiag.modeBPhase = 2;
+            if (_mbState2EnterMs != 0 && (nowMs - _mbState2EnterMs) < kNagModeBState2DelayMs) {
+                _mbSetPhase(2, nowMs, kNagDecisionNoEcho);
                 bChannelDiag.nagLastDecision = kNagDecisionNoEcho;
                 return;
             }
-            bChannelDiag.modeBPhase = 3;
+            _mbSetPhase(3, nowMs, kNagDecisionEcho);
             // level-2 hold
             if (nowMs < _mbS2HoldUntilMs) {
                 torqRaw = static_cast<uint16_t>(_mbS2HoldTorqRaw);
@@ -316,23 +369,24 @@ struct NagHandler : public CarManagerBase
         // ── 상태3-5: 강 ramp-and-hold ────────────────────────────────────
         else if (_mbIsStrongState(hoSt)) {
             // 1초 초기 대기
-            if (_mbStrongEnterMs != 0 && (nowMs - _mbStrongEnterMs) < 1000UL) {
-                bChannelDiag.modeBPhase = 4;
+            if (_mbStrongEnterMs != 0 && (nowMs - _mbStrongEnterMs) < kNagModeBStrongDelayMs) {
+                _mbSetPhase(4, nowMs, kNagDecisionNoEcho);
                 bChannelDiag.nagLastDecision = kNagDecisionNoEcho;
                 return;
             }
-            bChannelDiag.modeBPhase = 5;
             if (_mbStrongActiveMs == 0) _mbStrongActiveMs = nowMs;
             uint32_t activeMs = nowMs - _mbStrongActiveMs;
             uint32_t phase = activeMs % 1500UL;
             // 0-500ms: ramp 0→2.1Nm, 500-1500ms: hold 2.1Nm
             uint16_t magnitude; // raw delta from center
-            if (phase < 500UL) {
-                magnitude = static_cast<uint16_t>(210UL * phase / 500UL);  // 0→210 (=2.10Nm)
+            uint8_t strongPhase = 5;
+            if (phase < kNagModeBStrongRampMs) {
+                magnitude = static_cast<uint16_t>(210UL * phase / kNagModeBStrongRampMs);  // 0→210 (=2.10Nm)
             } else {
                 magnitude = 210;
-                bChannelDiag.modeBPhase = 6;
+                strongPhase = 6;
             }
+            _mbSetPhase(strongPhase, nowMs, kNagDecisionEcho);
             torqRaw = (_mbAngleDeg > 0.0f)
                       ? static_cast<uint16_t>(2048 - magnitude)
                       : static_cast<uint16_t>(2048 + magnitude);
@@ -342,7 +396,7 @@ struct NagHandler : public CarManagerBase
             int32_t absR2 = abs(static_cast<int32_t>(torqRaw) - 2048);
             hoLevel = (absR2 >= 200) ? 2 : (absR2 >= 100) ? 1 : 0;
         } else {
-            bChannelDiag.modeBPhase = 0;
+            _mbSetPhase(0, nowMs, kNagDecisionNoEcho);
             bChannelDiag.nagLastDecision = kNagDecisionNoEcho;
             return;
         }
