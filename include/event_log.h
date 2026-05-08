@@ -25,6 +25,7 @@ enum CanEventType : uint8_t {
     EV_ALERT_RX_FULL  = 8, // RX 큐 오버플로
     EV_TX_BACKOFF     = 9, // TX 백오프 진입
     EV_USER_MARK      = 10, // 사용자가 경고 발생 시점 표시 버튼을 누름
+    EV_NAG_MODE       = 11, // Nag 모드 전환 (detail: 0=A, 1=B)
 };
 
 // CSV/통합 번들에서 숫자 event type만 보고 해석하지 않도록 사람이 읽는 이름도 같이 출력한다.
@@ -41,6 +42,7 @@ inline const char* eventTypeName(uint8_t type) {
     case EV_ALERT_RX_FULL: return "RX_FULL";
     case EV_TX_BACKOFF: return "TX_BACKOFF";
     case EV_USER_MARK: return "USER_MARK";
+    case EV_NAG_MODE: return "NAG_MODE";
     default: return "UNKNOWN";
     }
 }
@@ -116,8 +118,8 @@ inline esp_err_t eventLogCsvHandler(httpd_req_t* req) {
         (unsigned)millis(), (unsigned)n);
     httpd_resp_sendstr_chunk(req, meta);
     httpd_resp_sendstr_chunk(req,
-        "# type: 0=BUSOFF 1=REC_OK 2=REC_FAIL 3=REC_SOFT 4=ERR_PASS 5=ARB_LOST 6=BUS_ERR 7=TX_FAIL 8=RX_FULL 9=TX_BACKOFF 10=USER_MARK\n");
-    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING\n");
+        "# type: 0=BUSOFF 1=REC_OK 2=REC_FAIL 3=REC_SOFT 4=ERR_PASS 5=ARB_LOST 6=BUS_ERR 7=TX_FAIL 8=RX_FULL 9=TX_BACKOFF 10=USER_MARK 11=NAG_MODE\n");
+    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING | NAG_MODE detail: 0=A 1=B\n");
     httpd_resp_sendstr_chunk(req, "t_ms,type,typeName,tec,rec,detail\n");
     char line[120];
     size_t start = (n < EVT_CAP) ? 0 : head;

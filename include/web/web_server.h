@@ -16,6 +16,7 @@
 #include <driver/twai.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
+#include <esp_system.h>
 
 #include "shared_types.h"
 #include "can_helpers.h"
@@ -29,6 +30,60 @@
 
 // B채널 드라이버 포인터 — webServerInit(drv)로 주입
 static TWAIDriver* gWebDriverB = nullptr;
+
+static volatile uint32_t gWebStatusReqCount = 0;
+static volatile uint32_t gWebStatusLastMs = 0;
+static volatile uint32_t gWebStatusLastDurMs = 0;
+static volatile uint32_t gWebStatusMaxDurMs = 0;
+static volatile uint32_t gWebNagStatsReqCount = 0;
+static volatile uint32_t gWebNagStatsLastMs = 0;
+static volatile uint32_t gWebNagStatsLastDurMs = 0;
+static volatile uint32_t gWebNagStatsMaxDurMs = 0;
+static volatile uint32_t gWebLogsBundleReqCount = 0;
+static volatile uint32_t gWebLogsBundleLastMs = 0;
+static volatile uint32_t gWebLogsBundleLastDurMs = 0;
+static volatile uint32_t gWebLogsBundleMaxDurMs = 0;
+static volatile uint32_t gWebApStationCount = 0;
+static volatile uint32_t gWebApStationChangeCount = 0;
+static volatile uint32_t gWebApStationLastChangeMs = 0;
+
+static inline void webHealthMark(volatile uint32_t &count, volatile uint32_t &lastMs, uint32_t now) {
+    count = (uint32_t)count + 1;
+    lastMs = now;
+}
+
+static inline void webHealthRecordDuration(volatile uint32_t &lastDurMs, volatile uint32_t &maxDurMs, uint32_t startMs) {
+    uint32_t durationMs = millis() - startMs;
+    lastDurMs = durationMs;
+    if (durationMs > (uint32_t)maxDurMs) maxDurMs = durationMs;
+}
+
+static inline uint32_t webHealthAgeMs(uint32_t now, uint32_t lastMs) {
+    return lastMs ? now - lastMs : 0;
+}
+
+static inline uint32_t webSafeAgeMs(uint32_t now, uint32_t lastMs) {
+    if (!lastMs) return 0;
+    uint32_t ageMs = now - lastMs;
+    return (ageMs > 0x7FFFFFFFUL) ? 0 : ageMs;
+}
+
+static void formatDurationHms(uint32_t durationMs, char *out, size_t out_n);
+static void shortBuildId(const char *buildId, char *out, size_t out_n);
+
+static inline uint8_t webHealthSampleApStations(uint32_t now) {
+    uint8_t count = WiFi.softAPgetStationNum();
+    uint8_t prev = (uint8_t)gWebApStationCount;
+    if (count != prev) {
+        gWebApStationCount = count;
+        gWebApStationChangeCount = (uint32_t)gWebApStationChangeCount + 1;
+        gWebApStationLastChangeMs = now;
+        char buf[80];
+        snprintf(buf, sizeof(buf), "📡 [WEB] AP stations %u -> %u", (unsigned)prev, (unsigned)count);
+        logRing.push(buf, now);
+    }
+    return count;
+}
 
 static const char *AP_SSID = "TeslaCAN";
 static const char *AP_PASS = "asdf1234"; // WPA2, 최소 8자이상해야됩니다 아니면 무한 재부팅됩니다.
@@ -433,6 +488,9 @@ static esp_err_t rootHandler(httpd_req_t *req)
 
 static esp_err_t statusHandler(httpd_req_t *req)
 {
+    const uint32_t handlerStartMs = millis();
+    webHealthMark(gWebStatusReqCount, gWebStatusLastMs, handlerStartMs);
+
     // Parse log_since from query string
     uint32_t logSince = 0;
     char queryBuf[32];
@@ -457,6 +515,11 @@ static esp_err_t statusHandler(httpd_req_t *req)
     bool nagKiller = kWebSupportsNagKiller ? (bool)nagKillerRuntime : false;
     bool tsllcEnabled = kWebSupportsTsllc ? (aChannelTx && (bool)tsllcRuntime) : false;
     cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        webHealthRecordDuration(gWebStatusLastDurMs, gWebStatusMaxDurMs, handlerStartMs);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
     cJSON_AddBoolToObject(root, "fsd_enabled", fsdEnabled);
     cJSON_AddBoolToObject(root, "isa_speed_chime_suppress", isaSuppress);
     cJSON_AddBoolToObject(root, "emergency_vehicle_detection", emergencyVehicleDetection);
@@ -471,6 +534,9 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "uptime_s", millis() / 1000);
     cJSON_AddStringToObject(root, "firmware_version", FIRMWARE_VERSION);
     cJSON_AddStringToObject(root, "firmware_build_id", FIRMWARE_BUILD_ID);
+    char fwShortBuild[32];
+    shortBuildId(FIRMWARE_BUILD_ID, fwShortBuild, sizeof(fwShortBuild));
+    cJSON_AddStringToObject(root, "firmware_build_short", fwShortBuild);
     cJSON_AddStringToObject(root, "firmware_build_env", FIRMWARE_BUILD_ENV);
     cJSON_AddStringToObject(root, "firmware_build_at", FIRMWARE_BUILD_AT);
     cJSON_AddStringToObject(root, "firmware_git_sha", FIRMWARE_GIT_SHA);
@@ -483,6 +549,30 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddStringToObject(root, "hw_handler", "HW3");
 #endif
     cJSON_AddNumberToObject(root, "log_head", logRing.currentHead());
+    {
+        uint32_t webNow = millis();
+        uint8_t apStationCount = webHealthSampleApStations(webNow);
+        cJSON *web = cJSON_AddObjectToObject(root, "web_health");
+        if (web) {
+            cJSON_AddNumberToObject(web, "status_req_count", (uint32_t)gWebStatusReqCount);
+            cJSON_AddNumberToObject(web, "status_last_age_ms", webHealthAgeMs(webNow, (uint32_t)gWebStatusLastMs));
+            cJSON_AddNumberToObject(web, "status_last_duration_ms", (uint32_t)gWebStatusLastDurMs);
+            cJSON_AddNumberToObject(web, "status_max_duration_ms", (uint32_t)gWebStatusMaxDurMs);
+            cJSON_AddNumberToObject(web, "nag_stats_req_count", (uint32_t)gWebNagStatsReqCount);
+            cJSON_AddNumberToObject(web, "nag_stats_last_age_ms", webHealthAgeMs(webNow, (uint32_t)gWebNagStatsLastMs));
+            cJSON_AddNumberToObject(web, "nag_stats_last_duration_ms", (uint32_t)gWebNagStatsLastDurMs);
+            cJSON_AddNumberToObject(web, "nag_stats_max_duration_ms", (uint32_t)gWebNagStatsMaxDurMs);
+            cJSON_AddNumberToObject(web, "logs_bundle_req_count", (uint32_t)gWebLogsBundleReqCount);
+            cJSON_AddNumberToObject(web, "logs_bundle_last_age_ms", webHealthAgeMs(webNow, (uint32_t)gWebLogsBundleLastMs));
+            cJSON_AddNumberToObject(web, "logs_bundle_last_duration_ms", (uint32_t)gWebLogsBundleLastDurMs);
+            cJSON_AddNumberToObject(web, "logs_bundle_max_duration_ms", (uint32_t)gWebLogsBundleMaxDurMs);
+            cJSON_AddNumberToObject(web, "free_heap", esp_get_free_heap_size());
+            cJSON_AddNumberToObject(web, "min_free_heap", esp_get_minimum_free_heap_size());
+            cJSON_AddNumberToObject(web, "ap_station_count", apStationCount);
+            cJSON_AddNumberToObject(web, "ap_station_change_count", (uint32_t)gWebApStationChangeCount);
+            cJSON_AddNumberToObject(web, "ap_station_last_change_age_ms", webHealthAgeMs(webNow, (uint32_t)gWebApStationLastChangeMs));
+        }
+    }
     // OTA 상태 머신 전체 필드
     {
         uint8_t otaPending = 0;
@@ -561,9 +651,13 @@ static esp_err_t statusHandler(httpd_req_t *req)
     static uint32_t lastFrames1021 = 0;
     static uint32_t lastFrames880 = 0;
     static uint32_t lastFrames921 = 0;
+    static uint32_t lastFrames923 = 0;
+    static uint32_t lastFrames297 = 0;
     static uint32_t period1021Ms = 0;
     static uint32_t period880Ms = 0;
     static uint32_t period921Ms = 0;
+    static uint32_t period923Ms = 0;
+    static uint32_t period297Ms = 0;
     uint16_t nagTargetId = kNagFixedTargetId;
     {
         uint32_t now = millis();
@@ -572,21 +666,31 @@ static esp_err_t statusHandler(httpd_req_t *req)
             const uint32_t cur1021 = (uint32_t)aChannelDiag.frames1021;
             const uint32_t cur880 = (uint32_t)bChannelDiag.frames880;
             const uint32_t cur921 = (uint32_t)bChannelDiag.frames921;
+            const uint32_t cur923 = (uint32_t)bChannelDiag.frames923;
+            const uint32_t cur297 = (uint32_t)bChannelDiag.frames297;
 
             const uint32_t d1021 = cur1021 - lastFrames1021;
             const uint32_t d880  = cur880  - lastFrames880;
             const uint32_t d921  = cur921  - lastFrames921;
+            const uint32_t d923  = cur923  - lastFrames923;
+            const uint32_t d297  = cur297  - lastFrames297;
 
             period1021Ms = (d1021 > 0) ? (elapsed / d1021) : 0;
             period880Ms  = (d880  > 0) ? (elapsed / d880)  : 0;
             period921Ms  = (d921  > 0) ? (elapsed / d921)  : 0;
+            period923Ms  = (d923  > 0) ? (elapsed / d923)  : 0;
+            period297Ms  = (d297  > 0) ? (elapsed / d297)  : 0;
 
             lastFrames1021 = cur1021;
             lastFrames880 = cur880;
             lastFrames921 = cur921;
+            lastFrames923 = cur923;
+            lastFrames297 = cur297;
             idRateLastMs = now;
         }
     }
+
+    const uint32_t statusNowMs = millis();
 
     cJSON *ach = cJSON_AddObjectToObject(channels, "a_channel");
     cJSON_AddNumberToObject(ach, "frames_received", (uint32_t)aChannelDiag.framesReceivedTotal);
@@ -608,6 +712,11 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(ach, "mcp_eflg", (uint32_t)aChannelDiag.mcpEflg);
     cJSON_AddNumberToObject(ach, "mcp_eflg_peak", (uint32_t)aChannelDiag.mcpEflgPeak);
     cJSON_AddNumberToObject(ach, "mcp_txbo_count", (uint32_t)aChannelDiag.mcpTxBoCount);
+    cJSON_AddNumberToObject(ach, "mcp_recovery_attempt", (uint32_t)aChannelDiag.mcpRecoveryAttemptCount);
+    cJSON_AddNumberToObject(ach, "mcp_recovery_success", (uint32_t)aChannelDiag.mcpRecoverySuccessCount);
+    cJSON_AddNumberToObject(ach, "mcp_recovery_fail", (uint32_t)aChannelDiag.mcpRecoveryFailCount);
+    cJSON_AddNumberToObject(ach, "mcp_busoff_since_ms", (uint32_t)aChannelDiag.mcpBusOffSinceMs);
+    cJSON_AddNumberToObject(ach, "mcp_last_recovery_ms", (uint32_t)aChannelDiag.mcpLastRecoveryMs);
     // A채널 송수신 진단 카운터 (5초 폴링 + handler 송신 결과)
     cJSON_AddNumberToObject(ach, "tx_ok",   (uint32_t)aChannelDiag.aTxOk);
     cJSON_AddNumberToObject(ach, "tx_fail", (uint32_t)aChannelDiag.aTxFail);
@@ -628,21 +737,44 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(ach, "tx_guard_count", (uint32_t)aChannelDiag.aTxGuardCount);
     cJSON_AddNumberToObject(ach, "tx_guard_skip", (uint32_t)aChannelDiag.aTxGuardSkipCount);
     cJSON_AddStringToObject(ach, "tx_guard_reason", aTxGuardReasonName((uint8_t)aChannelDiag.aTxGuardLastReason));
+    const uint32_t aLastFrameMs = (uint32_t)aChannelDiag.lastFrameRxMs;
+    const uint32_t aLastLoopMs = (uint32_t)aChannelDiag.lastLoopMs;
+    const uint32_t aFrameAgeMs = webSafeAgeMs(statusNowMs, aLastFrameMs);
+    const uint32_t aLoopAgeMs = webSafeAgeMs(statusNowMs, aLastLoopMs);
+    const bool aFresh = (aLastFrameMs > 0) && (aFrameAgeMs <= 2000);
+    const bool aTaskAlive = (aLastLoopMs > 0) && (aLoopAgeMs <= 2000);
+    const bool aDriverOk = (appHandler != nullptr);
+    const bool aConnected = aDriverOk && aFresh && (((uint8_t)aChannelDiag.mcpEflg & 0x20) == 0);
+    cJSON_AddBoolToObject(ach, "driver_ok", aDriverOk);
+    cJSON_AddBoolToObject(ach, "connected", aConnected);
+    cJSON_AddBoolToObject(ach, "fresh", aFresh);
+    cJSON_AddBoolToObject(ach, "task_alive", aTaskAlive);
+    cJSON_AddNumberToObject(ach, "frame_age_ms", aFrameAgeMs);
+    cJSON_AddNumberToObject(ach, "loop_age_ms", aLoopAgeMs);
     
     cJSON *bch = cJSON_AddObjectToObject(channels, "b_channel");
     cJSON_AddNumberToObject(bch, "frames_received", (uint32_t)bChannelDiag.framesReceivedTotal);
     cJSON_AddNumberToObject(bch, "frame_hz", (double)(float)bChannelDiag.frameHz);
+    cJSON_AddNumberToObject(bch, "filtered_hz", (double)(float)bChannelDiag.filteredHz);
     cJSON_AddNumberToObject(bch, "frames_880", (uint32_t)bChannelDiag.frames880);
     cJSON_AddNumberToObject(bch, "frames_target", (uint32_t)bChannelDiag.frames880);
     cJSON_AddNumberToObject(bch, "frames_921", (uint32_t)bChannelDiag.frames921);
+    cJSON_AddNumberToObject(bch, "frames_923", (uint32_t)bChannelDiag.frames923);
+    cJSON_AddNumberToObject(bch, "frames_297", (uint32_t)bChannelDiag.frames297);
     cJSON_AddNumberToObject(bch, "target_id", (uint32_t)nagTargetId);
     cJSON_AddNumberToObject(bch, "id_880_period_ms", (uint32_t)period880Ms);
     cJSON_AddNumberToObject(bch, "id_target_period_ms", (uint32_t)period880Ms);
     cJSON_AddNumberToObject(bch, "id_921_period_ms", (uint32_t)period921Ms);
+    cJSON_AddNumberToObject(bch, "id_923_period_ms", (uint32_t)period923Ms);
+    cJSON_AddNumberToObject(bch, "id_297_period_ms", (uint32_t)period297Ms);
     cJSON_AddNumberToObject(bch, "das_hands_state", (uint32_t)bChannelDiag.dasHandsOnStateRx);
+    cJSON_AddNumberToObject(bch, "das_source_id", (uint32_t)bChannelDiag.dasStatusSourceId);
+    cJSON_AddNumberToObject(bch, "last_das_status_rx_ms", (uint32_t)bChannelDiag.lastDasStatusRxMs);
+    cJSON_AddNumberToObject(bch, "nag_mode", (uint32_t)(uint8_t)bChannelDiag.nagMode);
     cJSON_AddNumberToObject(bch, "echo_count", (uint32_t)bChannelDiag.echoCount);
     cJSON_AddNumberToObject(bch, "echo_drop_late", (uint32_t)bChannelDiag.echoDroppedLate);
     cJSON_AddNumberToObject(bch, "skip_runtime_or_inactive", (uint32_t)bChannelDiag.skipRuntimeOrInactive);
+    cJSON_AddNumberToObject(bch, "skip_ap_state", (uint32_t)bChannelDiag.skipApState);
     cJSON_AddNumberToObject(bch, "skip_hands_on", (uint32_t)bChannelDiag.skipHandsOn);
     cJSON_AddNumberToObject(bch, "skip_das_state", (uint32_t)bChannelDiag.skipDasState);
     cJSON_AddNumberToObject(bch, "twai_state_code", (uint32_t)bChannelDiag.twaiStateCode);
@@ -667,20 +799,29 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(bch, "tx_failed",  (uint32_t)bChannelDiag.bTxFailed);
     cJSON_AddNumberToObject(bch, "rx_missed",  (uint32_t)bChannelDiag.bRxMissed);
 
-    const uint32_t nowMs = millis();
     const uint32_t bLastFrameMs = (uint32_t)bChannelDiag.lastFrameRxMs;
     const uint32_t bLastLoopMs = (uint32_t)bChannelDiag.lastLoopMs;
-    const bool bFresh = (bLastFrameMs > 0) && ((nowMs - bLastFrameMs) <= 2000);
-    const bool bTaskAlive = (bLastLoopMs > 0) && ((nowMs - bLastLoopMs) <= 2000);
+    const uint32_t bFrameAgeMs = webSafeAgeMs(statusNowMs, bLastFrameMs);
+    const uint32_t bLoopAgeMs = webSafeAgeMs(statusNowMs, bLastLoopMs);
+    const bool bFresh = (bLastFrameMs > 0) && (bFrameAgeMs <= 2000);
+    const bool bTaskAlive = (bLastLoopMs > 0) && (bLoopAgeMs <= 2000);
     const uint32_t twaiStateCode = (uint32_t)bChannelDiag.twaiStateCode;
+    const bool bDriverOk = gWebDriverB && gWebDriverB->isDriverOK();
     const bool bConnected = (bool)bChannelDiag.nagTaskCreated &&
-                            bTaskAlive &&
+                            bDriverOk &&
                             ((bool)bChannelDiag.twaiConnected || twaiStateCode == 1 || twaiStateCode == 3) &&
                             twaiStateCode != 2 &&
                             bFresh;
+    cJSON_AddBoolToObject(bch, "driver_initialized", (bool)bChannelDiag.driverBInitialized);
+    cJSON_AddBoolToObject(bch, "driver_ok", bDriverOk);
+    cJSON_AddNumberToObject(bch, "driver_install_err", gWebDriverB ? gWebDriverB->getLastInstallErr() : -1);
+    cJSON_AddNumberToObject(bch, "driver_start_err", gWebDriverB ? gWebDriverB->getLastStartErr() : -1);
+    cJSON_AddBoolToObject(bch, "can_task_created", (bool)bChannelDiag.nagTaskCreated);
     cJSON_AddBoolToObject(bch, "connected", bConnected);
     cJSON_AddBoolToObject(bch, "fresh", bFresh);
     cJSON_AddBoolToObject(bch, "task_alive", bTaskAlive);
+    cJSON_AddNumberToObject(bch, "frame_age_ms", bFrameAgeMs);
+    cJSON_AddNumberToObject(bch, "loop_age_ms", bLoopAgeMs);
 
     const uint32_t aFramesReceived = (uint32_t)aChannelDiag.framesReceivedTotal;
     const uint32_t bFramesReceived = (uint32_t)bChannelDiag.framesReceivedTotal;
@@ -726,11 +867,16 @@ static esp_err_t statusHandler(httpd_req_t *req)
 
     char *json = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
-    if (!json) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM"); return ESP_FAIL; }
+    if (!json) {
+        webHealthRecordDuration(gWebStatusLastDurMs, gWebStatusMaxDurMs, handlerStartMs);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
+    esp_err_t sendRet = httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
     free(json);
-    return ESP_OK;
+    webHealthRecordDuration(gWebStatusLastDurMs, gWebStatusMaxDurMs, handlerStartMs);
+    return sendRet;
 }
 
 static esp_err_t isaSpeedChimeSuppressHandler(httpd_req_t *req)
@@ -878,8 +1024,15 @@ static esp_err_t nagConfigGetHandler(httpd_req_t *req)
 // 실시간 B채널 나그킬러 stats (v2 /api/stats 에 해당)
 static esp_err_t nagStatsGetHandler(httpd_req_t *req)
 {
-    uint32_t nowMs = millis();
+    const uint32_t handlerStartMs = millis();
+    webHealthMark(gWebNagStatsReqCount, gWebNagStatsLastMs, handlerStartMs);
+    uint32_t nowMs = handlerStartMs;
     cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        webHealthRecordDuration(gWebNagStatsLastDurMs, gWebNagStatsMaxDurMs, handlerStartMs);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
     cJSON_AddNumberToObject(root, "rx",       (uint32_t)bChannelDiag.frames880);
     cJSON_AddNumberToObject(root, "echo",     (uint32_t)bChannelDiag.echoCount);
     cJSON_AddNumberToObject(root, "txFail",   (uint32_t)bChannelDiag.txFail);
@@ -888,7 +1041,9 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "torqueNm", (double)(float)bChannelDiag.realTorqueNm);
     cJSON_AddNumberToObject(root, "busoffCount", (uint32_t)bChannelDiag.busoffCount);
     cJSON_AddNumberToObject(root, "dasHandsState", (uint32_t)bChannelDiag.dasHandsOnStateRx);
+    cJSON_AddNumberToObject(root, "dasSourceId", (uint32_t)bChannelDiag.dasStatusSourceId);
     cJSON_AddNumberToObject(root, "frames921", (uint32_t)bChannelDiag.frames921);
+    cJSON_AddNumberToObject(root, "frames923", (uint32_t)bChannelDiag.frames923);
     cJSON_AddNumberToObject(root, "tecNow",   (uint32_t)bChannelDiag.twaiTxErrNow);
     cJSON_AddNumberToObject(root, "recNow",   (uint32_t)bChannelDiag.twaiRxErrNow);
     cJSON_AddNumberToObject(root, "tecPeak",  (uint32_t)bChannelDiag.twaiTxErrPeak);
@@ -920,20 +1075,29 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "busOffStopSkip",  isBOS);
     // ID 921 미수신 상태에서 에코 발사 횟수 (TEC 상승 원인 추적용)
     cJSON_AddNumberToObject(root, "nagFiredNoDas", (uint32_t)bChannelDiag.nagFiredNoDas);
+    cJSON_AddNumberToObject(root, "skipApState", (uint32_t)bChannelDiag.skipApState);
     cJSON_AddNumberToObject(root, "echoDropLate", (uint32_t)bChannelDiag.echoDroppedLate);
     cJSON_AddNumberToObject(root, "nagLastDecision", (uint8_t)bChannelDiag.nagLastDecision);
     cJSON_AddStringToObject(root, "nagLastDecisionText", nagDecisionName((uint8_t)bChannelDiag.nagLastDecision));
-    cJSON_AddNumberToObject(root, "last880AgeMs", (uint32_t)bChannelDiag.last880RxMs ? nowMs - (uint32_t)bChannelDiag.last880RxMs : 0);
-    cJSON_AddNumberToObject(root, "last921AgeMs", (uint32_t)bChannelDiag.last921RxMs ? nowMs - (uint32_t)bChannelDiag.last921RxMs : 0);
-    cJSON_AddNumberToObject(root, "lastEchoAgeMs", (uint32_t)bChannelDiag.lastEchoTxMs ? nowMs - (uint32_t)bChannelDiag.lastEchoTxMs : 0);
+    cJSON_AddNumberToObject(root, "last880AgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.last880RxMs));
+    cJSON_AddNumberToObject(root, "last921AgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.last921RxMs));
+    cJSON_AddNumberToObject(root, "last923AgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.last923RxMs));
+    cJSON_AddNumberToObject(root, "lastDasStatusAgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.lastDasStatusRxMs));
+    cJSON_AddNumberToObject(root, "last297AgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.last297RxMs));
+    cJSON_AddNumberToObject(root, "lastEchoAgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.lastEchoTxMs));
 
     char *json = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
-    if (!json) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM"); return ESP_FAIL; }
+    if (!json) {
+        webHealthRecordDuration(gWebNagStatsLastDurMs, gWebNagStatsMaxDurMs, handlerStartMs);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
+    esp_err_t sendRet = httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
     free(json);
-    return ESP_OK;
+    webHealthRecordDuration(gWebNagStatsLastDurMs, gWebNagStatsMaxDurMs, handlerStartMs);
+    return sendRet;
 }
 
 // ─── POST /api/nag-mode?m=0|1  ───────────────────────────────────────────────
@@ -964,6 +1128,8 @@ static esp_err_t nagModeHandler(httpd_req_t *req)
     portEXIT_CRITICAL(&nagCfgMux);
     nagCfgSave(nc);
     bChannelDiag.nagMode = static_cast<uint8_t>(newMode);
+    eventLogPush(EV_NAG_MODE, (uint16_t)bChannelDiag.twaiTxErrNow,
+                 (uint16_t)bChannelDiag.twaiRxErrNow, (uint32_t)newMode);
 
     char logBuf[48];
     snprintf(logBuf, sizeof(logBuf), "🔧 [NAG] 모드 전환 → %s",
@@ -1032,7 +1198,7 @@ static esp_err_t twaiSsTxHandler(httpd_req_t *req)
 }
 
 // ─── POST /api/twai-busoff-stop?v=0|1  ───────────────────────────────────────
-// 4/10 정상 기준에서는 stop skip을 사용하지 않는다. API는 호환용으로만 유지.
+// v4.4 상태 머신 준수: BUS-OFF 상태에서는 twai_stop()을 호출하지 않는다.
 static esp_err_t twaiBusOffStopHandler(httpd_req_t *req)
 {
     if (!rateLimitOk()) {
@@ -1053,7 +1219,7 @@ static esp_err_t twaiBusOffStopHandler(httpd_req_t *req)
         return ESP_FAIL;
     }
     (void)v;
-    httpd_resp_send(req, "busoff_stop_skip=DISABLED", HTTPD_RESP_USE_STRLEN);
+    httpd_resp_send(req, "busoff_stop_skip=ENABLED_FIXED", HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
@@ -1111,6 +1277,30 @@ static void formatLogTimestamp(uint32_t ts_ms, char *out, size_t out_n) {
         tm_v.tm_hour, tm_v.tm_min, tm_v.tm_sec, ms);
 }
 
+static void formatDurationHms(uint32_t durationMs, char *out, size_t out_n) {
+    uint32_t seconds = durationMs / 1000UL;
+    uint32_t h = seconds / 3600UL;
+    uint32_t m = (seconds % 3600UL) / 60UL;
+    uint32_t s = seconds % 60UL;
+    snprintf(out, out_n, "%02u:%02u:%02u", (unsigned)h, (unsigned)m, (unsigned)s);
+}
+
+static void shortBuildId(const char *buildId, char *out, size_t out_n) {
+    if (!out || out_n == 0) return;
+    out[0] = '\0';
+    if (!buildId) return;
+    size_t hyphenCount = 0;
+    size_t i = 0;
+    for (; buildId[i] && i + 1 < out_n; ++i) {
+        if (buildId[i] == '-') {
+            hyphenCount++;
+            if (hyphenCount == 2) break;
+        }
+        out[i] = buildId[i];
+    }
+    out[i] = '\0';
+}
+
 // POST /api/user-marker?type=ap_warning
 // 운전자가 차량 화면 경고를 본 순간을 사후 분석 로그에 찍는 수동 마커.
 static esp_err_t userMarkerHandler(httpd_req_t *req) {
@@ -1149,6 +1339,8 @@ static esp_err_t userMarkerHandler(httpd_req_t *req) {
 
 // GET /api/logs-bundle — 통합 로그 번들 (런타임 로그 + BUS-OFF 이벤트 + 채널 상태 스냅샷)
 static esp_err_t logsBundleHandler(httpd_req_t *req) {
+    const uint32_t handlerStartMs = millis();
+    webHealthMark(gWebLogsBundleReqCount, gWebLogsBundleLastMs, handlerStartMs);
     httpd_resp_set_type(req, "text/plain; charset=utf-8");
     // 다운로드 파일명: 동기화된 시각 있으면 YYYYMMDD_HHMMSS, 없으면 uptime
     char fname[80];
@@ -1170,18 +1362,24 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
 
     // 메타 정보 (Generated at = wall-clock, Boot at = wall-clock baseline)
     formatLogTimestamp(millis(), tsBuf, sizeof(tsBuf));
+    uint32_t uptimeMs = millis();
+    char uptimeHms[16];
+    char fwShortBuild[32];
+    formatDurationHms(uptimeMs, uptimeHms, sizeof(uptimeHms));
+    shortBuildId(FIRMWARE_BUILD_ID, fwShortBuild, sizeof(fwShortBuild));
     snprintf(line, sizeof(line),
-        "=== CanMod 통합 로그 ===\r\nGenerated: %s\r\nFirmware: %s\r\nBuild: %s\r\nEnv: %s\r\nBuiltAt: %s\r\nGit: %s/%s dirty=%u source=%s\r\nUptime: %u ms\r\nBUS-OFF 쿨다운: %u ms\r\n\r\n",
+        "=== CanMod 통합 로그 ===\r\nGenerated: %s\r\nFirmware: %s\r\nBuild: %s\r\nEnv: %s\r\nBuiltAt: %s\r\nGit: %s/%s dirty=%u source=%s\r\nUptime: %u ms (%s)\r\nBUS-OFF 쿨다운: %u ms\r\n\r\n",
         tsBuf,
         FIRMWARE_VERSION,
-        FIRMWARE_BUILD_ID,
+        fwShortBuild,
         FIRMWARE_BUILD_ENV,
         FIRMWARE_BUILD_AT,
         FIRMWARE_GIT_BRANCH,
         FIRMWARE_GIT_SHA,
         (unsigned)(FIRMWARE_GIT_DIRTY != 0),
         FIRMWARE_SOURCE_HASH,
-        (unsigned)millis(),
+        (unsigned)uptimeMs,
+        uptimeHms,
         (uint32_t)bChannelDiag.busoffCooldownMs);
     httpd_resp_sendstr_chunk(req, line);
 
@@ -1265,7 +1463,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
             (unsigned)aChannelDiag.mcpEflgEventCount);
         httpd_resp_sendstr_chunk(req, line);
     snprintf(line, sizeof(line),
-        "B채널: RX=%u Filt=%u Echo=%u TxFail=%u TEC=%u REC=%u TECpeak=%u 921=%u DAS=%u TWAI=%s\r\n",
+        "B채널: RX=%u Filt=%u Echo=%u TxFail=%u TEC=%u REC=%u TECpeak=%u 880=%u 921=%u 923=%u 297=%u DAS=%u@%u Mode=%c TWAI=%s InitErr=%d/%d\r\n",
         (unsigned)bChannelDiag.framesReceivedTotal,
         (unsigned)bChannelDiag.framesFilteredInTotal,
         (unsigned)bChannelDiag.echoCount,
@@ -1273,12 +1471,20 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         (unsigned)bChannelDiag.twaiTxErrNow,
         (unsigned)bChannelDiag.twaiRxErrNow,
         (unsigned)bChannelDiag.twaiTxErrPeak,
+        (unsigned)bChannelDiag.frames880,
         (unsigned)bChannelDiag.frames921,
-        (unsigned)bChannelDiag.dasHandsOnStateRx, twS);
+        (unsigned)bChannelDiag.frames923,
+        (unsigned)bChannelDiag.frames297,
+        (unsigned)bChannelDiag.dasHandsOnStateRx,
+        (unsigned)bChannelDiag.dasStatusSourceId,
+        ((uint8_t)bChannelDiag.nagMode == kNagModeB) ? 'B' : 'A',
+        twS,
+        gWebDriverB ? gWebDriverB->getLastInstallErr() : -1,
+        gWebDriverB ? gWebDriverB->getLastStartErr() : -1);
     httpd_resp_sendstr_chunk(req, line);
     // B채널 심층 진단: TWAI 누적 카운터 + 에코 품질 + 스킵 사유
     snprintf(line, sizeof(line),
-        "B심층: ArbLost=%u BusErr=%u TxFailed=%u RxMissed=%u | EchoLat=%uus EchoDrop=%u | Skip RT=%u/HO=%u/DAS=%u\r\n",
+        "B심층: ArbLost=%u BusErr=%u TxFailed=%u RxMissed=%u | EchoLat=%uus EchoDrop=%u | Skip RT=%u/AP=%u/HO=%u/DAS=%u\r\n",
         (unsigned)bChannelDiag.bArbLost,
         (unsigned)bChannelDiag.bBusError,
         (unsigned)bChannelDiag.bTxFailed,
@@ -1286,6 +1492,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         (unsigned)bChannelDiag.echoLatUs,
         (unsigned)bChannelDiag.echoDroppedLate,
         (unsigned)bChannelDiag.skipRuntimeOrInactive,
+        (unsigned)bChannelDiag.skipApState,
         (unsigned)bChannelDiag.skipHandsOn,
         (unsigned)bChannelDiag.skipDasState);
     httpd_resp_sendstr_chunk(req, line);
@@ -1293,20 +1500,29 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         uint32_t now = millis();
         uint32_t age880 = (uint32_t)bChannelDiag.last880RxMs ? (now - (uint32_t)bChannelDiag.last880RxMs) : 0;
         uint32_t age921 = (uint32_t)bChannelDiag.last921RxMs ? (now - (uint32_t)bChannelDiag.last921RxMs) : 0;
+        uint32_t age923 = (uint32_t)bChannelDiag.last923RxMs ? (now - (uint32_t)bChannelDiag.last923RxMs) : 0;
+        uint32_t age297 = (uint32_t)bChannelDiag.last297RxMs ? (now - (uint32_t)bChannelDiag.last297RxMs) : 0;
         uint32_t ageEcho = (uint32_t)bChannelDiag.lastEchoTxMs ? (now - (uint32_t)bChannelDiag.lastEchoTxMs) : 0;
         snprintf(line, sizeof(line),
-            "B나그판정: 880=%u(age=%ums) 921=%u(age=%ums) Echo=%u(age=%ums) | HO=%u Torque=%.2fNm DAS=0x%02X Last=%s\r\n",
+            "B나그판정: 880=%u(age=%ums) 921=%u(age=%ums) 923=%u(age=%ums) 297=%u(age=%ums) Echo=%u(age=%ums) | Mode=%c AP=%u Phase=%u HO=%u Torque=%.2fNm DAS=0x%02X@%u Last=%s\r\n",
             (unsigned)bChannelDiag.frames880, (unsigned)age880,
             (unsigned)bChannelDiag.frames921, (unsigned)age921,
+            (unsigned)bChannelDiag.frames923, (unsigned)age923,
+            (unsigned)bChannelDiag.frames297, (unsigned)age297,
             (unsigned)bChannelDiag.echoCount, (unsigned)ageEcho,
+            ((uint8_t)bChannelDiag.nagMode == kNagModeB) ? 'B' : 'A',
+            (unsigned)(uint8_t)bChannelDiag.dasAutopilotStateRx,
+            (unsigned)(uint8_t)bChannelDiag.modeBPhase,
             (unsigned)(uint8_t)bChannelDiag.realHo,
             (double)(float)bChannelDiag.realTorqueNm,
             (unsigned)(uint8_t)bChannelDiag.dasHandsOnStateRx,
+            (unsigned)bChannelDiag.dasStatusSourceId,
             nagDecisionName((uint8_t)bChannelDiag.nagLastDecision));
         httpd_resp_sendstr_chunk(req, line);
         snprintf(line, sizeof(line),
-            "B차단사유: OFF=%u HandsOn=%u DAS_IDLE=%u LateDrop=%u NoDAS_Echo=%u\r\n",
+            "B차단사유: OFF=%u AP_BLOCK=%u HandsOn=%u DAS_IDLE=%u LateDrop=%u NoDAS_Echo=%u\r\n",
             (unsigned)bChannelDiag.skipRuntimeOrInactive,
+            (unsigned)bChannelDiag.skipApState,
             (unsigned)bChannelDiag.skipHandsOn,
             (unsigned)bChannelDiag.skipDasState,
             (unsigned)bChannelDiag.echoDroppedLate,
@@ -1332,6 +1548,30 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
             (unsigned)(uint32_t)userMarkerLastDetail);
         httpd_resp_sendstr_chunk(req, line);
     }
+    {
+        uint32_t now = millis();
+        uint8_t apStationCount = webHealthSampleApStations(now);
+        snprintf(line, sizeof(line),
+            "Web진단: status=%u(age=%ums dur=%u/%ums) nagStats=%u(age=%ums dur=%u/%ums) logsBundle=%u(age=%ums dur=%u/%ums) heap=%u/%u apSta=%u apChg=%u(age=%ums)\r\n",
+            (unsigned)(uint32_t)gWebStatusReqCount,
+            (unsigned)webHealthAgeMs(now, (uint32_t)gWebStatusLastMs),
+            (unsigned)(uint32_t)gWebStatusLastDurMs,
+            (unsigned)(uint32_t)gWebStatusMaxDurMs,
+            (unsigned)(uint32_t)gWebNagStatsReqCount,
+            (unsigned)webHealthAgeMs(now, (uint32_t)gWebNagStatsLastMs),
+            (unsigned)(uint32_t)gWebNagStatsLastDurMs,
+            (unsigned)(uint32_t)gWebNagStatsMaxDurMs,
+            (unsigned)(uint32_t)gWebLogsBundleReqCount,
+            (unsigned)webHealthAgeMs(now, (uint32_t)gWebLogsBundleLastMs),
+            (unsigned)(uint32_t)gWebLogsBundleLastDurMs,
+            (unsigned)(uint32_t)gWebLogsBundleMaxDurMs,
+            (unsigned)esp_get_free_heap_size(),
+            (unsigned)esp_get_minimum_free_heap_size(),
+            (unsigned)apStationCount,
+            (unsigned)(uint32_t)gWebApStationChangeCount,
+            (unsigned)webHealthAgeMs(now, (uint32_t)gWebApStationLastChangeMs));
+        httpd_resp_sendstr_chunk(req, line);
+    }
 
     // 섹션 4: 30분 시계열 로그 (5초 × 360 샘플)
     httpd_resp_sendstr_chunk(req, "\r\n=== [4] 30분 시계열 로그 ===\r\n");
@@ -1347,7 +1587,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         tsSnapRecording ? "ON" : "OFF", (unsigned)tsN);
     httpd_resp_sendstr_chunk(req, line);
     httpd_resp_sendstr_chunk(req,
-        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,ho,dasState,echoDrop,skipOff,skipHO,skipDAS,noDAS,userMark,d880,d921,dEcho,dDrop,dSkipOff,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision\r\n");
+        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,nagMode,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision\r\n");
     {
         size_t start = (tsN < TS_CAP) ? 0 : tsSnapHead;
         if (tsN == 0) {
@@ -1357,18 +1597,19 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                 TsSample s;
                 timeseriesCopyAt(start + i, s);
                 formatLogTimestamp(s.t_ms, tsBuf, sizeof(tsBuf));
-                snprintf(line, sizeof(line), "%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+                snprintf(line, sizeof(line), "%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
                     tsBuf, (unsigned)s.t_ms,
                     (unsigned)s.busoff, (unsigned)s.tec, (unsigned)s.rec,
                     (unsigned)s.arbLost, (unsigned)s.busErr, (unsigned)s.txFail,
-                    (unsigned)s.echoCnt, (unsigned)s.f880, (unsigned)s.f921,
+                    (unsigned)s.echoCnt, (unsigned)s.f880, (unsigned)s.f921, (unsigned)s.f923,
                     (unsigned)s.handsOn, (unsigned)s.dasState,
+                    (unsigned)s.nagMode, (unsigned)s.dasSourceId,
                     (unsigned)s.echoDrop, (unsigned)s.skipRuntime,
-                    (unsigned)s.skipHandsOn, (unsigned)s.skipDas,
+                    (unsigned)s.skipAp, (unsigned)s.skipHandsOn, (unsigned)s.skipDas,
                     (unsigned)s.noDasEcho, (unsigned)s.userMark,
-                    (unsigned)s.d880, (unsigned)s.d921,
+                    (unsigned)s.d880, (unsigned)s.d921, (unsigned)s.d923,
                     (unsigned)s.dEcho, (unsigned)s.dDrop, (unsigned)s.dSkipRuntime,
-                    (unsigned)s.dSkipHandsOn, (unsigned)s.dSkipDas,
+                    (unsigned)s.dSkipAp, (unsigned)s.dSkipHandsOn, (unsigned)s.dSkipDas,
                     (unsigned)s.dNoDasEcho, (unsigned)s.dUserMark,
                     (unsigned)s.lastDecision,
                     (unsigned)s.intervalDecision);
@@ -1380,8 +1621,8 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
     // 섹션 5: 밀리초 이벤트 로그 (BUS-OFF/Recovery/TWAI alert)
     httpd_resp_sendstr_chunk(req, "\r\n=== [5] 밀리초 이벤트 로그 ===\r\n");
     httpd_resp_sendstr_chunk(req,
-        "# type: 0=BUSOFF 1=REC_OK 2=REC_FAIL 3=REC_SOFT 4=ERR_PASS 5=ARB_LOST 6=BUS_ERR 7=TX_FAIL 8=RX_FULL 9=TX_BACKOFF 10=USER_MARK\r\n");
-    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING\r\n");
+        "# type: 0=BUSOFF 1=REC_OK 2=REC_FAIL 3=REC_SOFT 4=ERR_PASS 5=ARB_LOST 6=BUS_ERR 7=TX_FAIL 8=RX_FULL 9=TX_BACKOFF 10=USER_MARK 11=NAG_MODE\r\n");
+    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING | NAG_MODE detail: 0=A 1=B\r\n");
     httpd_resp_sendstr_chunk(req, "wall_time,timestamp_ms,type,typeName,tec,rec,detail\r\n");
     {
         size_t evtN = 0;
@@ -1404,6 +1645,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         }
     }
 
+    webHealthRecordDuration(gWebLogsBundleLastDurMs, gWebLogsBundleMaxDurMs, handlerStartMs);
     httpd_resp_sendstr_chunk(req, nullptr);
     return ESP_OK;
 }
@@ -1499,7 +1741,7 @@ static esp_err_t busoffCooldownHandler(httpd_req_t *req) {
 }
 
 // POST /api/busoff-mode {"soft":true/false}
-// 4/10 정상 기준에서는 hard reinstall만 사용한다. API는 호환용으로만 유지.
+// v4.4 상태 머신 준수: soft recovery 우선, 실패 시 hard reinstall fallback.
 static esp_err_t busoffModeHandler(httpd_req_t *req) {
     char buf[64] = {};
     int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
@@ -1516,7 +1758,7 @@ static esp_err_t busoffModeHandler(httpd_req_t *req) {
     cJSON_Delete(root);
     (void)soft;
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, "{\"ok\":true,\"soft\":false,\"disabled\":true}");
+    httpd_resp_sendstr(req, "{\"ok\":true,\"soft\":true,\"fixed\":true}");
     return ESP_OK;
 }
 

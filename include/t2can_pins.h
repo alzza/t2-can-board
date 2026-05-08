@@ -10,7 +10,7 @@
     #define T2CAN_MISO     13
     #define T2CAN_MOSI     11
 
-    // MCP2515 SPI clock (Hz): 실차 안정성 우선 기본 8MHz
+    // MCP2515 SPI clock (Hz): 기본 10MHz, 웹 UI에서 8MHz 요청 가능
     #ifndef T2CAN_SPI_FREQ_HZ
     #define T2CAN_SPI_FREQ_HZ 10000000
     #endif

@@ -96,6 +96,8 @@ inline constexpr uint8_t kATxGuardReasonEflg = 2;
 inline constexpr uint8_t kATxGuardReasonTxFail = 3;
 inline constexpr uint32_t kATxGuardDurationMs = 15000;
 inline constexpr uint8_t kATxGuardTecThreshold = 24;
+inline constexpr uint32_t kAMcpBusOffRecoverIntervalMs = 1000;
+inline constexpr uint32_t kAMcpBusOffRestartFallbackMs = 10000;
 
 
 // 사용자가 차량 화면의 AP/Nag 경고를 직접 본 순간을 찍는 수동 마커.
@@ -116,6 +118,7 @@ inline constexpr uint8_t kNagDecisionLateDrop = 5;
 inline constexpr uint8_t kNagDecisionNo880 = 6;
 inline constexpr uint8_t kNagDecisionNo921 = 7;
 inline constexpr uint8_t kNagDecisionNoEcho = 8;
+inline constexpr uint8_t kNagDecisionApBlocked = 9;
 
 inline const char* nagDecisionName(uint8_t code) {
     switch (code) {
@@ -127,23 +130,29 @@ inline const char* nagDecisionName(uint8_t code) {
     case kNagDecisionNo880: return "NO_880";
     case kNagDecisionNo921: return "NO_921";
     case kNagDecisionNoEcho: return "NO_ECHO";
+    case kNagDecisionApBlocked: return "AP_BLOCK";
     default: return "NONE";
     }
 }
 
+inline bool nagDasStateRequiresEcho(uint8_t state) {
+    return state == 2 || (state >= 3 && state <= 7) || state == 9 || state == 10;
+}
+
 // 5초 시계열/상태 로그용 구간 판정.
 // nagLastDecision은 마지막 880 프레임의 실제 분기이고, 이 함수는 "이번 5초"의 요약 verdict다.
-inline uint8_t nagIntervalDecision(uint32_t d880, uint32_t d921, uint32_t dEcho,
+inline uint8_t nagIntervalDecision(uint32_t d880, uint32_t dDasStatus, uint32_t dEcho,
                                    uint32_t dDrop, uint32_t dSkipRuntime,
                                    uint32_t dSkipHandsOn, uint32_t dSkipDas,
-                                   bool runtimeOn) {
+                                   bool runtimeOn, uint32_t dSkipAp = 0) {
     if (d880 == 0) return kNagDecisionNo880;
     if (!runtimeOn || dSkipRuntime > 0) return kNagDecisionRuntimeOff;
     if (dEcho > 0) return kNagDecisionEcho;
     if (dDrop > 0) return kNagDecisionLateDrop;
+    if (dSkipAp > 0) return kNagDecisionApBlocked;
     if (dSkipHandsOn > 0) return kNagDecisionHandsOn;
     if (dSkipDas > 0) return kNagDecisionDasIdle;
-    if (d921 == 0) return kNagDecisionNo921;
+    if (dDasStatus == 0) return kNagDecisionNo921;
     return kNagDecisionNoEcho;
 }
 
@@ -157,17 +166,21 @@ struct BChannelDiagnostics {
     Shared<bool> lastTwaiOk{false};              // 마지막 read() 성공 여부
     Shared<uint32_t> frameIdReceived{0};         // 마지막 수신 프레임 ID
     Shared<uint32_t> framesReceivedTotal{0};     // 총 수신 프레임 수
-    Shared<float>    frameHz{0.0f};              // B채널 수신 프레임레이트 (Hz)
+    Shared<float>    frameHz{0.0f};              // B채널 ID 880 수신 속도 (Hz)
+    Shared<float>    filteredHz{0.0f};           // B채널 감시 ID 합산 속도 (880/921/923/297 Hz)
     Shared<uint32_t> frames880{0};               // ID 880 수신 프레임 수
     Shared<uint32_t> frames921{0};               // ID 921 수신 프레임 수
-    Shared<uint32_t> framesFilteredInTotal{0};   // SW 필터 통과 프레임 수 (880/921)
+    Shared<uint32_t> frames923{0};               // ID 923 수신 프레임 수 (DAS_status 후보)
+    Shared<uint32_t> framesFilteredInTotal{0};   // SW 필터 통과 프레임 수 (감시 ID)
     Shared<uint32_t> framesFilteredOutTotal{0};  // SW 필터 제외 프레임 수
     Shared<uint32_t> echoCount{0};               // 발사한 에코 패킷 수
     Shared<uint32_t> skipRuntimeOrInactive{0};   // nag 비활성/런타임 OFF로 스킵된 880 수
+    Shared<uint32_t> skipApState{0};             // Mode B AP state gate로 스킵된 880 수
     Shared<uint32_t> skipHandsOn{0};             // handsOn!=0 로 스킵된 880 수
-    Shared<uint32_t> skipDasState{0};            // DAS 상태(0/8)로 스킵된 880 수
+    Shared<uint32_t> skipDasState{0};            // DAS 만족/대기/미지원 상태로 스킵된 880 수
     Shared<uint32_t> last880RxMs{0};             // 마지막 880 수신 시각
     Shared<uint32_t> last921RxMs{0};             // 마지막 921 수신 시각
+    Shared<uint32_t> last923RxMs{0};             // 마지막 923 수신 시각
     Shared<uint32_t> lastEchoTxMs{0};            // 마지막 echo 발사 시각
     Shared<uint8_t>  nagLastDecision{kNagDecisionNone}; // 마지막 NagHandler 판정
     Shared<uint8_t> twaiStateCode{0};            // TWAI 상태 코드 (0=초기, 1=정상, 2=Bus Off, 3=복구중)
@@ -198,15 +211,18 @@ struct BChannelDiagnostics {
     Shared<uint32_t> echoLatUs{0};               // 최근 에코 레이턴시 (µs)
     Shared<uint8_t>  realHo{0};                  // 버스에서 읽은 실제 handsOn 값 (0..3)
     Shared<float>    realTorqueNm{0.0f};          // 버스에서 읽은 실제 토크 (Nm)
-    // ID 921 진단: DAS 핸즈온 상태 (0xFF = 아직 921 미수신)
+    // DAS_status 진단: 921/923 후보 모두 지원 (0xFF = 아직 DAS_status 미수신)
     Shared<uint8_t>  dasHandsOnStateRx{0xFF};    // (frame.data[5]>>2)&0x0F, 0xFF=미수신
-    Shared<uint32_t> nagFiredNoDas{0};           // DAS 921 미수신 상태에서 에코 발사 누적 (bus B에 921 없을 때 증가)
+    Shared<uint32_t> dasStatusSourceId{0};       // 마지막 DAS_status 소스 ID (921 또는 923)
+    Shared<uint32_t> lastDasStatusRxMs{0};       // 마지막 DAS_status(921/923) 수신 시각
+    Shared<uint32_t> nagFiredNoDas{0};           // DAS_status 미수신 상태에서 에코 발사 누적
     Shared<uint32_t> echoDroppedLate{0};         // 수신→에코 6ms 초과로 드롭된 에코 수 (ECU TX 충돌 방지)
     // ── Mode B (스마트 상태머신) 진단 필드 ──────────────────────────────────
     Shared<uint8_t>  nagMode{0};                     // 현재 활성 모드 (0=A 스텔스 / 1=B 스마트)
-    Shared<uint8_t>  dasAutopilotStateRx{0};         // ID 921 DAS_autopilotState (0|4@1+)
+    Shared<uint8_t>  dasAutopilotStateRx{0};         // DAS_status DAS_autopilotState (0|4@1+)
     Shared<float>    steeringAngleDeg{0.0f};         // ID 297 SCCM_steeringAngle (deg)
     Shared<uint32_t> frames297{0};                   // ID 297 수신 프레임 수
+    Shared<uint32_t> last297RxMs{0};                 // 마지막 297 수신 시각
     // Mode B 상태머신 페이즈 (0=idle 1=grace 2=state2_delay 3=state2_mild 4=strong_delay 5=strong_ramp 6=strong_hold)
     Shared<uint8_t>  modeBPhase{0};
     Shared<uint32_t> modeBInjectCount{0};            // Mode B 토크 주입 횟수
@@ -258,6 +274,11 @@ struct AChannelDiagnostics {
     Shared<uint32_t> lastFrameRxMs{0};          // 마지막 A채널 프레임 수신 시각
     Shared<uint32_t> lastTxMs{0};               // 마지막 TX 성공 시각
     Shared<uint32_t> mcpEflgEventCount{0};      // EFLG 0→비제로 전환 횟수 (에러 발생 이벤트)
+    Shared<uint32_t> mcpRecoveryAttemptCount{0}; // MCP2515 BUS-OFF 재초기화 시도 횟수
+    Shared<uint32_t> mcpRecoverySuccessCount{0}; // MCP2515 BUS-OFF 재초기화 성공 횟수
+    Shared<uint32_t> mcpRecoveryFailCount{0};    // MCP2515 BUS-OFF 재초기화 실패 횟수
+    Shared<uint32_t> mcpBusOffSinceMs{0};        // 현재 BUS-OFF 지속 시작 시각(ms), 아니면 0
+    Shared<uint32_t> mcpLastRecoveryMs{0};       // 최근 MCP2515 재초기화 시각(ms)
     Shared<uint32_t> aTxGuardUntilMs{0};       // A채널 1021 수정 송신 보호모드 종료 시각
     Shared<uint32_t> aTxGuardCount{0};         // 보호모드 진입 횟수
     Shared<uint32_t> aTxGuardSkipCount{0};     // 보호모드로 TSLLC/EAP 송신을 건너뛴 횟수

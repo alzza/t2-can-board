@@ -150,7 +150,7 @@ struct NagHandler : public CarManagerBase
     uint16_t _framesUntilExc = 175;
 
     // ── Mode B 상태머신 변수 ────────────────────────────────────────────────
-    uint8_t  _mbApState    = 0;       // DAS_autopilotState (ID 921 data[0]&0x0F)
+    uint8_t  _mbApState    = 0;       // DAS_autopilotState (ID 921/923 data[0]&0x0F)
     float    _mbAngleDeg   = 0.0f;    // SCCM_steeringAngle (ID 297)
     uint8_t  _mbPrevHoSt   = 0xFF;    // 직전 HandsOnState (전이 감지용)
 
@@ -172,13 +172,13 @@ struct NagHandler : public CarManagerBase
     uint8_t  _mbLastSpoofedHo        = 0;
 
     const uint32_t *filterIds() const override {
-        // Mode B는 297(SCCM_steeringAngle)도 필요. 항상 3개 등록해 두면
-        // Mode A에서 297은 handleMessage 내 조기 반환으로 처리된다.
-        static constexpr uint32_t ids[] = {880, 921, 297};
+        // Mode B는 297(SCCM_steeringAngle)도 필요. 923은 921 대체가 아니라 DAS_status 후보다.
+        // Mode A에서 921/923/297은 handleMessage 내 조기 반환으로 처리된다.
+        static constexpr uint32_t ids[] = {880, 921, 923, 297};
         return ids;
     }
 
-    uint8_t filterIdCount() const override { return 3; }
+    uint8_t filterIdCount() const override { return 4; }
 
     // ── 내부 헬퍼 ───────────────────────────────────────────────────────────
     static bool _mbIsStrongState(uint8_t s) { return s == 3 || s == 4 || s == 5; }
@@ -210,8 +210,9 @@ struct NagHandler : public CarManagerBase
     void _handleModeB(const CanFrame &frame, CanDriver &driver) {
         // 전역 허용 조건: AP state 3-6 + HandsOnState 활성
         if (_mbApState < 3 || _mbApState > 6) {
+            bChannelDiag.skipApState++;
             bChannelDiag.modeBPhase = 0;
-            bChannelDiag.nagLastDecision = kNagDecisionDasIdle;
+            bChannelDiag.nagLastDecision = kNagDecisionApBlocked;
             return;
         }
         uint8_t hoSt = (uint8_t)dasHandsOnState;
@@ -373,12 +374,13 @@ struct NagHandler : public CarManagerBase
                 _mbAngleDeg = raw * 0.1f - 819.2f;
                 bChannelDiag.steeringAngleDeg = _mbAngleDeg;
                 bChannelDiag.frames297 = (uint32_t)bChannelDiag.frames297 + 1;
+                bChannelDiag.last297RxMs = millis();
             }
             return;
         }
 
-        // ── ID 921 DAS_status: AP state + HandsOn state 갱신 ───────────────
-        if (frame.id == 921) {
+        // ── ID 921/923 DAS_status 후보: AP state + HandsOn state 갱신 ─────
+        if (frame.id == 921 || frame.id == 923) {
             if (frame.dlc >= 6) {
                 uint8_t apSt = frame.data[0] & 0x0F;
                 uint8_t hoSt = (frame.data[5] >> 2) & 0x0F;
@@ -386,7 +388,10 @@ struct NagHandler : public CarManagerBase
                 bChannelDiag.dasAutopilotStateRx = apSt;
                 dasHandsOnState = hoSt;
                 bChannelDiag.dasHandsOnStateRx = hoSt;
-                bChannelDiag.last921RxMs = millis();
+                bChannelDiag.dasStatusSourceId = frame.id;
+                bChannelDiag.lastDasStatusRxMs = millis();
+                if (frame.id == 921) bChannelDiag.last921RxMs = millis();
+                else                 bChannelDiag.last923RxMs = millis();
             }
             return;
         }
@@ -430,13 +435,14 @@ struct NagHandler : public CarManagerBase
         }
 
         uint8_t dasState = dasHandsOnState;
-        if (dasState == 0 || dasState == 8) {
+        if (dasState == 0xFF) {
+            bChannelDiag.nagLastDecision = kNagDecisionNo921;
+            return;
+        }
+        if (!nagDasStateRequiresEcho(dasState)) {
             bChannelDiag.skipDasState++;
             bChannelDiag.nagLastDecision = kNagDecisionDasIdle;
             return;
-        }
-        if (dasState == 0xFF) {
-            bChannelDiag.nagFiredNoDas++;
         }
 
         uint32_t r = _prngState;

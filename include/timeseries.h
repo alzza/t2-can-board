@@ -24,8 +24,10 @@ struct TsSample {
     uint32_t echoCnt;
     uint32_t f880;
     uint32_t f921;
+    uint32_t f923;
     uint32_t echoDrop;
     uint32_t skipRuntime;
+    uint32_t skipAp;
     uint32_t skipHandsOn;
     uint32_t skipDas;
     uint32_t noDasEcho;
@@ -33,15 +35,19 @@ struct TsSample {
     uint32_t userMark;
     uint16_t d880;
     uint16_t d921;
+    uint16_t d923;
     uint16_t dEcho;
     uint16_t dDrop;
     uint16_t dSkipRuntime;
+    uint16_t dSkipAp;
     uint16_t dSkipHandsOn;
     uint16_t dSkipDas;
     uint16_t dNoDasEcho;
     uint16_t dUserMark;
     uint8_t  handsOn;
     uint8_t  dasState;
+    uint8_t  nagMode;
+    uint16_t dasSourceId;
     uint8_t  lastDecision;
     // intervalDecision은 5초 구간 요약, lastDecision은 마지막 880 처리 분기다.
     uint8_t  intervalDecision;
@@ -63,8 +69,10 @@ inline volatile uint32_t tsBaseTxFail = 0;
 inline volatile uint32_t tsBaseEcho = 0;
 inline volatile uint32_t tsBaseF880 = 0;
 inline volatile uint32_t tsBaseF921 = 0;
+inline volatile uint32_t tsBaseF923 = 0;
 inline volatile uint32_t tsBaseEchoDrop = 0;
 inline volatile uint32_t tsBaseSkipRuntime = 0;
+inline volatile uint32_t tsBaseSkipAp = 0;
 inline volatile uint32_t tsBaseSkipHandsOn = 0;
 inline volatile uint32_t tsBaseSkipDas = 0;
 inline volatile uint32_t tsBaseNoDasEcho = 0;
@@ -73,8 +81,10 @@ inline volatile uint32_t tsBaseUserMark = 0;
 inline volatile uint32_t tsPrevEcho = 0;
 inline volatile uint32_t tsPrevF880 = 0;
 inline volatile uint32_t tsPrevF921 = 0;
+inline volatile uint32_t tsPrevF923 = 0;
 inline volatile uint32_t tsPrevEchoDrop = 0;
 inline volatile uint32_t tsPrevSkipRuntime = 0;
+inline volatile uint32_t tsPrevSkipAp = 0;
 inline volatile uint32_t tsPrevSkipHandsOn = 0;
 inline volatile uint32_t tsPrevSkipDas = 0;
 inline volatile uint32_t tsPrevNoDasEcho = 0;
@@ -107,8 +117,10 @@ static void timeseriesTaskFn(void*) {
         uint32_t curEcho = (uint32_t)bChannelDiag.echoCount;
         uint32_t cur880 = (uint32_t)bChannelDiag.frames880;
         uint32_t cur921 = (uint32_t)bChannelDiag.frames921;
+        uint32_t cur923 = (uint32_t)bChannelDiag.frames923;
         uint32_t curDrop = (uint32_t)bChannelDiag.echoDroppedLate;
         uint32_t curSkipRuntime = (uint32_t)bChannelDiag.skipRuntimeOrInactive;
+        uint32_t curSkipAp = (uint32_t)bChannelDiag.skipApState;
         uint32_t curSkipHandsOn = (uint32_t)bChannelDiag.skipHandsOn;
         uint32_t curSkipDas = (uint32_t)bChannelDiag.skipDasState;
         uint32_t curNoDas = (uint32_t)bChannelDiag.nagFiredNoDas;
@@ -116,34 +128,42 @@ static void timeseriesTaskFn(void*) {
         s.echoCnt  = tsDelta(curEcho, (uint32_t)tsBaseEcho);
         s.f880     = tsDelta(cur880, (uint32_t)tsBaseF880);
         s.f921     = tsDelta(cur921, (uint32_t)tsBaseF921);
+        s.f923     = tsDelta(cur923, (uint32_t)tsBaseF923);
         s.echoDrop = tsDelta(curDrop, (uint32_t)tsBaseEchoDrop);
         s.skipRuntime = tsDelta(curSkipRuntime, (uint32_t)tsBaseSkipRuntime);
+        s.skipAp = tsDelta(curSkipAp, (uint32_t)tsBaseSkipAp);
         s.skipHandsOn = tsDelta(curSkipHandsOn, (uint32_t)tsBaseSkipHandsOn);
         s.skipDas = tsDelta(curSkipDas, (uint32_t)tsBaseSkipDas);
         s.noDasEcho = tsDelta(curNoDas, (uint32_t)tsBaseNoDasEcho);
         s.userMark = tsDelta(curUserMark, (uint32_t)tsBaseUserMark);
         s.d880 = tsDelta16(cur880, (uint32_t)tsPrevF880);
         s.d921 = tsDelta16(cur921, (uint32_t)tsPrevF921);
+        s.d923 = tsDelta16(cur923, (uint32_t)tsPrevF923);
         s.dEcho = tsDelta16(curEcho, (uint32_t)tsPrevEcho);
         s.dDrop = tsDelta16(curDrop, (uint32_t)tsPrevEchoDrop);
         s.dSkipRuntime = tsDelta16(curSkipRuntime, (uint32_t)tsPrevSkipRuntime);
+        s.dSkipAp = tsDelta16(curSkipAp, (uint32_t)tsPrevSkipAp);
         s.dSkipHandsOn = tsDelta16(curSkipHandsOn, (uint32_t)tsPrevSkipHandsOn);
         s.dSkipDas = tsDelta16(curSkipDas, (uint32_t)tsPrevSkipDas);
         s.dNoDasEcho = tsDelta16(curNoDas, (uint32_t)tsPrevNoDasEcho);
         s.dUserMark = tsDelta16(curUserMark, (uint32_t)tsPrevUserMark);
         s.handsOn  = (uint8_t)bChannelDiag.realHo;
         s.dasState = (uint8_t)bChannelDiag.dasHandsOnStateRx;
+        s.nagMode = (uint8_t)bChannelDiag.nagMode;
+        s.dasSourceId = (uint16_t)(uint32_t)bChannelDiag.dasStatusSourceId;
         s.lastDecision = (uint8_t)bChannelDiag.nagLastDecision;
-        s.intervalDecision = nagIntervalDecision(s.d880, s.d921, s.dEcho, s.dDrop,
+        s.intervalDecision = nagIntervalDecision(s.d880, s.d921 + s.d923, s.dEcho, s.dDrop,
             s.dSkipRuntime, s.dSkipHandsOn, s.dSkipDas,
-            (bool)nagKillerRuntime);
+            (bool)nagKillerRuntime, s.dSkipAp);
         portENTER_CRITICAL(&tsMux);
         tsBuf[tsHead] = s;
         tsPrevEcho = curEcho;
         tsPrevF880 = cur880;
         tsPrevF921 = cur921;
+        tsPrevF923 = cur923;
         tsPrevEchoDrop = curDrop;
         tsPrevSkipRuntime = curSkipRuntime;
+        tsPrevSkipAp = curSkipAp;
         tsPrevSkipHandsOn = curSkipHandsOn;
         tsPrevSkipDas = curSkipDas;
         tsPrevNoDasEcho = curNoDas;
@@ -172,8 +192,10 @@ inline void timeseriesReset() {
     tsBaseEcho = (uint32_t)bChannelDiag.echoCount;
     tsBaseF880 = (uint32_t)bChannelDiag.frames880;
     tsBaseF921 = (uint32_t)bChannelDiag.frames921;
+    tsBaseF923 = (uint32_t)bChannelDiag.frames923;
     tsBaseEchoDrop = (uint32_t)bChannelDiag.echoDroppedLate;
     tsBaseSkipRuntime = (uint32_t)bChannelDiag.skipRuntimeOrInactive;
+    tsBaseSkipAp = (uint32_t)bChannelDiag.skipApState;
     tsBaseSkipHandsOn = (uint32_t)bChannelDiag.skipHandsOn;
     tsBaseSkipDas = (uint32_t)bChannelDiag.skipDasState;
     tsBaseNoDasEcho = (uint32_t)bChannelDiag.nagFiredNoDas;
@@ -181,8 +203,10 @@ inline void timeseriesReset() {
     tsPrevEcho = (uint32_t)bChannelDiag.echoCount;
     tsPrevF880 = (uint32_t)bChannelDiag.frames880;
     tsPrevF921 = (uint32_t)bChannelDiag.frames921;
+    tsPrevF923 = (uint32_t)bChannelDiag.frames923;
     tsPrevEchoDrop = (uint32_t)bChannelDiag.echoDroppedLate;
     tsPrevSkipRuntime = (uint32_t)bChannelDiag.skipRuntimeOrInactive;
+    tsPrevSkipAp = (uint32_t)bChannelDiag.skipApState;
     tsPrevSkipHandsOn = (uint32_t)bChannelDiag.skipHandsOn;
     tsPrevSkipDas = (uint32_t)bChannelDiag.skipDasState;
     tsPrevNoDasEcho = (uint32_t)bChannelDiag.nagFiredNoDas;
@@ -223,25 +247,26 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
         recording?"ON":"OFF", (unsigned)n);
     httpd_resp_sendstr_chunk(req, meta);
     if (tsMetaWriter) tsMetaWriter(req);  // web_server에서 드라이버 토글 등 주입
-    const char* hdr = "t_s,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,ho,dasState,echoDrop,skipOff,skipHO,skipDAS,noDAS,userMark,d880,d921,dEcho,dDrop,dSkipOff,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision\n";
+    const char* hdr = "t_s,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,nagMode,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision\n";
     httpd_resp_sendstr_chunk(req, hdr);
     char line[384];
     size_t start = (n < TS_CAP) ? 0 : head;  // oldest first
     for (size_t i = 0; i < n; ++i) {
         TsSample s;
         timeseriesCopyAt(start + i, s);
-        snprintf(line, sizeof(line), "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+        snprintf(line, sizeof(line), "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
             (unsigned)(s.t_ms / 1000),
             (unsigned)s.busoff, (unsigned)s.tec, (unsigned)s.rec,
             (unsigned)s.arbLost, (unsigned)s.busErr, (unsigned)s.txFail,
-            (unsigned)s.echoCnt, (unsigned)s.f880, (unsigned)s.f921,
+            (unsigned)s.echoCnt, (unsigned)s.f880, (unsigned)s.f921, (unsigned)s.f923,
             (unsigned)s.handsOn, (unsigned)s.dasState,
+            (unsigned)s.nagMode, (unsigned)s.dasSourceId,
             (unsigned)s.echoDrop, (unsigned)s.skipRuntime,
-            (unsigned)s.skipHandsOn, (unsigned)s.skipDas,
+            (unsigned)s.skipAp, (unsigned)s.skipHandsOn, (unsigned)s.skipDas,
             (unsigned)s.noDasEcho, (unsigned)s.userMark,
-            (unsigned)s.d880, (unsigned)s.d921,
+            (unsigned)s.d880, (unsigned)s.d921, (unsigned)s.d923,
             (unsigned)s.dEcho, (unsigned)s.dDrop, (unsigned)s.dSkipRuntime,
-            (unsigned)s.dSkipHandsOn, (unsigned)s.dSkipDas,
+            (unsigned)s.dSkipAp, (unsigned)s.dSkipHandsOn, (unsigned)s.dSkipDas,
             (unsigned)s.dNoDasEcho, (unsigned)s.dUserMark, (unsigned)s.lastDecision,
             (unsigned)s.intervalDecision);
         httpd_resp_sendstr_chunk(req, line);

@@ -50,8 +50,8 @@ public:
         static constexpr bool kSupportsISR = true;
     #endif
 
-    explicit MCP2515Driver(uint8_t csPin)
-        : csPin_(csPin), currentSpiFreqHz_((uint32_t)aMcpSpiFreqHz)
+    explicit MCP2515Driver(uint8_t csPin, int8_t rstPin = -1)
+        : csPin_(csPin), rstPin_(rstPin), currentSpiFreqHz_((uint32_t)aMcpSpiFreqHz)
     {
         rebuildMcpUnlocked();
 #ifndef NATIVE_BUILD
@@ -62,24 +62,7 @@ public:
     bool init() override
     {
         Lock lock(mutex_);
-        mcp_->reset();
-
-        // T2CAN 보드별 크리스탈 주파수(8/16MHz) 설정
-        MCP2515::ERROR e = mcp_->setBitrate(CAN_500KBPS, kMcpClock);
-
-        if (e != MCP2515::ERROR_OK) {
-            Serial.print("[FAIL] MCP2515 setBitrate Error: ");
-            Serial.println((int)e);
-            return false;
-        }
-
-        Serial.printf("[OK] 500kbps @ %dMHz 설정 완료 (SPI %lu Hz)\n",
-              MCP2515_CRYSTAL_MHZ, (unsigned long)currentSpiFreqHz_);
-
-        applyModeUnlocked();
-        Serial.printf("[OK] %s Mode 진입 완료\n", (bool)aMcpOneShotRuntime ? "Normal One-Shot" : "Normal");
-
-        return true;
+        return configureChipUnlocked(true);
     }
 
     void setFilters(const uint32_t *ids, uint8_t count) override
@@ -178,7 +161,53 @@ public:
         mcp_->clearRXnOVR();
     }
 
+    bool recoverBusOff() override
+    {
+        Lock lock(mutex_);
+        pulseResetPinUnlocked();
+        mcp_->clearMERR();
+        mcp_->clearERRIF();
+        mcp_->clearInterrupts();
+        return configureChipUnlocked(false);
+    }
+
 private:
+    bool configureChipUnlocked(bool verbose)
+    {
+        mcp_->reset();
+
+        MCP2515::ERROR e = mcp_->setBitrate(CAN_500KBPS, kMcpClock);
+        if (e != MCP2515::ERROR_OK) {
+            if (verbose) {
+                Serial.print("[FAIL] MCP2515 setBitrate Error: ");
+                Serial.println((int)e);
+            }
+            return false;
+        }
+
+        if (verbose) {
+            Serial.printf("[OK] 500kbps @ %dMHz 설정 완료 (SPI %lu Hz)\n",
+                  MCP2515_CRYSTAL_MHZ, (unsigned long)currentSpiFreqHz_);
+        }
+
+        applyModeUnlocked();
+        if (verbose) {
+            Serial.printf("[OK] %s Mode 진입 완료\n", (bool)aMcpOneShotRuntime ? "Normal One-Shot" : "Normal");
+        }
+        return true;
+    }
+
+    void pulseResetPinUnlocked()
+    {
+#ifndef NATIVE_BUILD
+        if (rstPin_ < 0) return;
+        pinMode(rstPin_, OUTPUT);
+        digitalWrite(rstPin_, HIGH); delay(20);
+        digitalWrite(rstPin_, LOW);  delay(20);
+        digitalWrite(rstPin_, HIGH); delay(20);
+#endif
+    }
+
     void rebuildMcpUnlocked()
     {
 #if defined(BOARD_T2CAN)
@@ -198,6 +227,7 @@ private:
     }
 
     uint8_t csPin_;
+    int8_t rstPin_;
     uint32_t currentSpiFreqHz_;
     std::unique_ptr<MCP2515> mcp_;
 #ifndef NATIVE_BUILD

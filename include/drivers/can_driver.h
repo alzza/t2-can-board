@@ -25,6 +25,8 @@ struct CanDriver
     virtual uint8_t readAndClearMerrf() { return 0; }
     // EFLG.RX0OVR/RX1OVR sticky 비트 클리어 (호스트가 수동 클리어해야만 다음 OVR 검출 가능)
     virtual void clearRxOverrun() {}
+    // BUS-OFF 상태에서 드라이버별 재초기화. MCP2515는 하드 리셋/재설정, 기본은 미지원.
+    virtual bool recoverBusOff() { return false; }
     // 웹 UI/NVS 기반 런타임 설정 적용 훅. 기본 드라이버는 동작 없음.
     virtual void applyRuntimeSettings() {}
     virtual ~CanDriver() = default;

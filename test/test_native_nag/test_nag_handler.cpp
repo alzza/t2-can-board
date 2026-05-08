@@ -42,11 +42,17 @@ static bool verifyChecksum(const CanFrame &f)
     return f.data[7] == static_cast<uint8_t>((sum + 0x73) & 0xFF);
 }
 
-static CanFrame makeDasFrame(uint8_t handsOnState)
+static CanFrame makeDasFrame(uint8_t handsOnState, uint32_t id = 921)
 {
-    CanFrame frame = {.id = 921, .dlc = 8};
+    CanFrame frame = {.id = id, .dlc = 8};
     frame.data[5] = static_cast<uint8_t>((handsOnState & 0x0F) << 2);
     return frame;
+}
+
+static void primeDasRequest(uint8_t handsOnState = 2, uint32_t id = 921)
+{
+    CanFrame dasFrame = makeDasFrame(handsOnState, id);
+    handler.handleMessage(dasFrame, mock);
 }
 
 void setUp()
@@ -64,8 +70,8 @@ void tearDown() {}
 
 void test_nag_filter_ids_count()
 {
-    // 880 + 921 + 297(Mode B 조향각) = 3
-    TEST_ASSERT_EQUAL_UINT8(3, handler.filterIdCount());
+    // 880 + 921/923(DAS 후보) + 297(Mode B 조향각) = 4
+    TEST_ASSERT_EQUAL_UINT8(4, handler.filterIdCount());
 }
 
 void test_nag_filter_ids_value()
@@ -73,7 +79,8 @@ void test_nag_filter_ids_value()
     const uint32_t *ids = handler.filterIds();
     TEST_ASSERT_EQUAL_UINT32(880, ids[0]);
     TEST_ASSERT_EQUAL_UINT32(921, ids[1]);
-    TEST_ASSERT_EQUAL_UINT32(297, ids[2]);
+    TEST_ASSERT_EQUAL_UINT32(923, ids[2]);
+    TEST_ASSERT_EQUAL_UINT32(297, ids[3]);
 }
 
 // ============================================================
@@ -82,9 +89,19 @@ void test_nag_filter_ids_value()
 
 void test_nag_echoes_when_handson_0()
 {
+    primeDasRequest();
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
+}
+
+void test_nag_does_not_echo_when_das_state_1()
+{
+    primeDasRequest(1);
+    CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
+    handler.handleMessage(f, mock);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT8(kNagDecisionDasIdle, (uint8_t)bChannelDiag.nagLastDecision);
 }
 
 void test_nag_does_not_echo_when_handson_1()
@@ -138,6 +155,7 @@ void test_nag_ignores_short_dlc()
 
 void test_nag_counter_increments_by_1()
 {
+    primeDasRequest();
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
@@ -147,6 +165,7 @@ void test_nag_counter_increments_by_1()
 
 void test_nag_counter_wraps_from_f_to_0()
 {
+    primeDasRequest();
     CanFrame f = makeEpasFrame(0, 0.33, 0x0F);
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
@@ -156,6 +175,7 @@ void test_nag_counter_wraps_from_f_to_0()
 
 void test_nag_counter_preserves_upper_nibble()
 {
+    primeDasRequest();
     CanFrame f = makeEpasFrame(0, 0.33, 0x05, 2); // eacStatus=2 -> upper nibble = 0x40
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
@@ -170,6 +190,7 @@ void test_nag_counter_preserves_upper_nibble()
 
 void test_nag_sets_handson_to_1()
 {
+    primeDasRequest();
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
     handler.handleMessage(f, mock);
     uint8_t outHandsOn = (mock.sent[0].data[4] >> 6) & 0x03;
@@ -178,6 +199,7 @@ void test_nag_sets_handson_to_1()
 
 void test_nag_preserves_byte4_lower_bits()
 {
+    primeDasRequest();
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
     f.data[4] = 0x1F; // handsOn=0, lower bits = 0x1F
     handler.handleMessage(f, mock);
@@ -187,6 +209,7 @@ void test_nag_preserves_byte4_lower_bits()
 
 void test_nag_torque_walk_not_fixed_0x08B6()
 {
+    primeDasRequest();
     bool seenNonFixed = false;
     for (int i = 0; i < 10 && !seenNonFixed; i++)
     {
@@ -201,6 +224,7 @@ void test_nag_torque_walk_not_fixed_0x08B6()
 
 void test_nag_copies_bytes_0_1_2_5_unchanged()
 {
+    primeDasRequest();
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
     f.data[0] = 0xAB;
     f.data[1] = 0xCD;
@@ -225,6 +249,7 @@ void test_nag_copies_bytes_0_1_2_5_unchanged()
 
 void test_nag_checksum_correct()
 {
+    primeDasRequest();
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
     handler.handleMessage(f, mock);
     TEST_ASSERT_TRUE(verifyChecksum(mock.sent[0]));
@@ -232,6 +257,7 @@ void test_nag_checksum_correct()
 
 void test_nag_checksum_correct_at_counter_boundary()
 {
+    primeDasRequest();
     CanFrame f = makeEpasFrame(0, 0.33, 0x0F); // counter wraps
     handler.handleMessage(f, mock);
     TEST_ASSERT_TRUE(verifyChecksum(mock.sent[0]));
@@ -240,6 +266,7 @@ void test_nag_checksum_correct_at_counter_boundary()
 void test_nag_checksum_correct_with_various_inputs()
 {
     // Test across multiple counter values and torques
+    primeDasRequest();
     for (uint8_t cnt = 0; cnt < 16; cnt++)
     {
         mock.reset();
@@ -257,6 +284,7 @@ void test_nag_checksum_correct_with_various_inputs()
 void test_nag_output_torque_never_exceeds_safe_range()
 {
     // 스텔스(PRND) 출력 토크가 안전 범위를 벗어나지 않는지 확인
+    primeDasRequest();
     for (uint8_t cnt = 0; cnt < 16; cnt++)
     {
         mock.reset();
@@ -274,6 +302,7 @@ void test_nag_output_torque_never_exceeds_safe_range()
 
     void test_nag_output_raw_stays_in_2150_2370_range()
 {
+    primeDasRequest();
     for (uint8_t cnt = 0; cnt < 32; cnt++)
     {
         mock.reset();
@@ -289,6 +318,7 @@ void test_nag_output_torque_never_exceeds_safe_range()
 
 void test_nag_output_handson_never_exceeds_1()
 {
+    primeDasRequest();
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
     handler.handleMessage(f, mock);
     uint8_t ho = (mock.sent[0].data[4] >> 6) & 0x03;
@@ -301,6 +331,7 @@ void test_nag_output_handson_never_exceeds_1()
 
 void test_nag_increments_frames_sent()
 {
+    primeDasRequest();
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL_UINT32(1, handler.framesSent);
@@ -308,6 +339,7 @@ void test_nag_increments_frames_sent()
 
 void test_nag_increments_echo_count()
 {
+    primeDasRequest();
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL_UINT32(1, handler.nagEchoCount);
@@ -315,6 +347,7 @@ void test_nag_increments_echo_count()
 
 void test_nag_multiple_frames_count_correctly()
 {
+    primeDasRequest();
     for (int i = 0; i < 10; i++)
     {
         CanFrame f = makeEpasFrame(0, 0.33, i & 0x0F);
@@ -324,14 +357,15 @@ void test_nag_multiple_frames_count_correctly()
     TEST_ASSERT_EQUAL(10, mock.sent.size());
 }
 
-void test_nag_allows_no_das_fallback()
+void test_nag_blocks_no_das_fallback()
 {
     for (int index = 0; index < 121; index++)
     {
         CanFrame frame = makeEpasFrame(0, 0.33, index & 0x0F);
         handler.handleMessage(frame, mock);
     }
-    TEST_ASSERT_EQUAL(121, mock.sent.size());
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT8(kNagDecisionNo921, (uint8_t)bChannelDiag.nagLastDecision);
 }
 
 void test_nag_updates_das_state_on_921()
@@ -344,21 +378,21 @@ void test_nag_updates_das_state_on_921()
     TEST_ASSERT_EQUAL_UINT8(2, (uint8_t)handler.dasHandsOnState);
 }
 
-void test_nag_still_echoes_after_921_update()
+void test_nag_echoes_after_das_request_update()
 {
     for (int index = 0; index < 121; index++)
     {
         CanFrame frame = makeEpasFrame(0, 0.33, index & 0x0F);
         handler.handleMessage(frame, mock);
     }
-    TEST_ASSERT_EQUAL(121, mock.sent.size());
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
 
     CanFrame dasFrame = makeDasFrame(2);
     handler.handleMessage(dasFrame, mock);
 
     CanFrame epasFrame = makeEpasFrame(0, 0.33, 0x01);
     handler.handleMessage(epasFrame, mock);
-    TEST_ASSERT_EQUAL(122, mock.sent.size());
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
 }
 
 // ============================================================
@@ -367,6 +401,7 @@ void test_nag_still_echoes_after_921_update()
 
 void test_nag_echoes_only_handson_0_in_mixed_sequence()
 {
+    primeDasRequest();
     // Simulate: ho=0, ho=1, ho=0, ho=2, ho=0
     CanFrame f0a = makeEpasFrame(0, 0.33, 0x00);
     CanFrame f1 = makeEpasFrame(1, 1.50, 0x01);
@@ -389,6 +424,7 @@ void test_nag_echoes_only_handson_0_in_mixed_sequence()
 
 void test_nag_output_id_is_880()
 {
+    primeDasRequest();
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL_UINT32(880, mock.sent[0].id);
@@ -396,6 +432,7 @@ void test_nag_output_id_is_880()
 
 void test_nag_output_dlc_is_8()
 {
+    primeDasRequest();
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL_UINT8(8, mock.sent[0].dlc);
@@ -411,6 +448,7 @@ int main()
 
     // Basic echo behavior
     RUN_TEST(test_nag_echoes_when_handson_0);
+    RUN_TEST(test_nag_does_not_echo_when_das_state_1);
     RUN_TEST(test_nag_does_not_echo_when_handson_1);
     RUN_TEST(test_nag_does_not_echo_when_handson_2);
     RUN_TEST(test_nag_does_not_echo_when_handson_3);
@@ -443,9 +481,9 @@ int main()
     RUN_TEST(test_nag_increments_frames_sent);
     RUN_TEST(test_nag_increments_echo_count);
     RUN_TEST(test_nag_multiple_frames_count_correctly);
-    RUN_TEST(test_nag_allows_no_das_fallback);
+    RUN_TEST(test_nag_blocks_no_das_fallback);
     RUN_TEST(test_nag_updates_das_state_on_921);
-    RUN_TEST(test_nag_still_echoes_after_921_update);
+    RUN_TEST(test_nag_echoes_after_das_request_update);
 
     // Edge cases
     RUN_TEST(test_nag_echoes_only_handson_0_in_mixed_sequence);

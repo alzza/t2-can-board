@@ -1,196 +1,250 @@
-# Copilot Instructions
+---
+name: karpathy-guidelines
+description: "코딩 시 흔히 발생하는 LLM 실수를 줄이기 위한 행동 원칙. 코드 작성·리뷰·리팩터링 시 항상 적용. 오버엔지니어링 방지, 외과적 변경, 가정 명시, 검증 가능한 성공 기준 정의를 다룬다. Andrej Karpathy의 관찰에서 도출."
+---
 
-Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
+# Karpathy 코딩 원칙
 
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+> Andrej Karpathy의 [LLM 코딩 함정 관찰](https://x.com/karpathy/status/2015883857489522876)에서 도출한 4가지 원칙.
 
-## 1. Think Before Coding
-
-**Don't assume. Don't hide confusion. Surface tradeoffs.**
-
-Before implementing:
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them — don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
-
-## 2. Simplicity First
-
-**Minimum code that solves the problem. Nothing speculative.**
-
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
-
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
-
-## 3. Surgical Changes
-
-**Touch only what you must. Clean up only your own mess.**
-
-When editing existing code:
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it — don't delete it.
-
-When your changes create orphans:
-- Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
-
-The test: Every changed line should trace directly to the user's request.
-
-## 4. Goal-Driven Execution
-
-**Define success criteria. Loop until verified.**
-
-Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
-
-For multi-step tasks, state a brief plan:
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
-```
-
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+**트레이드오프:** 이 원칙들은 속도보다 신중함을 우선한다. 단순 오타 수정처럼 사소한 작업은 계획·검증 절차를 생략하고 바로 고쳐도 된다.
 
 ---
 
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+## 모델 호환성
+
+이 스킬은 VS Code Copilot에서 Claude, Codex, GPT 계열 모델을 선택해도 동일하게 적용되는 모델 중립 지침이다. 특정 모델명이나 전용 런타임을 전제로 새 해석 규칙을 만들지 말고, 현재 대화와 작업공간에서 제공된 도구와 지침만 기준으로 적용해라.
+
+같은 원칙을 `AGENTS.md`로도 공유해야 하면 프로젝트 루트에 두어 저장소 전역에 적용하고, 하위 폴더에 두면 그 폴더와 그 아래 모든 하위 폴더에 재귀적으로 적용한다. 지침 파일은 길이보다 밀도를 우선하고, 같은 의미를 한국어와 영어로 반복하기보다 새 판단 기준만 추가해라.
 
 ---
 
-## Project-Specific Guidelines
+## 1. 코딩 전에 생각하라
 
-### Stack
-- **MCU**: ESP32-S3 (LILYGO T2-CAN), Arduino-ESP32 2.0.17 = ESP-IDF v4.4.x
-- **RTOS**: FreeRTOS, **Core 1 = CAN A/B 통합 폴링 / Core 0 = WiFi·HTTP·보조 태스크** 분리
-- **A 채널**: MCP2515(SPI, GPIO10/11/12/13, CS=GPIO10, RST=GPIO9, INT 미사용) → `appLoop<MCP2515Driver>()`이 **`nagKillerTask` 본문 시작에서** 매 iter 호출됨 + `HW3Handler` (하드코딩: `using SelectedHandler = HW3Handler`). **SPI 10MHz 기본** (웹 UI에서 8MHz로 다운그레이드 가능).
-- **B 채널**: 내장 TWAI (TX=GPIO7, RX=GPIO6, 500kbps) → `nagKillerTask` (**Core 1**, prio 10) + `NagHandler` (ID 880/921). TWAI ISR `intr_flags = ESP_INTR_FLAG_IRAM` 요청 (sdkconfig `CONFIG_TWAI_ISR_IN_IRAM=y` 시 OTA cache-disable 구간에서도 RX FIFO 보호).
-- **`loop()` (Arduino loopTask, Core 1, prio 1)**: `vTaskDelete(NULL)` 즉시 호출 → loopTask 종료. A/B 폴링 없음, ~8KB RAM 해제.
-- **보조 태스크** (모두 Core 0):
-  - `canAlertTask` (prio 1, 20ms): `TWAIDriver::pollAlerts()` → eventLog 기록
-  - `statusLogTask` (prio 1): 5초 상태 요약 로그 (`T2CAN_STATUS_LOG_TASK=0`으로 disable)
-  - `timeseriesTask`: 5초 간격 시계열 수집 (최근 30분, CSV 다운로드)
-- **웹서버**: `esp_http_server` (Core 0, stack=16384) + cJSON, 45개 API 엔드포인트
-- **WiFi**: AP-only (`TeslaCAN`, `kApChannel`) — STA 비활성으로 TWAI ACK 안정화
-- **빌드**: PlatformIO, env `lilygo_t2can` (보드) + `native_nag`/`native`/`native_log_buffer` (네이티브 테스트)
+**가정하지 마라. 혼란을 숨기지 마라. 트레이드오프를 드러내라.**
 
-### Key Files
-- `src/main.cpp` — `setup()`/`loop()`, `otaBootCheck()`, `nagKillerTask`, `canAlertTask`, 웹서버 시작
-- `include/app.h` — `appSetup<Driver>()` / `appLoop<Driver>()` 템플릿, `SelectedHandler = HW3Handler`
-- `include/handlers.h` — `HW3Handler` (A ch, ID 1021, EAP/TSLLC 주입), `NagHandler` (B ch, ID 880 echo)
-- `include/can_helpers.h` — 런타임 토글 (`Shared<bool>`), `BChannelDiagnostics`, `AChannelDiagnostics`, `BusOffEventLog`, `NagConfig`, checksum/bit/mux 헬퍼
-- `include/t2can_pins.h` — T2-CAN 핀맵 (TWAI TX/RX, MCP2515 SPI/CS/RST)
-- `include/web/web_server.h` — 45개 HTTP 핸들러, NVS 영속화, OTA 상태 머신, `gOtaRecoveryModeActive`
-- `include/web/web_ui.h` — `WEB_UI_HTML` (정상 SPA) + `WEB_RECOVERY_UI_HTML` (OTA 복구모드 전용 UI)
-- `include/drivers/twai_driver.h` — TWAI 드라이버 (BUS-OFF 복구: hard re-install, 쿨다운 런타임 설정)
-- `include/drivers/mcp2515_driver.h` — MCP2515 SPI 드라이버 (one-shot, EFLG/TEC/REC 폴링)
-- `include/event_log.h` — 이벤트 로그 링 버퍼 (TWAI alert, BUS-OFF 등)
-- `include/timeseries.h` — 5초 간격 시계열 (B채널 Hz, 에러 카운터, 결정 분포)
+구현 전:
+- 가정을 명시적으로 밝혀라. 불확실하면 추측 대신 질문해라.
+- 여러 해석이 가능하면 제시해라 — 침묵 속에서 선택하지 마라.
+- 더 단순한 접근이 있으면 말해라. 근거가 있으면 반론을 제기해라.
+- 무언가 불명확하면 멈춰라. 무엇이 혼란스러운지 이름 붙이고 물어봐라.
 
-### OTA 상태 머신 (NVS `ota_pending` 키)
+### 이 프로젝트에서 발생한 실제 사례
+> 2026-04-18: NagTask 우선순위가 10→4로 바뀐 것을 발견했지만 "BUS-OFF 처리 로직 문제"로 오진.
+> → **가정 명시 없이 수정을 진행한 결과, 6주간 오버엔지니어링.**
+
+---
+
+## 2. 단순함을 먼저
+
+**문제를 해결하는 최소한의 코드. 추측성 코드 금지.**
+
+우선순위가 충돌하면 다음 순서로 결정해라: 먼저 사용자가 요청한 동작을 깨지 않는 선택지만 남기고, 그 안에서 가장 단순한 해법을 고르며, 단순성이 같을 때 변경 범위가 가장 작은 해법을 고른다. 기존 스타일은 선택한 해법을 코드베이스에 맞춰 표현하는 기준이며, 과한 복잡도를 유지하는 이유가 아니다. 요청 자체가 복잡도를 요구하면 그 복잡도만 허용하고 추측성 확장은 하지 마라.
+
+- 요청된 것 이상의 기능 추가 금지.
+- 단일 용도 코드에 추상화 금지.
+- 요청하지 않은 "유연성"이나 "설정 가능성" 금지.
+- 발생 불가능한 시나리오에 대한 에러 처리 금지.
+- 같은 동작을 기존 스타일 안에서 200줄 대신 50줄로 명확히 표현할 수 있으면, 더 단순한 구현으로 줄여라.
+
+테스트: "시니어 엔지니어가 이게 과하게 복잡하다고 할까?" — 그렇다면 단순화해라.
+
+### 이 프로젝트에서 발생한 실제 사례
+> TX 백오프 값을 조정하고, ESP-NOW를 추가하고, 이중 핸들러를 만들고, `processBChannelFrame()` 헬퍼를 추가하는 등
+> 문제 원인(우선순위 4)을 모르는 채로 복잡도만 증가.
+> → **단 한 줄(`priority 4 → 10`) 수정이 진짜 해법이었다.**
+
+---
+
+## 3. 외과적 변경
+
+**건드려야 하는 것만 건드려라. 자신이 만든 쓰레기만 치워라.**
+
+기존 코드 편집 시:
+- 인접한 코드·주석·포매팅을 "개선"하지 마라.
+- 깨지지 않은 것은 리팩터하지 마라.
+- 선택한 해법의 표현 방식은 기존 스타일에 맞춰라.
+- 관련 없는 데드 코드를 발견하면 언급만 해라 — 삭제하지 마라.
+
+자신의 변경이 고아를 만들었을 때:
+- **자신의** 변경으로 불필요해진 import·변수·함수는 제거해라.
+- 기존에 이미 있던 데드 코드는 요청 없이 제거하지 마라.
+
+테스트: 변경된 모든 줄이 사용자 요청과 직접 연결되어야 한다.
+
+### 이 프로젝트에서 발생한 실제 사례
+> `66a394f` 커밋: Web UI JS 중괄호 버그 수정 중 `src/main.cpp`의 NagTask 우선순위가
+> 사이드 이펙트로 변경됨 — 이것이 모든 문제의 시작.
+> → **무관한 파일을 건드린 결과.**
+
+---
+
+## 4. 목표 중심 실행
+
+**성공 기준을 정의해라. 검증될 때까지 루프해라.**
+
+명령형 작업을 검증 가능한 목표로 변환:
+- "검증 추가" → "잘못된 입력에 대한 테스트 작성 후 통과"
+- "버그 수정" → "버그를 재현하는 테스트 작성 후 통과"
+- "X 리팩터" → "전후 테스트 모두 통과 보장"
+
+다단계 작업엔 간략한 계획을 먼저 제시:
 ```
-pending=0  정상 동작
-pending=1  새 FW 기록 완료 → 재부팅 대기
-pending=2  새 FW 부팅 중 → 3분 내 /api/ota-confirm 필요 (웹 배너 표시)
-pending=3  롤백 설정 완료 → 재부팅 대기
-pending=4  이전 FW 복구 부팅 중 → 1분 내 /api/ota-recovery-confirm 필요
-pending=5  복구모드 (gOtaRecoveryModeActive=true, CAN 비활성, 웹 서버만 동작)
-```
-- `otaBootCheck()`: `setup()` 최초 실행 시 pending 상태 읽어 전이 처리
-- `otaWatchdogTask`: 1초 폴링, 타임아웃 시 자동 롤백 또는 복구모드 전환
-- 복구모드: CAN 초기화 건너뜀, `webServerInit(nullptr)`, `WEB_RECOVERY_UI_HTML` 서빙
-
-### Web API 엔드포인트 (45개)
-```
-GET  /                          대시보드 HTML (정상 또는 복구모드 UI)
-GET  /api/status                통합 상태 JSON (3s polling, OTA 필드 포함)
-GET  /api/nag-config            NagConfig JSON
-GET  /api/nag-stats             B채널 실시간 통계
-POST /api/nag-mode              Nag 모드 변경
-POST /api/nag-update            NagConfig 업데이트
-POST /api/nag-reset             NagConfig 초기화
-POST /api/enhanced-autopilot    EAP 토글
-POST /api/tsllc                 TSLLC 토글 (스톱사인/초록불)
-POST /api/nag-killer            Nag Killer 토글
-POST /api/isa-speed-chime       ISA 속도 차임 토글
-POST /api/emergency-vehicle-detection  긴급차량 감지 토글
-POST /api/a-ch-tx               A채널 1021 송신 마스터 토글
-POST /api/a-spi-8mhz            A MCP2515 SPI 8MHz 토글
-POST /api/a-oneshot             A MCP2515 one-shot 모드 토글
-POST /api/a-tx-guard            A채널 TX guard 토글
-POST /api/twai-ss-tx            TWAI single-shot TX 토글
-POST /api/twai-busoff-stop      TWAI BUS-OFF 시 송신 중단 토글
-POST /api/emergency-disable     A채널 비상 비활성화
-POST /api/emergency-restore     A채널 비상 복구
-GET  /api/busoff-log            BUS-OFF 이벤트 로그 JSON
-GET  /api/busoff-log-dl         BUS-OFF 이벤트 로그 CSV
-DELETE /api/busoff-log          BUS-OFF 이벤트 로그 초기화
-POST /api/busoff-cooldown       BUS-OFF 복구 쿨다운 런타임 변경
-POST /api/busoff-mode           BUS-OFF 소프트 모드 토글
-POST /api/can-diag/start        CAN 자가진단 태스크 시작
-GET  /api/can-diag/log          CAN 자가진단 로그 폴링
-GET  /api/timeseries-csv        시계열 CSV 다운로드
-GET  /api/timeseries-status     시계열 상태
-POST /api/timeseries-reset      시계열 초기화
-POST /api/timeseries-rec        시계열 레코딩 토글
-GET  /api/events-csv            이벤트 로그 CSV
-GET  /api/logs-bundle           통합 로그 번들 (런타임+BUS-OFF+채널 스냅샷)
-POST /api/time                  wall-clock 동기화
-POST /api/user-marker           수동 AP 경고 마커
-POST /api/ota                   OTA 펌웨어 업로드
-POST /api/reboot                재부팅
-POST /api/ota-confirm           새 FW 확정 (pending 2→0)
-POST /api/ota-rollback          새 FW 롤백 (pending 2→3)
-POST /api/ota-recovery-confirm  복구 확정 (pending 4→0)
-POST /api/ota-enter-recovery    복구모드 강제 진입 (pending 4→5)
-POST /api/enable-print          런타임 시리얼 로그 토글
-POST /api/set-theme             UI 테마 저장
-GET  /generate_204              캡티브 포털 리다이렉트
-GET  /hotspot-detect.html       캡티브 포털 리다이렉트
+1. [단계] → 검증: [확인 방법]
+2. [단계] → 검증: [확인 방법]
+3. [단계] → 검증: [확인 방법]
 ```
 
-### NVS 키 (namespace `"canmod"`, 키 길이 ≤15)
+강한 성공 기준은 독립적인 루프를 가능하게 한다.
+약한 기준("되게 해줘")은 끊임없는 재확인을 요구한다.
+
+### 이 프로젝트 성공 기준 예시
+
 ```
-isa_speed_chime   emerg_veh_det   enh_autopilot   nag_killer   tsllc
-a_ch_tx           a_spi_mhz       a_oneshot        a_tx_guard
-nag_mode          nag_id          nag_tc           nag_tb2      nag_tb3   nag_ho
-theme
-ota_pending       ota_fallback
-busoff_cooldown   busoff_soft_mode
+BUS-OFF 수정 성공 기준:
+  - pio run -e lilygo_t2can → BUILD SUCCESS
+  - 차량 연결 10분 후 busoff_count < 2
+  - B채널 frameHz ~100Hz 안정 유지
+  - Web UI /api/status 응답 정상
+
+기능 추가 성공 기준:
+  - 빌드 성공
+  - pio test -e native 통과
+  - 웹 UI 토글 ON/OFF 후 /api/status 값 반영 확인
 ```
 
-### Conventions
-- **채널 경계**: A/B 카운터/버퍼/처리 루프를 절대 혼용 금지
-- **B 채널 소프트 필터**: `nagKillerTask` 인라인에서 ID 880/921 외 조기 반환 (`rxLimit=30`)
-- **핫패스 Serial 금지**: `appLoop`, `nagKillerTask`, handlers 내 직접 `Serial.print` 금지 → `logRing.push()` + `runtimeSerialPrintln()` 사용. 기본값 `T2CAN_RUNTIME_SERIAL_LOGS=0`
-- **statusLogTask 분리**: 5초 상태 요약은 `statusLogTask`(Core0, prio 1)에서 처리 → `nagKillerTask`(prio 10) 핫패스 보호. `T2CAN_STATUS_LOG_TASK=0` 빌드 플래그로 fallback
-- **NVS 키 규칙**: 길이 15자 이하, `static_assert`로 빌드 타임 검증, 기존 키 변경 금지
-- **체크섬**: `computeTeslaChecksum()` 경로 우선 사용 (sum + 0x73 & 0xFF)
-- **OTA 복구모드**: `gOtaRecoveryModeActive=true`이면 CAN 초기화 전체 건너뜀, `loop()`에서 즉시 반환
-- **HW4Handler/LegacyHandler**: 현재 주석 처리됨. `SelectedHandler = HW3Handler` 고정. 변경 전 확인 필수
+---
 
-### Build & Test
-```bash
-# 빌드
-pio run -e lilygo_t2can
+## 5. 편집 전 워크스페이스 근거 확인
 
-# 업로드
-pio run -e lilygo_t2can -t upload
+**수정할 파일을 실제로 읽고 나서 편집해라. 기억, 요약, 열린 탭만 믿지 마라.**
 
-# B채널 핵심 테스트 (31개)
-pio test -e native_nag
+코드를 바꾸기 전:
+- `rg` 같은 검색 도구로 실제 구현 위치를 찾아라.
+- 수정할 파일 본문과 가까운 호출부를 직접 읽어라.
+- 열린 탭, 파일명, README, 이전 대화 요약은 힌트로만 취급해라.
+- 로컬 코드가 자신의 가정과 다르면 가정이 아니라 코드를 기준으로 계획을 고쳐라.
 
-# 전체 네이티브 테스트
-pio test -e native_nag -e native -e native_log_buffer
-```
+이 규칙은 사소한 변경 예외 조항이 아니다. 존재하지 않는 코드를 상상하고 자신 있게 고치는 실수를 막기 위한 기본 규칙이다.
+
+---
+
+## 6. 작업 트리를 존중하라
+
+**커밋되지 않은 변경은 기본적으로 사용자의 작업이라고 가정해라.**
+
+워크트리가 더럽다면:
+- 관련 없는 변경을 되돌리거나 덮어쓰거나 전면 포매팅하지 마라.
+- 같은 파일에 사용자 변경이 있으면 먼저 읽고 그 위에 맞춰라.
+- 관련 없는 더티 파일은 무시해라.
+- 사용자가 명시적으로 요청하지 않은 파괴적 git 명령은 실행하지 마라.
+
+---
+
+## 7. 한국어 문장 끝에 콜론 쓰지 마라
+
+**한국어 문장은 가능하면 마침표, 물음표, 느낌표로 끝내라.**
+
+사용자가 한국어로 쓰면 출력도 한국어다.
+- 다음 줄에 목록이나 예시가 오더라도 한국어 문장을 `:`로 끝내지 마라.
+- 영어 문서 습관이 한국어 문장 끝으로 새지 않게 잡아라.
+- 테스트 기준은 한국어 문장 종결이 `.`, `?`, `!` 중 하나인지 보는 것이다.
+- 콜론은 코드, 키-값, 타임스탬프, 라벨 내부에서는 써도 된다.
+
+---
+
+## 8. 새 소스 파일 첫 줄에는 한 줄 역할 주석을 둬라
+
+**새 소스 파일의 첫 줄에는 파일 역할을 설명하는 한 줄 한국어 주석을 둬라.**
+
+새 소스 파일을 만들 때:
+- TypeScript/JavaScript: `// 사용자 인증 상태를 관리하는 Context Provider`
+- Python: `# KIS API 호출을 비동기로 래핑하는 클라이언트`
+- SQL: `-- 일별 집계 결과를 저장하는 머티리얼라이즈드 뷰`
+- `'use client'`, `'use server'`, shebang 같은 필수 지시문 바로 아래에 둬라.
+- `*.config.ts`, `package.json`, lockfile, 생성 파일에는 생략해라.
+
+에이전트는 파일을 부분적으로 읽는 경우가 많다. 한 줄 헤더는 다음 세션이 전체 파일을 다시 훑지 않고도 맥락을 잡게 해준다.
+
+---
+
+## 9. 1시간 이상 또는 3개 이상 파일 작업 전에는 계획, 체크리스트, 컨텍스트 노트를 만든다
+
+**예상 작업 시간이 1시간 이상이거나, 3개 이상의 파일을 수정하거나, CAN/TWAI 동작처럼 실차 검증에 영향을 주는 작업이면 세 가지 산출물을 먼저 정리해라.**
+
+- **Plan** — 무엇을 왜 만드는지.
+- **Checklist** (`checklist.md`) — 체크박스로 추적할 구체 작업.
+- **Context Notes** (`context-notes.md`) — 작업 중 결정과 근거를 계속 기록하는 메모.
+
+사용자가 계획만 주고 바로 코딩을 원하면, 체크리스트와 컨텍스트 노트도 함께 만들지 먼저 확인해라. 다음 세션이 처음부터 다시 추론하지 않게 만드는 장치다.
+
+---
+
+## 10. 완료 전에 관련 검증을 먼저 실행해라
+
+**코드를 건드렸다면 완료 선언 전에 가장 관련 있는 검증부터 실행해라.**
+
+- `npm test`, `pytest`, `cargo test`처럼 프로젝트가 쓰는 검증을 가장 좁은 범위부터 실행해라.
+- 영향 범위가 크면 그 다음에 더 넓은 빌드나 테스트를 실행해라.
+- 테스트가 실패하면 실제 에러를 읽고 고친 뒤 다시 실행해라.
+- 테스트 체계가 없으면 최소한 빌드, 컴파일, 타입체크 같은 대체 검증을 실행해라.
+- 검증을 실행할 수 없으면 왜 못 했는지 정확히 적어라.
+
+이 단계는 코딩 에이전트가 가장 자주 빼먹는다. 협상 가능한 권고가 아니라 기본 절차로 취급해라.
+
+---
+
+## 11. 최종 응답에는 실제 검증 근거만 적어라
+
+**검증했다고 말할 때는 의도가 아니라 실제 실행 결과를 적어라.**
+
+최종 응답에는 가능하면 아래를 포함해라.
+- 실행한 명령이나 확인 절차.
+- 결과가 통과, 실패, 미실행 중 무엇이었는지.
+- 아직 남은 리스크가 있다면 무엇인지.
+
+구체 검증 없이 `고쳤다`, `된다`, `완료됐다` 같은 표현을 단정적으로 쓰지 마라.
+
+---
+
+## 12. 의미 단위로 커밋하라
+
+**하나의 논리적 변경이 끝났다면 그 단위로 커밋해라.**
+
+- 매 수정마다 커밋하지 마라. 기능이나 버그 수정의 논리 단위가 완성되고 관련 검증이 통과했을 때 커밋 후보로 본다.
+- 보편적인 기준은 "작업 중 저장"이 아니라 "되돌릴 수 있는 완성 단위"다.
+- 한 문장으로 설명 가능한 변경이면 한 커밋 후보다.
+- 설명이 길어지면 변경이 섞인 것이니 분리해라.
+- 관련 없는 수정이 쌓여 롤백 단위를 잃지 않게 해라.
+- 커밋은 사용자가 명시적으로 요청하거나 승인했을 때만 수행한다. 사용자가 수동 커밋을 선호하는 흐름이면 에이전트는 커밋하지 말고 변경 단위와 검증 결과만 정리한다.
+- 커밋이 금지된 환경이거나 사용자가 원치 않으면 커밋하지 말고, 대신 변경 단위를 분명히 요약해라.
+
+프로토타입이나 일회성 스크립트에서는 지나친 의식보다 되돌리기 쉬운 단위를 우선해라.
+
+---
+
+## 13. 에러를 읽고 추측하지 마라
+
+**실패했을 때는 기억 속 패턴이 아니라 실제 에러와 로그를 기준으로 움직여라.**
+
+문제가 생기면:
+- 전체 에러 메시지와 스택 트레이스를 읽어라.
+- 기대했던 출력이 아니라 실제 로그를 확인해라.
+- 원인을 확인하기 전 흔한 해결책부터 던지지 마라.
+- 불명확하면 print나 log를 추가해 상태를 검증한 뒤 고쳐라.
+
+이 단계는 테스트 실행 다음으로 자주 생략된다. 에러 키워드만 보고 최근 패턴으로 수리하면 한 줄짜리 버그가 세 파일짜리 리팩터로 커진다.
+
+---
+
+## 이 원칙이 작동하고 있다는 신호
+
+- diff에 불필요한 변경이 없다 — 요청된 변경만 나타난다.
+- 오버엔지니어링으로 인한 재작업이 없다 — 처음부터 코드가 단순하다.
+- 구현 전에 명확화 질문이 나온다 — 실수 후가 아니라.
+- 실제 코드, 로그, 워크트리를 확인한 뒤에만 수정이 진행된다.
+- 최종 응답에 검증 명령과 결과가 구체적으로 남는다.
+
 
 
 ### ESP32 CAN(TWAI) 레퍼런스 (필수 참조)
@@ -214,7 +268,7 @@ pio test -e native_nag -e native -e native_log_buffer
 **금지 사항**:
 - v3.3 `can_` 구 API 참조 금지 (deprecated, 현재 환경에서 존재하지 않음)
 - 임의 ESP32 예제 복붙 금지 (버전 불일치로 `msg.ss` 누락, state 오류 발생 이력 있음)
- 
+
 ### TWAI 안전 체크리스트 (수정 전 항상 확인)
 
 > 이 항목들은 2026-04-18 사고(우선순위 실수 변경)에서 도출된 교훈이다.
@@ -225,9 +279,6 @@ grep "NagTask.*nullptr" src/main.cpp
 
 # TX 백오프 로직 → 없어야 함
 grep "setTxBackoff" src/main.cpp
-
-# ESP-NOW 채널 강제 변경 → 없어야 함
-grep "esp_wifi_set_channel" src/main.cpp
 
 # 빌드
 pio run -e lilygo_t2can
@@ -241,6 +292,42 @@ pio run -e lilygo_t2can
 1. 사용자가 CAN 통신이나 특정 안정화 로직을 물으면, 위 Skills 디렉토리의 컨텍스트를 최우선으로 반영한다.
 2. 코드를 수정할 때는 'karpathy-guidelines'를 참조하여 기존 코드를 최대한 보존하며 필요한 부분만 수정한다.
 3. 사용자가 명시적으로 `A채널 동작완벽함!` 또는 `B채널 동작완벽함`이라고 선언하기 전까지, 진단/가이드/테스트 우선순위는 A채널(주행/정차 통신 테스트)을 1순위로 유지한다.
+
+### 세션 로그 기록 규칙
+
+작업이 끝나면 다음 세션이 같은 추론을 반복하지 않도록 `docs/sessions/chat_log_YYYY-MM-DD.md`에 기록한다.
+
+- 해당 날짜 파일이 있으면 이어 붙이고, 없으면 새로 만든다.
+- 사소한 질의응답이나 파일을 건드리지 않은 단순 설명은 기록하지 않아도 된다.
+- 코드, 설정, 진단 로직, 실차 로그 해석, OTA, CAN/TWAI 동작 판단처럼 다음 작업에 영향을 주는 내용은 기록한다.
+- 기능이 완성된 경우에는 무엇을 바꿨는지보다 성공 기준과 실제 검증 결과를 우선 기록한다.
+- 기능이 미완성인 경우에는 현재까지 확인한 사실, 남은 의문, 다음 액션을 명확히 남긴다.
+- 사용자가 수동 커밋을 선호하는 경우, 세션 로그에는 커밋을 만들었다고 쓰지 말고 커밋 후보 단위와 검증 결과만 적는다.
+
+권장 포맷은 아래 순서를 따른다.
+
+```markdown
+## YYYY-MM-DD HH:MM KST - 짧은 작업 제목
+
+사용자 요청:
+- 사용자가 원한 동작이나 질문을 1~3줄로 요약한다.
+
+확인:
+- 실제 코드, 로그, DBC, 문서에서 확인한 사실을 적는다.
+- 추정은 사실과 분리해 적는다.
+
+수정:
+- 변경한 파일과 핵심 동작만 적는다.
+- 관련 없는 리팩터링이나 배경 설명은 길게 쓰지 않는다.
+
+검증:
+- 실제 실행한 명령과 결과를 적는다.
+- 실패하거나 미실행한 검증은 이유를 적는다.
+
+다음 액션:
+- 이어서 볼 실차 확인 포인트나 코드 작업을 적는다.
+- 완전히 끝난 작업이면 생략할 수 있다.
+```
 
 ---
 

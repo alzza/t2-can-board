@@ -128,6 +128,8 @@ static void appLoop()
     static uint32_t _lastEflgMs = 0;
     static bool _prevTxBo = false;
     static uint32_t _prevATxFail = 0;
+    static uint32_t _aTxBoSinceMs = 0;
+    static uint32_t _aLastTxBoRecoverMs = 0;
     {
         uint32_t _nowMs = millis();
         if (_nowMs - _lastEflgMs >= 1000) {
@@ -168,9 +170,39 @@ static void appLoop()
             _prevEflg = eflg;
 
             bool txBo = (eflg & (1 << 5)) != 0;
+            if (txBo && _aTxBoSinceMs == 0) {
+                _aTxBoSinceMs = _nowMs;
+                aChannelDiag.mcpBusOffSinceMs = _aTxBoSinceMs;
+            }
             if (txBo && !_prevTxBo) {
                 aChannelDiag.mcpTxBoCount = (uint32_t)aChannelDiag.mcpTxBoCount + 1;
                 logRing.push("🚨 [A-CH] MCP2515 BUS-OFF 진입 감지 (EFLG.TXBO)", _nowMs);
+            }
+            if (txBo) {
+                aChannelDiag.mcpBusOffSinceMs = _aTxBoSinceMs;
+                if (_aLastTxBoRecoverMs == 0 || _nowMs - _aLastTxBoRecoverMs >= kAMcpBusOffRecoverIntervalMs) {
+                    _aLastTxBoRecoverMs = _nowMs;
+                    aChannelDiag.mcpRecoveryAttemptCount = (uint32_t)aChannelDiag.mcpRecoveryAttemptCount + 1;
+                    aChannelDiag.mcpLastRecoveryMs = _nowMs;
+                    if (appDriver->recoverBusOff()) {
+                        appDriver->setFilters(appHandler->filterIds(), appHandler->filterIdCount());
+                        aChannelDiag.mcpRecoverySuccessCount = (uint32_t)aChannelDiag.mcpRecoverySuccessCount + 1;
+                        logRing.push("🛠️ [A-CH] MCP2515 BUS-OFF 재초기화 완료", _nowMs);
+                    } else {
+                        aChannelDiag.mcpRecoveryFailCount = (uint32_t)aChannelDiag.mcpRecoveryFailCount + 1;
+                        logRing.push("❌ [A-CH] MCP2515 BUS-OFF 재초기화 실패", _nowMs);
+                    }
+                }
+                if (_nowMs - _aTxBoSinceMs >= kAMcpBusOffRestartFallbackMs) {
+                    logRing.push("🧯 [A-CH] MCP2515 BUS-OFF 지속 → ESP32 재시작", _nowMs);
+                    delay(100);
+                    ESP.restart();
+                }
+            } else if (_aTxBoSinceMs != 0) {
+                _aTxBoSinceMs = 0;
+                _aLastTxBoRecoverMs = 0;
+                aChannelDiag.mcpBusOffSinceMs = 0;
+                logRing.push("✅ [A-CH] MCP2515 BUS-OFF 해제", _nowMs);
             }
             _prevTxBo = txBo;
             // TX 에러 경고 로그 (에러 패시브 이상일 때) — 실제 TEC 값 함께 기록

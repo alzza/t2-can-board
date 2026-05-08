@@ -14,49 +14,43 @@ public:
 
     bool init() override
     {
+        driverOK_ = false;
+        lastInstallErr_ = ESP_OK;
+        lastStartErr_ = ESP_OK;
         g_config_ = TWAI_GENERAL_CONFIG_DEFAULT(txPin_, rxPin_, TWAI_MODE_NORMAL);
         g_config_.rx_queue_len = 32;
         g_config_.tx_queue_len = 16;
-        // OTA/플래시 쓰기 중 cache disable 구간에서도 RX FIFO를 보호하기 위해
-        // ISR을 IRAM에 둘 것을 요청. 실제 효과는 sdkconfig CONFIG_TWAI_ISR_IN_IRAM
-        // 활성 시점에 발생하며, flag 자체는 미설정 환경에서도 안전하다.
+        // ESP_INTR_FLAG_IRAM은 CONFIG_TWAI_ISR_IN_IRAM이 켜진 빌드에서만 유효하다.
+        // Arduino-ESP32 기본 S3 sdkconfig는 보통 비활성이라 무조건 설정하면
+        // twai_driver_install()이 실패할 수 있다.
+    #if defined(CONFIG_TWAI_ISR_IN_IRAM) && CONFIG_TWAI_ISR_IN_IRAM
         g_config_.intr_flags = ESP_INTR_FLAG_IRAM;
+    #endif
 
         t_config_ = TWAI_TIMING_CONFIG_500KBITS();
         f_config_ = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
-        if (twai_driver_install(&g_config_, &t_config_, &f_config_) != ESP_OK)
+        lastInstallErr_ = twai_driver_install(&g_config_, &t_config_, &f_config_);
+        if (lastInstallErr_ != ESP_OK) {
+            lastStartErr_ = lastInstallErr_;
             return false;
-        if (twai_start() != ESP_OK)
+        }
+        lastStartErr_ = twai_start();
+        if (lastStartErr_ != ESP_OK) {
+            twai_driver_uninstall();
             return false;
+        }
         driverOK_ = true;
         return true;
     }
 
     void setFilters(const uint32_t *ids, uint8_t count) override
     {
-        if (count == 0)
-            return;
-
-        uint32_t differ = 0;
-        for (uint8_t i = 1; i < count; i++)
-        {
-            differ |= ids[0] ^ ids[i];
-        }
-
-        uint32_t base = ids[0] & ~differ;
-        f_config_.acceptance_code = base << 21;
-        f_config_.acceptance_mask = (differ << 21) | 0x001FFFFF;
-        f_config_.single_filter = true;
-
-        // twai_stop() disables the TWAI ISR before uninstall
-        twai_stop();
-        twai_driver_uninstall();
-        if (twai_driver_install(&g_config_, &t_config_, &f_config_) != ESP_OK ||
-            twai_start() != ESP_OK)
-        {
-            driverOK_ = false;
-        }
+        (void)ids;
+        (void)count;
+        // B채널은 HW acceptance filter를 재설치하지 않는다.
+        // TWAI는 accept-all로 유지하고 nagKillerTask의 SW 필터에서 ID를 걸러야
+        // 실행 중 stop/uninstall로 RX가 끊기거나 A/B 통합 폴링이 흔들리지 않는다.
     }
 
     bool enableInterrupt(void (* /*onReady*/)()) override { return false; }
@@ -69,10 +63,16 @@ public:
             return false;
         }
 
+        if (recoveryInProgress_)
+        {
+            updateRecoveryProgress();
+            return false;
+        }
+
         twai_message_t msg;
         if (twai_receive(&msg, 0) != ESP_OK)
         {
-            if (isBusOff())
+            if (!updateRecoveryProgress() && isBusOff())
                 recoverWithCooldown();
             return false;
         }
@@ -85,8 +85,11 @@ public:
 
     void send(const CanFrame &frame) override
     {
-        if (!driverOK_)
+        if (!driverOK_ || recoveryInProgress_) {
+            txSuppressedCount_++;
+            if (recoveryInProgress_) updateRecoveryProgress();
             return;
+        }
 
         twai_message_t msg = {};
         uint8_t dlc = (frame.dlc <= 8) ? frame.dlc : 8;
@@ -99,7 +102,8 @@ public:
         // At 500kbps, ~8 frames arrive in 2ms — queue handles this fine.
         if (twai_transmit(&msg, pdMS_TO_TICKS(2)) != ESP_OK)
         {
-            if (isBusOff())
+            txSuppressedCount_++;
+            if (!updateRecoveryProgress() && isBusOff())
                 recoverWithCooldown();
         }
     }
@@ -107,6 +111,7 @@ public:
     // ── 진단 getters (web API, timeseries, BUS-OFF 이벤트 로그에서 사용) ──
     bool     isDriverOK()              const { return driverOK_; }
     bool     isBusOffState()                 { return isBusOff(); }
+    uint8_t  getStateCode()                  { return stateCode(); }
     uint32_t getBusoffCount()          const { return busoffCount_; }
     uint32_t getRecoveryAttemptCount() const { return recoveryAttemptCount_; }
     uint32_t getRecoverySuccessCount() const { return recoverySuccessCount_; }
@@ -116,15 +121,16 @@ public:
     uint32_t getLastBusOffMs()         const { return lastBusOffMs_; }
     uint32_t getBusOffTec()            const { return busOffTec_; }
     uint32_t getBusOffRec()            const { return busOffRec_; }
-    uint32_t getTxSuppressedCount()    const { return 0; }   // TX 백오프 비활성 (TWAI 안전 체크리스트)
+    uint32_t getTxSuppressedCount()    const { return txSuppressedCount_; }
     uint32_t getCooldownMs()           const { return cooldownMs_; }
     void     setCooldownMs(uint32_t ms)      { cooldownMs_ = ms; }
+    int      getLastInstallErr()       const { return (int)lastInstallErr_; }
+    int      getLastStartErr()         const { return (int)lastStartErr_; }
 
-    // 4/10 정상 기준에서 비활성된 토글: 호환용 getter (web UI 표시용)
-    bool     getSoftRecovery()             const { return false; }
-    uint32_t getSoftRecoveryFallbackCount() const { return 0; }
+    bool     getSoftRecovery()             const { return true; }
+    uint32_t getSoftRecoveryFallbackCount() const { return softRecoveryFallbackCount_; }
     bool     getSingleShotTx()             const { return false; }
-    bool     getBusOffStopSkip()           const { return false; }
+    bool     getBusOffStopSkip()           const { return true; }
 
     // v4.4 alert 폴링 — TEC/REC 동시 노출
     uint32_t pollAlerts(uint16_t &tec, uint16_t &rec)
@@ -142,10 +148,29 @@ public:
     }
 
 private:
+    bool getStatus(twai_status_info_t &status)
+    {
+        return twai_get_status_info(&status) == ESP_OK;
+    }
+
+    uint8_t stateCode()
+    {
+        twai_status_info_t status;
+        if (!getStatus(status))
+            return driverOK_ ? 1 : 0;
+        switch (status.state) {
+        case TWAI_STATE_RUNNING: return 1;
+        case TWAI_STATE_BUS_OFF: return 2;
+        case TWAI_STATE_RECOVERING: return 3;
+        case TWAI_STATE_STOPPED: return recoveryInProgress_ ? 3 : 0;
+        default: return 0;
+        }
+    }
+
     bool isBusOff()
     {
         twai_status_info_t status;
-        if (twai_get_status_info(&status) != ESP_OK)
+        if (!getStatus(status))
             return false;
         return status.state == TWAI_STATE_BUS_OFF;
     }
@@ -154,12 +179,91 @@ private:
     void captureBusOffSnapshot()
     {
         twai_status_info_t st;
-        if (twai_get_status_info(&st) == ESP_OK) {
+        if (getStatus(st)) {
             busOffTec_ = st.tx_error_counter;
             busOffRec_ = st.rx_error_counter;
         }
         lastBusOffMs_ = millis();
         busoffCount_++;
+    }
+
+    void recordRecoverySuccess(uint32_t startMs)
+    {
+        driverOK_ = true;
+        recoveryInProgress_ = false;
+        recoverySuccessCount_++;
+        uint32_t dur = millis() - startMs;
+        lastRecoveryDurationMs_ = dur;
+        if (dur > maxRecoveryDurationMs_) maxRecoveryDurationMs_ = dur;
+    }
+
+    bool hardReinstall(uint32_t startMs, bool countSoftFallback)
+    {
+        twai_status_info_t status;
+        if (getStatus(status)) {
+            if (status.state == TWAI_STATE_RUNNING) {
+                twai_stop();
+            }
+            if (status.state != TWAI_STATE_RECOVERING) {
+                twai_driver_uninstall();
+            }
+        }
+
+        esp_err_t installErr = twai_driver_install(&g_config_, &t_config_, &f_config_);
+        lastInstallErr_ = installErr;
+        esp_err_t startErr = (installErr == ESP_OK) ? twai_start() : installErr;
+        lastStartErr_ = startErr;
+        if (installErr != ESP_OK || startErr != ESP_OK)
+        {
+            if (installErr == ESP_OK) {
+                twai_driver_uninstall();
+            }
+            driverOK_ = false;
+            recoveryInProgress_ = false;
+            recoveryFailCount_++;
+            return false;
+        }
+
+        if (countSoftFallback) softRecoveryFallbackCount_++;
+        recordRecoverySuccess(startMs);
+        return true;
+    }
+
+    bool updateRecoveryProgress()
+    {
+        twai_status_info_t status;
+        if (!getStatus(status)) {
+            driverOK_ = false;
+            recoveryInProgress_ = false;
+            return false;
+        }
+
+        if (status.state == TWAI_STATE_RUNNING) {
+            driverOK_ = true;
+            recoveryInProgress_ = false;
+            return true;
+        }
+
+        if (status.state == TWAI_STATE_RECOVERING) {
+            return false;
+        }
+
+        if (status.state == TWAI_STATE_STOPPED && recoveryInProgress_) {
+            uint32_t startMs = recoveryStartMs_ ? recoveryStartMs_ : millis();
+            if (twai_start() == ESP_OK) {
+                recordRecoverySuccess(startMs);
+                return true;
+            }
+            hardReinstall(startMs, true);
+            return false;
+        }
+
+        if (status.state == TWAI_STATE_BUS_OFF) {
+            recoverWithCooldown();
+            return false;
+        }
+
+        return false;
     }
 
     void recoverWithCooldown()
@@ -169,22 +273,33 @@ private:
             return;
         lastRecovery_ = now;
 
+        twai_status_info_t status;
+        if (!getStatus(status)) {
+            driverOK_ = false;
+            recoveryInProgress_ = false;
+            return;
+        }
+
+        if (status.state == TWAI_STATE_RECOVERING ||
+            (status.state == TWAI_STATE_STOPPED && recoveryInProgress_)) {
+            updateRecoveryProgress();
+            return;
+        }
+
+        if (status.state != TWAI_STATE_BUS_OFF) {
+            if (status.state == TWAI_STATE_RUNNING) driverOK_ = true;
+            return;
+        }
+
         captureBusOffSnapshot();
         recoveryAttemptCount_++;
-        uint32_t startMs = millis();
+        recoveryStartMs_ = millis();
 
-        twai_stop();
-        twai_driver_uninstall();
-        if (twai_driver_install(&g_config_, &t_config_, &f_config_) != ESP_OK ||
-            twai_start() != ESP_OK)
-        {
-            driverOK_ = false;
-            recoveryFailCount_++;
+        if (twai_initiate_recovery() == ESP_OK) {
+            recoveryInProgress_ = true;
+            driverOK_ = true;
         } else {
-            recoverySuccessCount_++;
-            uint32_t dur = millis() - startMs;
-            lastRecoveryDurationMs_ = dur;
-            if (dur > maxRecoveryDurationMs_) maxRecoveryDurationMs_ = dur;
+            hardReinstall(recoveryStartMs_, true);
         }
     }
 
@@ -197,17 +312,7 @@ private:
 
         recoveryAttemptCount_++;
         uint32_t startMs = millis();
-        if (twai_driver_install(&g_config_, &t_config_, &f_config_) == ESP_OK &&
-            twai_start() == ESP_OK)
-        {
-            driverOK_ = true;
-            recoverySuccessCount_++;
-            uint32_t dur = millis() - startMs;
-            lastRecoveryDurationMs_ = dur;
-            if (dur > maxRecoveryDurationMs_) maxRecoveryDurationMs_ = dur;
-        } else {
-            recoveryFailCount_++;
-        }
+        hardReinstall(startMs, false);
     }
 
     gpio_num_t txPin_;
@@ -216,7 +321,9 @@ private:
     twai_timing_config_t t_config_;
     twai_filter_config_t f_config_;
     bool     driverOK_ = false;
+    bool     recoveryInProgress_ = false;
     uint32_t lastRecovery_ = 0;
+    uint32_t recoveryStartMs_ = 0;
     uint32_t cooldownMs_ = 1000;
 
     // BUS-OFF / 복구 진단 카운터 (web API/timeseries에서 폴링)
@@ -229,4 +336,8 @@ private:
     uint32_t lastBusOffMs_ = 0;
     uint32_t busOffTec_ = 0;
     uint32_t busOffRec_ = 0;
+    uint32_t txSuppressedCount_ = 0;
+    uint32_t softRecoveryFallbackCount_ = 0;
+    esp_err_t lastInstallErr_ = ESP_OK;
+    esp_err_t lastStartErr_ = ESP_OK;
 };
