@@ -80,6 +80,12 @@ h1{font-size:1.55em;color:var(--acc);margin:0;font-weight:700}
 }
 #theme-btn:hover{border-color:var(--acc);color:var(--acc)}
 
+/* ── Main navigation ── */
+.main-tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:0 0 14px}
+.main-tab{min-height:42px;border:1.5px solid var(--bd);border-radius:12px;background:var(--card);color:var(--tx3);font-family:inherit;font-size:.86em;font-weight:800;cursor:pointer;transition:background .18s,border-color .18s,color .18s}
+.main-tab.active{background:var(--btn-dis-bg);border-color:var(--tx4);color:var(--tx)}
+.view{display:none}.view.active{display:block}
+
 /* ── OTA sticky 배너 ── */
 .ota-top-banner{
   position:sticky;top:0;z-index:999;
@@ -222,6 +228,12 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
 .mode-toggle input:checked+.mode-track:before{transform:translateX(100%)}
 .mode-toggle input:checked+.mode-track span:first-child{color:var(--tx3)}
 .mode-toggle input:checked+.mode-track span:last-child{color:var(--btn-tx)}
+.profile-seg{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;min-width:220px;max-width:340px;flex:1}
+.profile-seg label{display:block}
+.profile-seg input{display:none}
+.profile-seg span{display:block;text-align:center;border:1.5px solid var(--bd);border-radius:6px;background:var(--bg2);padding:8px 6px;font-size:12px;font-weight:800;color:var(--tx3);cursor:pointer}
+.profile-seg input:checked+span{background:var(--acc);border-color:transparent;color:var(--btn-tx)}
+.profile-desc{font-size:11px;line-height:1.6;margin-bottom:8px;padding:5px 7px;background:rgba(0,0,0,.12);border-radius:5px;color:var(--muted)}
 /* Nag v2 stat 박스 */
 .stat{background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:6px 8px}
 .stat .k{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
@@ -269,7 +281,9 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
 #hdr-status{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:.82em;color:var(--tx3);margin-bottom:10px}
 .chan-status{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
 .sdot{width:7px;height:7px;border-radius:50%;flex-shrink:0;transition:background .4s,box-shadow .4s}
-.dot-live{background:var(--acc2);box-shadow:0 0 7px var(--acc2)}
+.dot-live,.dot-ok{background:var(--acc2);box-shadow:0 0 7px var(--acc2)}
+.dot-warn{background:var(--warn);box-shadow:0 0 7px var(--warn)}
+.dot-err{background:var(--err);box-shadow:0 0 7px var(--err)}
 .dot-wait{background:var(--dot-off)}
 /* ── FPS bar ── */
 .fps-bars{display:flex;flex-direction:column;gap:4px;margin-bottom:14px}
@@ -280,16 +294,44 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
 .fps-fill-a{background:var(--acc2)}
 .fps-fill-b{background:var(--acc)}
 /* ── Stat grid ── */
-.stat-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px}
-.stat{background:var(--card);border-radius:10px;padding:10px 12px}
-.stat-lbl{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px}
-.stat-val{font-size:14px;font-weight:600;color:var(--tx)}
-/* ── 진단 카드 (옵션 B): 접이식 + chip 압축 ─────────────────────── */
-.diag-card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:8px 12px;margin-bottom:12px}
-.diag-card>summary{cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;list-style:none;outline:none;padding:2px 0}
-.diag-card>summary::-webkit-details-marker{display:none}
-.diag-card>summary::before{content:'▸';display:inline-block;margin-right:6px;color:var(--tx3);transition:transform .15s}
-.diag-card[open]>summary::before{transform:rotate(90deg)}
+.stat-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px}
+.stat{background:var(--card);border-radius:10px;padding:10px 12px;min-width:0}
+.stat-lbl{font-size:10px;color:var(--tx3);letter-spacing:.04em;margin-bottom:4px;line-height:1.25;min-height:2.5em;display:flex;align-items:flex-end}
+.stat-val{font-size:14px;font-weight:600;color:var(--tx);line-height:1.25;overflow-wrap:anywhere}
+.stat.primary .stat-val{font-size:17px;font-weight:800}
+.main-stat-grid .stat{min-height:82px;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.main-stat-grid .stat-lbl{min-height:0;align-items:center;justify-content:center;font-size:11px;margin-bottom:7px;text-align:center}
+.main-stat-grid .stat-val{font-size:19px;font-weight:900;text-align:center;font-variant-numeric:tabular-nums}
+.main-stat-grid .stat-val.long{font-size:16px}.main-stat-grid .stat-val.xlong{font-size:14px}
+.stat.subtle{background:var(--bg2)}
+.control-card>.row{border:1px solid var(--bd);border-radius:12px;padding:13px 14px;margin-bottom:10px;background:var(--bg2)}
+.control-card>.row+.row{border-top:1px solid var(--bd)}
+.control-card>.row.child-row{padding-left:14px}
+.control-card>.row .label{font-size:1.04em;font-weight:800;color:var(--tx)}
+.control-card>.row .meta{font-size:.82em}
+.profile-mini-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));gap:5px;margin-bottom:6px}
+.profile-mini-grid .stat{padding:8px 9px}
+.profile-mini-grid .k{font-size:11px;color:var(--tx3);line-height:1.2;margin-bottom:4px}
+.profile-mini-grid .v{font-size:14px;font-weight:900;line-height:1.35;color:var(--acc)}
+.profile-mini-grid .burst-stat .k{font-size:10px}
+.profile-mini-grid .burst-stat .v{font-size:12px}
+.burst-lines{display:flex;flex-direction:column;gap:2px;white-space:normal}
+.diag-id-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:6px 0 8px}
+.diag-id-cell{border:1px solid var(--bd);border-radius:8px;background:var(--bg2);padding:7px 8px;min-width:0}
+.diag-id-cell .k{font-size:10px;color:var(--tx3);line-height:1.2;margin-bottom:3px}
+.diag-id-cell .v{font-size:13px;font-weight:800;color:var(--tx);overflow-wrap:anywhere}
+.busoff-card table{min-width:520px}
+.ota-status-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:10px}
+.ota-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media(max-width:520px){.diag-id-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:380px){.main-tabs{gap:6px}.main-tab{font-size:.8em;min-height:38px}.ota-actions{grid-template-columns:1fr}}
+/* ── 진단 화면: 항상 펼친 채널별 상태판 ─────────────────────── */
+.diag-card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px;margin-bottom:12px}
+.diag-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+.diag-head h2{margin:0;font-size:1.05em;color:var(--tx)}
+.diag-signal-grid{display:grid;grid-template-columns:1fr;gap:10px}
+.diag-signal-group{border:1px solid var(--bd);border-radius:10px;background:var(--bg2);padding:10px;min-width:0}
+.diag-channel-grid{display:grid;grid-template-columns:1fr;gap:12px;align-items:start}
 .diag-title{font-weight:700;color:var(--tx)}
 .diag-sum{font-size:11px;color:var(--tx3);margin-left:auto;text-align:right}
 .diag-sum.warn{color:var(--warn);font-weight:600}
@@ -297,6 +339,9 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
 .diag-sum.ok{color:var(--acc2)}
 .diag-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px}
 .diag-lbl{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.8px;min-width:42px}
+.diag-help{font-size:11px;color:var(--tx3);line-height:1.55;margin-top:8px}
+.diag-help b{color:var(--tx2)}
+@media(max-width:760px){.diag-signal-grid,.diag-channel-grid{grid-template-columns:1fr}}
 .chip{display:inline-block;font-size:11px;font-weight:600;padding:3px 8px;border-radius:12px;border:1px solid transparent;line-height:1.4;white-space:nowrap;font-family:monospace}
 .chip.ok{background:rgba(76,175,80,.12);color:var(--acc2);border-color:rgba(76,175,80,.3)}
 .chip.warn{background:rgba(230,126,34,.15);color:var(--warn);border-color:rgba(230,126,34,.4)}
@@ -336,8 +381,15 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
     <button id="theme-btn" onclick="toggleTheme()">&#9728; Light</button>
   </div>
 </div>
+<div class="main-tabs" role="tablist" aria-label="TeslaCAN 화면 선택">
+  <button class="main-tab active" id="tab-main" role="tab" aria-selected="true" onclick="showView('main')">메인</button>
+  <button class="main-tab" id="tab-control" role="tab" aria-selected="false" onclick="showView('control')">제어</button>
+  <button class="main-tab" id="tab-diag" role="tab" aria-selected="false" onclick="showView('diag')">진단</button>
+  <button class="main-tab" id="tab-ota" role="tab" aria-selected="false" onclick="showView('ota')">OTA</button>
+</div>
 <div id="connErr" class="err">Connection lost. Retrying...</div>
 
+<section class="view active" id="view-main" role="tabpanel" aria-labelledby="tab-main">
 <div id="hdr-status">
   <span class="chan-status"><span class="sdot dot-wait" id="sdot-a"></span><span id="hdr-a">A WAIT</span></span>
   <span class="chan-status"><span class="sdot dot-wait" id="sdot-b"></span><span id="hdr-b">B WAIT</span></span>
@@ -346,82 +398,37 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   <div class="fps-row"><span class="fps-lbl">A</span><div class="fps-bar"><div class="fps-fill fps-fill-a" id="fps-fill-a"></div></div></div>
   <div class="fps-row"><span class="fps-lbl">B</span><div class="fps-bar"><div class="fps-fill fps-fill-b" id="fps-fill-b"></div></div></div>
 </div>
-<div class="stat-grid">
-  <div class="stat" title="A채널(MCP2515) 버스 상태 ✅OK=정상 ❌에러=나쁨"><div class="stat-lbl">CAN BUS A</div><div class="stat-val v-dim" id="s-can">--</div></div>
-  <div class="stat" title="B채널(TWAI) 버스 상태 ✅OK=정상 ❌드라이버 실패/프레임 없음=점검"><div class="stat-lbl">CAN BUS B</div><div class="stat-val v-dim" id="s-bcan">--</div></div>
-  <div class="stat" title="MCP2515 에러 플래그 ✅OK=정상 ⚠️WARN≥96=경고 ❌ERR-P/BUS-OFF=나쁨"><div class="stat-lbl">MCP EFLG A</div><div class="stat-val v-dim" id="s-a-eflg">--</div></div>
-  <div class="stat" title="EAP 기능 활성화 여부 ✅ON=정상"><div class="stat-lbl">EAP</div><div class="stat-val v-dim" id="s-eap">--</div></div>
-  <div class="stat" title="Nag Killer 활성화 여부 ✅ON=정상"><div class="stat-lbl">NAG KILLER</div><div class="stat-val v-dim" id="s-nag">--</div></div>
-  <div class="stat" title="A채널 ID 1021 수신 속도. 차량 상태에 따라 보통 약 6Hz"><div class="stat-lbl">ID 1021 RATE</div><div class="stat-val v-dim" id="s-ahz">0.0 Hz</div></div>
-  <div class="stat" title="A채널 수신 누적. ✅증가=정상 수신 중"><div class="stat-lbl">RX A</div><div class="stat-val v-acc" id="s-arx">0</div></div>
-  <div class="stat" title="EAP 패킷 송신 누적. ✅증가=EAP 정상 동작 중"><div class="stat-lbl">EAP TX</div><div class="stat-val v-acc" id="s-atx">0</div></div>
-  <div class="stat" title="B채널 NAG 대상 ID 880 수신 속도. ID 880이 존재하는 구간에서는 정상 ~100Hz"><div class="stat-lbl">ID 880 RATE</div><div class="stat-val v-dim" id="s-bhz">0.0 Hz</div></div>
-  <div class="stat" title="B채널 수신 누적. ✅증가=정상 수신 중"><div class="stat-lbl">RX B</div><div class="stat-val v-acc" id="s-brx">0</div></div>
-  <div class="stat" title="에코 패킷 송신 누적. ✅증가=나그킬러 동작 중"><div class="stat-lbl">ECHO TX</div><div class="stat-val v-acc" id="s-btx">0</div></div>
-  <div class="stat" title="ECU TX 충돌 방지로 6ms 초과 드롭된 에코 수. ✅증가=충돌 방지 정상 작동(좋음)"><div class="stat-lbl">ECHO DROP</div><div class="stat-val v-dim" id="s-bdrop">0</div></div>
-  <div class="stat" title="B채널 TWAI 드라이버 상태. ✅running=정상 ❌bus_off=나쁨"><div class="stat-lbl">TWAI</div><div class="stat-val v-dim" id="s-twai">--</div></div>
-  <div class="stat" title="기기 부팅 후 경과 시간"><div class="stat-lbl">UPTIME</div><div class="stat-val v-dim" id="s-up">--</div></div>
-  <div class="stat" title="B채널 BUS-OFF 누적 발생 횟수. ✅0=최상 ❌증가=나쁨"><div class="stat-lbl">BUS-OFF</div><div class="stat-val v-dim" id="s-busoff">0</div></div>
+<div class="stat-grid main-stat-grid">
+  <div class="stat primary" title="A채널 MCP2515 상태와 수신 속도"><div class="stat-lbl">A 채널</div><div class="stat-val v-dim" id="s-main-a">--</div></div>
+  <div class="stat primary" title="B채널 TWAI 상태와 880 수신 속도"><div class="stat-lbl">B 채널</div><div class="stat-val v-dim" id="s-main-b">--</div></div>
+  <div class="stat" title="B채널 BUS-OFF 누적 발생 횟수. 0 유지가 정상"><div class="stat-lbl">BUS-OFF</div><div class="stat-val v-dim" id="s-main-busoff">0</div></div>
+  <div class="stat primary" title="DAS_autopilotState. 값 뒤 @923은 수신 소스"><div class="stat-lbl">오토파일럿 상태</div><div class="stat-val v-dim" id="s-main-ap">--</div></div>
+  <div class="stat primary" title="실제 핸들 토크 추정값. nag-stats torqueNm"><div class="stat-lbl">현재 핸들토크</div><div class="stat-val v-dim" id="s-main-torque">--</div></div>
+  <div class="stat primary" title="SCCM 조향각도. ID 297 기준"><div class="stat-lbl">조향각</div><div class="stat-val v-dim" id="s-main-angle">--</div></div>
+  <div class="stat" title="Smart Torque 상태 페이즈"><div class="stat-lbl">Smart Torque</div><div class="stat-val v-dim" id="s-main-phase">--</div></div>
+  <div class="stat" title="Mode B 누적 토크 주입 횟수"><div class="stat-lbl">주입 횟수</div><div class="stat-val v-acc" id="s-main-inject">0</div></div>
+  <div class="stat" title="현재 Smart Torque 프로파일"><div class="stat-lbl">프로파일</div><div class="stat-val v-dim" id="s-main-profile">--</div></div>
 </div>
-<div style="font-size:10px;color:var(--muted);line-height:1.7;margin-bottom:8px;padding:6px 8px;background:var(--card);border-radius:6px;border:1px solid var(--bd)">
-  <b>지표 해설</b> &nbsp;|
-  <span style="color:#4caf50">✅ 증가=정상</span>: ID 1021/880 RATE &nbsp;·&nbsp; RX A/B &nbsp;·&nbsp; EAP TX &nbsp;·&nbsp; ECHO TX &nbsp;·&nbsp; <b>ECHO DROP</b>(충돌 방지 동작 중 = 좋음) &nbsp;|
-  <span style="color:#f44336">❌ 증가=나쁨</span>: BUS-OFF &nbsp;·&nbsp; MCP EFLG A(ERR-P/BUS-OFF 표시 시)
-</div>
-
-<!-- ═══ 진단 신호 패널 (옵션 B): A/B 채널 진단 카운터를 chip 형태로 압축 ═══
-     기본은 접혀있고, 헤더 요약(diag-sum)에 비정상 항목만 한 줄로 노출.
-     ┌─ A: TX OK/Fail · TEC · MERRF · RX-OVR
-     └─ B: ARB-LOST · BUS-ERR · TX-FAIL · RX-MISS
-     0 = 녹색(ok), >0 = 주황(warn), 임계값 초과 = 빨강(err) -->
-<details class="diag-card" id="diag-card">
-  <summary>
-    <span class="diag-title">🔬 진단 신호</span>
-    <span class="diag-sum" id="diag-sum">분석 대기…</span>
-  </summary>
-  <div class="diag-row">
-    <span class="diag-lbl">A채널</span>
-    <span class="chip ok" id="d-a-tx"     title="TX 결과 OK/Fail. Fail↑ → 송신 큐 포화 또는 하드 실패">TX 0/0</span>
-    <span class="chip ok" id="d-a-tec"    title="TEC 현재/피크. ≥96 경고, ≥128 에러패시브">TEC 0/0</span>
-    <span class="chip ok" id="d-a-merrf"  title="MERRF 누적. ↑ = ACK 부재 또는 동일 ID 충돌">MERRF 0</span>
-    <span class="chip ok" id="d-a-rxovr"  title="RX 버퍼 오버런 누적. clear 후 재발 시 폴링 부족">RX-OVR 0</span>
-    <span class="chip ok" id="d-a-rec"    title="REC 현재/피크. ↑ = 수신 에러(배선/종단 문제)">REC 0/0</span>
-    <span class="chip ok" id="d-a-eflgev" title="EFLG 0→비제로 전환 횟수. 에러 발생 이벤트 빈도">EFLG-EV 0</span>
-  </div>
-  <div class="diag-row">
-    <span class="diag-lbl">B채널</span>
-    <span class="chip ok" id="d-b-arb"    title="Arbitration Lost. ↑ = 동일 ID 충돌">ARB 0</span>
-    <span class="chip ok" id="d-b-err"    title="Bus Error 누적. ↑ = 배선/ACK 부재">BUS-ERR 0</span>
-    <span class="chip ok" id="d-b-txf"    title="TX-FAILED 누적. Single-shot 충돌 회피 동작 검증">TX-FAIL 0</span>
-    <span class="chip ok" id="d-b-rxm"    title="RX-MISSED 누적. ↑ = nagKillerTask 폴링 부족">RX-MISS 0</span>
-  </div>
-</details>
-
-<div class="card">
-  <h2>Status</h2>
+<div class="card no-collapse">
+  <h2>메인 상태</h2>
   <div class="row"><span class="label">Enhanced Autopilot</span><span class="val" id="eap">--</span></div>
   <div class="row"><span class="label">Autosteer Nag Killer</span><span class="val" id="nag">--</span></div>
   <div class="row"><span class="label">Uptime</span><span class="val" id="up">--</span></div>
   <div class="row"><button class="btn-emergency" id="emStopBtn" onclick="emergencyToggle()">즉시 기능해제</button></div>
 </div>
+</section>
 
-<div class="card collapsed">
-  <h2>Controls</h2>
+<section class="view" id="view-control" role="tabpanel" aria-labelledby="tab-control">
+<div class="card control-card no-collapse">
+  <h2>제어</h2>
   <div class="row">
-    <div class="labelWrap">
-      <span class="label">A Channel TX <span style="font-size:10px;color:var(--muted)">[1021 EAP/TSLLC]</span></span>
-      <span class="meta" id="metaAChTx">A채널 1021 수정 송신 전체 ON/OFF</span>
-    </div>
-    <label class="sw"><input type="checkbox" id="tAChTx" onchange="togSwitch('/api/a-channel-tx',this)"><span class="sl"></span></label>
-  </div>
-  <div class="row child-row">
     <div class="labelWrap">
       <span class="label">Enhanced Autopilot</span>
       <span class="meta" id="metaEap">--</span>
     </div>
     <label class="sw"><input type="checkbox" id="tEap" onchange="togSwitch('/api/enhanced-autopilot',this)"><span class="sl"></span></label>
   </div>
-  <div class="row child-row">
+  <div class="row">
     <div class="labelWrap">
       <span class="label">TSLLC (stop signs/lights)</span>
       <span class="meta" id="metaTsllc">Enable FSD stops control (stop signs/lights). TSLLC proven.</span>
@@ -435,25 +442,29 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
     </div>
     <label class="sw"><input type="checkbox" id="tNag" onchange="togSwitch('/api/nag-killer',this)"><span class="sl"></span></label>
   </div>
-  <!-- Nag Killer 실시간 통계 + 모드 선택 -->
+  <!-- Nag Killer 실시간 통계 + 스마트 프로파일 선택 -->
   <div class="row child-row" id="nagModePanel">
     <div style="width:100%">
-      <!-- 모드 토글 버튼 -->
       <div class="mode-toggle">
-        <span class="mode-label">동작 모드</span>
-        <label>
-          <input type="checkbox" id="nagModeToggle" onchange="setNagMode(this.checked?1:0)">
-          <span class="mode-track"><span>스텔스</span><span>스마트 토크</span></span>
-        </label>
-        <span style="font-size:11px;font-weight:bold" id="nagModeLabel">--</span>
+        <span class="mode-label">프로파일</span>
+        <div class="profile-seg" role="radiogroup" aria-label="Nag Killer Smart Torque profile">
+          <label><input type="radio" name="nagProfile" value="0" onchange="setNagProfile(0)"><span>기본</span></label>
+          <label><input type="radio" name="nagProfile" value="1" onchange="setNagProfile(1)"><span>A안</span></label>
+          <label><input type="radio" name="nagProfile" value="2" onchange="setNagProfile(2)"><span>B안</span></label>
+        </div>
+        <span style="font-size:11px;font-weight:bold;color:var(--acc2)" id="nagProfileLabel">--</span>
       </div>
-      <!-- Mode A 설명 -->
-      <div id="nagDescA" style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:8px;padding:5px 7px;background:rgba(0,0,0,.12);border-radius:5px">
-        <b>Mode A (스텔스 PRNG)</b>: DAS 핸즈온 감지 시 유기적 PRNG 토크(0.5~1.8Nm) 상시 주입. handsOnLevel=1 강제.
+      <div id="nagProfileDesc" class="profile-desc">
+        --
       </div>
-      <!-- Mode B 설명 + 상태 -->
-      <div id="nagDescB" style="font-size:11px;line-height:1.6;margin-bottom:8px;padding:5px 7px;background:rgba(0,0,0,.12);border-radius:5px;display:none">
-        <div style="color:var(--muted);margin-bottom:6px"><b>Mode B (스마트 상태머신)</b>: AP state 3-6 게이트 + HandsOnState별 조건부 토크 주입. 조건 불충족 시 버스 비개입.</div>
+      <div id="nagDescB" style="font-size:11px;line-height:1.6;margin-bottom:8px;padding:5px 7px;background:rgba(0,0,0,.12);border-radius:5px">
+        <div style="color:var(--muted);margin-bottom:6px"><b>Smart Torque</b>: AP state 3-6 게이트 + HandsOnState별 조건부 토크 주입. 조건 불충족 시 버스 비개입.</div>
+        <div class="profile-mini-grid">
+          <div class="stat" title="HandsOnState=1 진입 후 기존 값을 유지하는 시간"><div class="k">state1 grace</div><div class="v" id="np_s1">--</div></div>
+          <div class="stat" title="HandsOnState=2 진입 후 mild 주입 전 대기 시간"><div class="k">state2 delay</div><div class="v" id="np_s2">--</div></div>
+          <div class="stat" title="HandsOnState=3-5 진입 후 strong 주입 전 대기 시간"><div class="k">strong delay</div><div class="v" id="np_s3">--</div></div>
+          <div class="stat burst-stat" title="burst/pause. 0/0이면 연속"><div class="k">burst / pause</div><div class="v" id="np_burst">--</div></div>
+        </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:5px;margin-top:6px">
           <div class="stat" title="DAS_autopilotState (ID 921/923 후보). 값 뒤 @923은 921이 아니라 923에서 읽은 상태"><div class="k">AP state</div><div class="v" id="ns_apst">--</div></div>
           <div class="stat" title="SCCM 조향각도 (ID 297). 방향 결정에 사용"><div class="k">steer angle</div><div class="v" id="ns_angle">--</div></div>
@@ -472,12 +483,6 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
         <div class="stat" title="ID 921/923 DAS 핸즈온 판정. ✅1=스티어링감지(성공) ✅0/8=정상 ❌2=나그감지 ⚠️0xFF=미수신"><div class="k">DAS 921/923</div><div class="v" id="ns_das">--</div></div>
         <div class="stat" title="TX 에러 카운터 현재/피크. ✅0=최상 ⚠️≥96=경고 ❌≥128=에러패시브"><div class="k">TEC now/peak</div><div class="v" id="ns_tec">0 / 0</div></div>
       </div>
-      <div style="font-size:10px;color:var(--muted);line-height:1.7;margin-bottom:4px;padding:5px 7px;background:rgba(0,0,0,.15);border-radius:5px">
-        ✅ <b>증가=좋음</b>: rx · echo sent &nbsp;|
-        ❌ <b>증가=나쁨</b>: tx fail · BUS-OFF &nbsp;|
-        ❌ <b>높을수록 나쁨</b>: TEC(≥96경고, ≥128에러패시브) &nbsp;|
-        ⚠️ <b>주의</b>: DAS 921/923 = 0xFF 이면 DAS_status 미수신 상태
-      </div>
     </div>
   </div>
   <div class="row">
@@ -488,30 +493,47 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
     <label class="sw"><input type="checkbox" id="tLog" checked onchange="togLog(this)"><span class="sl"></span></label>
   </div>
 </div>
-<div id="log"></div>
+</section>
 
-<!-- CAN 자가 진단 패널 -->
-<div class="card collapsed" id="diagCard">
-  <h2>&#x1F52C; CAN 통신 자가 진단</h2>
-  <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6">
-    버스 트래픽 &middot; 에코 동작 &middot; TEC/REC &middot; BUS-OFF 이력을 순서대로 체크합니다.
-    차량 현장에서 컴퓨터 없이 이 페이지만으로 통신 이슈를 진단할 수 있습니다 (~19초 소요).
+<section class="view" id="view-diag" role="tabpanel" aria-labelledby="tab-diag">
+
+<!-- ═══ 진단 신호 패널 (옵션 B): A/B 채널 진단 카운터를 chip 형태로 압축 ═══
+     ┌─ A: TX OK/Fail · TEC · MERRF · RX-OVR
+     └─ B: ARB-LOST · BUS-ERR · TX-FAIL · RX-MISS
+     0 = 녹색(ok), >0 = 주황(warn), 임계값 초과 = 빨강(err) -->
+<div class="card diag-card no-collapse" id="diag-card">
+  <div class="diag-head">
+    <h2>🔬 진단 신호</h2>
+    <span class="diag-sum" id="diag-sum">분석 대기…</span>
   </div>
-  <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-    <button class="btn" id="diagBtn" onclick="startCanDiag()">CAN 진단</button>
-    <button class="btn" onclick="resetTimeseries()">🗑 로그 초기화</button>
-    <button class="btn" id="recBtn" onclick="toggleTimeseriesRec()">⏺ 기록 시작</button>
-    <button class="btn" id="markBtn" onclick="markApWarning()">⚠ 경고 기록</button>
-    <a class="btn" href="/api/logs-bundle" download="canmod_logs.txt" style="text-decoration:none;display:inline-flex;align-items:center">💾 전체 저장</a>
-    <span id="recStatus" style="font-size:12px;color:var(--muted)"></span>
-    <span id="diagStatus" style="font-size:12px;color:var(--muted)"></span>
-  </div>
-  <div id="diagLogWrap" style="display:none">
-    <div id="diagLogEl" style="background:#0d1117;border:1px solid var(--border);border-radius:4px;padding:10px;max-height:340px;overflow-y:auto;font-family:monospace;font-size:11px;line-height:1.7;white-space:pre-wrap;color:#c9d1d9"></div>
+  <div class="diag-signal-grid">
+    <div class="diag-signal-group">
+      <div class="diag-lbl">A채널</div>
+      <div class="diag-row">
+        <span class="chip ok" id="d-a-tx"     title="TX 결과 OK/Fail. Fail↑ → 송신 큐 포화 또는 하드 실패">TX 0/0</span>
+        <span class="chip ok" id="d-a-tec"    title="TEC 현재/피크. ≥96 경고, ≥128 에러패시브">TEC 0/0</span>
+        <span class="chip ok" id="d-a-merrf"  title="MERRF 누적. ↑ = ACK 부재 또는 동일 ID 충돌">MERRF 0</span>
+        <span class="chip ok" id="d-a-rxovr"  title="RX 버퍼 오버런 누적. clear 후 재발 시 폴링 부족">RX-OVR 0</span>
+        <span class="chip ok" id="d-a-rec"    title="REC 현재/피크. ↑ = 수신 에러(배선/종단 문제)">REC 0/0</span>
+        <span class="chip ok" id="d-a-eflgev" title="EFLG 0→비제로 전환 횟수. 에러 발생 이벤트 빈도">EFLG-EV 0</span>
+      </div>
+      <div class="diag-help"><b>TX</b>: 송신 성공/실패 · <b>TEC/REC</b>: CAN 에러 카운터 · <b>MERRF/RX-OVR</b>: MCP2515 오류/수신 오버런 · <b>EFLG-EV</b>: EFLG 비정상 전환 횟수</div>
+    </div>
+    <div class="diag-signal-group">
+      <div class="diag-lbl">B채널</div>
+      <div class="diag-row">
+        <span class="chip ok" id="d-b-arb"    title="Arbitration Lost. ↑ = 동일 ID 충돌">ARB 0</span>
+        <span class="chip ok" id="d-b-err"    title="Bus Error 누적. ↑ = 배선/ACK 부재">BUS-ERR 0</span>
+        <span class="chip ok" id="d-b-txf"    title="TX-FAILED 누적. Single-shot 충돌 회피 동작 검증">TX-FAIL 0</span>
+        <span class="chip ok" id="d-b-rxm"    title="RX-MISSED 누적. ↑ = nagKillerTask 폴링 부족">RX-MISS 0</span>
+      </div>
+      <div class="diag-help"><b>ARB</b>: 중재 손실 · <b>BUS-ERR</b>: 버스 에러 누적 · <b>TX-FAIL</b>: TWAI 송신 실패 · <b>RX-MISS</b>: 수신 큐 누락</div>
+    </div>
   </div>
 </div>
 
-<div class="card collapsed">
+<div class="diag-channel-grid">
+<div class="card no-collapse">
   <h2><span id="aChTitle">&#x1F535; A 채널 (MCP2515)</span></h2>
   <div class="row"><span class="label">수신 속도</span><span class="val" id="aHz">-- Hz</span></div>
   <div class="row"><span class="label">ID 1021 (EAP)</span><span class="val" id="a1021Period">--</span></div>
@@ -542,12 +564,16 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   <div class="row"><span class="label">자동 캡처 진행</span><span class="val" id="aAutoCap">-</span></div>
 </div>
 
-<div class="card collapsed" id="bChCard">
+<div class="card no-collapse" id="bChCard">
   <h2 id="bChHdr"><span id="bChTitle">&#x1F534; B 채널 (TWAI)</span></h2>
   <div class="row"><span class="label">TWAI 상태</span><span class="val" id="bTwai">--</span></div>
   <div class="row"><span class="label">드라이버 오류 (install/start)</span><span class="val" id="bDrvErr">--</span></div>
-  <div class="row"><span class="label">ID 880 속도</span><span class="val" id="bHz">-- Hz</span></div>
-  <div class="row"><span class="label">감시 ID Hz (880/921/923/297)</span><span class="val" id="bFilt">-- / -- / -- / --</span></div>
+  <div class="diag-id-grid" title="B채널 감시 ID별 수신 속도">
+    <div class="diag-id-cell"><div class="k">ID 880</div><div class="v" id="bHz880">--</div></div>
+    <div class="diag-id-cell"><div class="k">ID 921</div><div class="v" id="bHz921">--</div></div>
+    <div class="diag-id-cell"><div class="k">ID 923</div><div class="v" id="bHz923">--</div></div>
+    <div class="diag-id-cell"><div class="k">ID 297</div><div class="v" id="bHz297">--</div></div>
+  </div>
   <div class="row"><span class="label" id="bTargetLbl">ID 880 (NAG)</span><span class="val" id="b880Info">0 / --</span></div>
   <div class="row"><span class="label">ID 921 (DAS)</span><span class="val" id="b921Info">0 / --</span></div>
   <div class="row"><span class="label">ID 923 (DAS 후보)</span><span class="val" id="b923Info">0 / --</span></div>
@@ -599,14 +625,16 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
     </div>
     <label class="sw"><input type="checkbox" id="tBoStop" onchange="toggleBoStop(this)"><span class="sl"></span></label>
   </div>
-  <div class="row" style="justify-content:center;gap:8px;margin-top:4px;flex-wrap:wrap">
+</div>
+</div>
+<div class="card no-collapse busoff-card">
+  <h2>BUS-OFF 이벤트</h2>
+  <div class="row" style="justify-content:center;gap:8px;margin-top:0;flex-wrap:wrap">
     <button onclick="loadBusOffLog()" style="padding:5px 12px;font-size:12px;background:var(--acc);color:#fff;border:none;border-radius:4px;cursor:pointer">&#8635; 새로고침</button>
     <button onclick="clearBusOffLog()" style="padding:5px 12px;font-size:12px;background:#c0392b;color:#fff;border:none;border-radius:4px;cursor:pointer">&#128465; 로그 클리어</button>
     <a href="/api/busoff-log-dl" download="busoff_log.csv"
        style="padding:5px 12px;font-size:12px;background:var(--bg2);color:var(--tx);border:1px solid var(--bd);border-radius:4px;text-decoration:none">&#128229; CSV 다운로드</a>
-  </div>
-  <div style="display:flex;justify-content:center;margin-top:2px">
-    <span id="boLogMeta" style="font-size:11px;color:var(--tx4)"></span>
+    <span id="boLogMeta" style="font-size:11px;color:var(--tx4);align-self:center"></span>
   </div>
   <div style="overflow-x:auto">
     <table style="width:100%;border-collapse:collapse;font-size:12px">
@@ -625,18 +653,65 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
       </table>
     </div>
 </div>
+<!-- CAN 자가 진단 패널 -->
+<div class="card no-collapse" id="diagCard">
+  <h2>&#x1F52C; CAN 통신 자가 진단</h2>
+  <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6">
+    버스 트래픽 &middot; 에코 동작 &middot; TEC/REC &middot; BUS-OFF 이력을 순서대로 체크합니다.
+    차량 현장에서 컴퓨터 없이 이 페이지만으로 통신 이슈를 진단할 수 있습니다 (~19초 소요).
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+    <button class="btn" id="diagBtn" onclick="startCanDiag()">CAN 진단</button>
+    <button class="btn" onclick="resetTimeseries()">🗑 로그 초기화</button>
+    <button class="btn" id="recBtn" onclick="toggleTimeseriesRec()">⏺ 기록 시작</button>
+    <button class="btn" id="markBtn" onclick="markApWarning()">⚠ 경고 기록</button>
+    <a class="btn" href="/api/logs-bundle" download="canmod_logs.txt" style="text-decoration:none;display:inline-flex;align-items:center">💾 전체 저장</a>
+    <span id="recStatus" style="font-size:12px;color:var(--muted)"></span>
+    <span id="diagStatus" style="font-size:12px;color:var(--muted)"></span>
+  </div>
+  <div id="diagLogWrap" style="display:none">
+    <div id="diagLogEl" style="background:#0d1117;border:1px solid var(--border);border-radius:4px;padding:10px;max-height:340px;overflow-y:auto;font-family:monospace;font-size:11px;line-height:1.7;white-space:pre-wrap;color:#c9d1d9"></div>
+  </div>
+</div>
 
-<div class="card" id="otaCard">
-  <h2>OTA Firmware</h2>
+<div id="log"></div>
+</section>
+
+<section class="view" id="view-ota" role="tabpanel" aria-labelledby="tab-ota">
+<div class="card no-collapse" id="otaCard">
+  <h2>OTA 업데이트</h2>
+  <div class="ota-status-grid">
+    <div class="stat"><div class="stat-lbl">현재 파티션</div><div class="stat-val v-dim" id="otaPanelCurrent">--</div></div>
+    <div class="stat"><div class="stat-lbl">이전 파티션</div><div class="stat-val v-dim" id="otaPanelFallback">--</div></div>
+    <div class="stat"><div class="stat-lbl">확인 상태</div><div class="stat-val v-dim" id="otaPanelState">--</div></div>
+    <div class="stat"><div class="stat-lbl">복구 모드</div><div class="stat-val v-dim" id="otaPanelRecovery">--</div></div>
+  </div>
   <input class="file" type="file" id="otaFile" accept=".bin">
   <progress id="otaProgress" value="0" max="100" style="width:100%;height:8px;margin-top:10px;display:block"></progress>
-  <button class="btn" id="otaBtn" onclick="uploadOta()">펌웨어 업로드</button>
-  <button class="btn" onclick="rebootDevice()" style="background:var(--btn-dis-bg);color:var(--tx2)">보드 재부팅</button>
+  <div class="ota-actions">
+    <button class="btn" id="otaBtn" onclick="uploadOta()">펌웨어 업로드</button>
+    <button class="btn" onclick="rebootDevice()" style="background:var(--btn-dis-bg);color:var(--tx2)">보드 재부팅</button>
+  </div>
   <div id="otaStatus"></div>
 </div>
+</section>
 <script>
 var logSince=0,errCount=0;
 var baseUptimeMs=0,baseUptimeTs=0,detailPollingStarted=false;
+var _activeView='main';
+function showView(name){
+  var views={main:1,control:1,diag:1,ota:1};
+  if(!views[name])name='main';
+  _activeView=name;
+  document.querySelectorAll('.view').forEach(function(el){el.classList.toggle('active',el.id==='view-'+name);});
+  document.querySelectorAll('.main-tab').forEach(function(el){
+    var on=el.id==='tab-'+name;
+    el.classList.toggle('active',on);
+    el.setAttribute('aria-selected',on?'true':'false');
+  });
+  try{localStorage.setItem('tcan-view',name);}catch(e){}
+  if(name==='diag')loadBusOffLog();
+}
 function fmt(s){
   var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;
   return h+':'+(m<10?'0':'')+m+':'+(sec<10?'0':'')+sec;
@@ -663,14 +738,14 @@ async function emergencyToggle(){
     {id:'tNag',   path:'/api/nag-killer'},
     {id:'tEap',   path:'/api/enhanced-autopilot'},
     {id:'tTsllc', path:'/api/tsllc'},
-    {id:'tAChTx', path:'/api/a-channel-tx'}
+    {path:'/api/a-channel-tx', force:true}
   ];
   var btn=document.getElementById('emStopBtn');
   if(btn){btn.disabled=true;btn.textContent='해제 중...';}
   for(var i=0;i<targets.length;i++){
     var el=document.getElementById(targets[i].id);
-    if(el&&el.checked){
-      el.checked=false;
+    if((el&&el.checked)||targets[i].force){
+      if(el)el.checked=false;
       try{await fetch(targets[i].path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:false})});}catch(e){}
     }
   }
@@ -685,28 +760,40 @@ function toggleTheme(){
   if(btn)btn.textContent=next==='dark'?'\u2600 Light':'\ud83c\udf19 Dark';
   fetch('/api/set-theme',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({theme:next})}).catch(function(){});
 }
-var _nagMode=0;
+var _nagProfile=0;
 var _nagModePhaseLabels=['idle','grace','s2지연','s2mild','s3지연','ramp','hold'];
-function updateNagModeUi(mode){
-  _nagMode=mode;
-  var dA=document.getElementById('nagDescA');
-  var dB=document.getElementById('nagDescB');
-  var bA=document.getElementById('btnNagA');
-  var bB=document.getElementById('btnNagB');
-  var sw=document.getElementById('nagModeToggle');
-  var lbl=document.getElementById('nagModeLabel');
-  if(sw)sw.checked=(mode===1);
-  if(dA)dA.style.display=(mode===0)?'block':'none';
-  if(dB)dB.style.display=(mode===1)?'block':'none';
-  if(bA){bA.style.outline=mode===0?'2px solid var(--acc2)':'';bA.style.fontWeight=mode===0?'bold':'';}
-  if(bB){bB.style.outline=mode===1?'2px solid var(--acc2)':'';bB.style.fontWeight=mode===1?'bold':'';}
-  if(lbl)lbl.textContent=mode===1?'B 스마트 활성':'A 스텔스 활성';
-  if(lbl)lbl.style.color=mode===1?'var(--acc2)':'var(--muted)';
+var _nagProfileFallback=[
+  {label:'기본',summary:'현재 검증 기준. 700/400ms 타이밍을 유지하고 조건이 맞는 동안 연속 관찰 주입.',s1:500,s2:700,s3:400,s2b:0,s2p:0,s3b:0,s3p:0},
+  {label:'A안',summary:'초기 grace를 줄이고 짧은 burst 후 쉬는 구간을 둔다.',s1:150,s2:700,s3:400,s2b:250,s2p:750,s3b:500,s3p:1000},
+  {label:'B안',summary:'가장 보수적. state1 주입을 없애고 더 짧게 반응한 뒤 길게 관찰한다.',s1:0,s2:900,s3:600,s2b:150,s2p:1350,s3b:300,s3p:1700}
+];
+function msText(v){return (v===0||v>0)?(v+'ms'):'--';}
+function updateNagProfileUi(d){
+  var p=(d&&d.smartProfile!==undefined)?Number(d.smartProfile):_nagProfile;
+  if(!(p>=0&&p<=2))p=0;
+  _nagProfile=p;
+  var fb=_nagProfileFallback[p];
+  var radios=document.querySelectorAll('input[name="nagProfile"]');
+  for(var i=0;i<radios.length;i++)radios[i].checked=Number(radios[i].value)===p;
+  var lbl=document.getElementById('nagProfileLabel');if(lbl)lbl.textContent=(d&&d.profileLabel)||fb.label;
+  var mainProfile=document.getElementById('s-main-profile');if(mainProfile){var profileText=(d&&d.profileLabel)||fb.label;mainProfile.textContent=profileText;mainProfile.className='stat-val v-acc';fitMainStat(mainProfile,profileText);}
+  var desc=document.getElementById('nagProfileDesc');if(desc)desc.textContent=(d&&d.profileSummary)||fb.summary;
+  var s1=(d&&d.state1GraceMs!==undefined)?d.state1GraceMs:fb.s1;
+  var s2=(d&&d.state2DelayMs!==undefined)?d.state2DelayMs:fb.s2;
+  var s3=(d&&d.strongDelayMs!==undefined)?d.strongDelayMs:fb.s3;
+  var s2b=(d&&d.state2BurstMs!==undefined)?d.state2BurstMs:fb.s2b;
+  var s2p=(d&&d.state2PauseMs!==undefined)?d.state2PauseMs:fb.s2p;
+  var s3b=(d&&d.strongBurstMs!==undefined)?d.strongBurstMs:fb.s3b;
+  var s3p=(d&&d.strongPauseMs!==undefined)?d.strongPauseMs:fb.s3p;
+  var e=document.getElementById('np_s1');if(e)e.textContent=msText(s1);
+  e=document.getElementById('np_s2');if(e)e.textContent=msText(s2);
+  e=document.getElementById('np_s3');if(e)e.textContent=msText(s3);
+  e=document.getElementById('np_burst');if(e)e.innerHTML=(s2b||s3b)?('<span class="burst-lines"><span>S2 '+s2b+'/'+s2p+'ms</span><span>S3 '+s3b+'/'+s3p+'ms</span></span>'):'연속';
 }
-function setNagMode(m){
-  fetch('/api/nag-mode?m='+m,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
-    updateNagModeUi(d.mode||0);
-  }).catch(function(){alert('모드 전환 실패');});
+function setNagProfile(p){
+  fetch('/api/nag-profile?p='+p,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+    updateNagProfileUi(d);
+  }).catch(function(){alert('프로파일 변경 실패');});
 }
 function tickNagStats(){
   fetch('/api/nag-stats').then(function(r){return r.json();}).then(function(d){
@@ -721,16 +808,19 @@ function tickNagStats(){
     var boFallbackInfo=document.getElementById('boFallbackInfo');if(boFallbackInfo)boFallbackInfo.textContent='Hard fallback '+(d.boSoftFallback||0)+'회';
     if(d.singleShotTx!==undefined&&_singleShotTx!==!!d.singleShotTx){_singleShotTx=!!d.singleShotTx;updateSsTxUi();}
     if(d.busOffStopSkip!==undefined&&_busOffStopSkip!==!!d.busOffStopSkip){_busOffStopSkip=!!d.busOffStopSkip;updateBoStopUi();}
-    // 모드 업데이트
-    var newMode=(d.mode===1)?1:0;
-    if(newMode!==_nagMode)updateNagModeUi(newMode);
-    // Mode B 상태 업데이트
+    if(d.smartProfile!==undefined)updateNagProfileUi(d);
+    // Smart Torque 상태 업데이트
     var eApst=document.getElementById('ns_apst');if(eApst){eApst.textContent=nagApStateText(d);eApst.title='921='+n(d.frames921)+' 923='+n(d.frames923)+' last='+n(d.lastDasStatusAgeMs)+'ms';}
+    var mainAp=document.getElementById('s-main-ap');if(mainAp){var mainApText=nagApStateText(d);mainAp.textContent=mainApText;mainAp.className=statusClass(n(d.dasApState)>=3&&n(d.dasApState)<=6?'ok':'warn');mainAp.title='921='+n(d.frames921)+' 923='+n(d.frames923)+' last='+n(d.lastDasStatusAgeMs)+'ms';fitMainStat(mainAp,mainApText);}
     var eAngle=document.getElementById('ns_angle');if(eAngle)eAngle.textContent=d.steerAngleDeg!==undefined?d.steerAngleDeg.toFixed(1)+'°':'--';
+    var mainAngle=document.getElementById('s-main-angle');if(mainAngle){var mainAngleText=d.steerAngleDeg!==undefined?d.steerAngleDeg.toFixed(1)+'°':'--';mainAngle.textContent=mainAngleText;mainAngle.className='stat-val v-acc';fitMainStat(mainAngle,mainAngleText);}
     var eMbph=document.getElementById('ns_mbphase');
     if(eMbph){var ph=d.modeBPhase||0;eMbph.textContent=d.nagLastDecisionText==='AP_BLOCK'?'ap_block':(_nagModePhaseLabels[ph]||ph);}
+    var mainPhase=document.getElementById('s-main-phase');if(mainPhase){var ph2=d.modeBPhase||0;var phaseText=d.nagLastDecisionText==='AP_BLOCK'?'ap_block':(_nagModePhaseLabels[ph2]||ph2);mainPhase.textContent=phaseText;mainPhase.className='stat-val '+(phaseText==='ap_block'?'v-warn':phaseText==='idle'?'v-dim':'v-acc');fitMainStat(mainPhase,phaseText);}
     var eMbInj=document.getElementById('ns_mbinject');if(eMbInj)eMbInj.textContent=d.modeBInjects||0;
+    var mainInject=document.getElementById('s-main-inject');if(mainInject){var injectText=d.modeBInjects||0;mainInject.textContent=injectText;mainInject.className='stat-val v-acc';fitMainStat(mainInject,injectText);}
     var eMbNm=document.getElementById('ns_mbnm');if(eMbNm)eMbNm.textContent=d.modeBLastNm!==undefined?d.modeBLastNm.toFixed(2)+'Nm':'--';
+    var mainTorque=document.getElementById('s-main-torque');if(mainTorque){var torqueText=d.torqueNm!==undefined?d.torqueNm.toFixed(2)+'Nm':'--';mainTorque.textContent=torqueText;mainTorque.className='stat-val '+(Math.abs(n(d.torqueNm))>2?'v-warn':'v-acc');fitMainStat(mainTorque,torqueText);}
     var eRx297=document.getElementById('ns_rx297');if(eRx297)eRx297.textContent=d.frames297||0;
     // nag-stats 공통 필드
     var nsRx=document.getElementById('ns_rx');if(nsRx)nsRx.textContent=d.rx||0;
@@ -765,10 +855,17 @@ function loadBusOffLog(){
   }).catch(function(){});
 }
 function n(v){v=Number(v);return isFinite(v)?v:0;}
+function fitMainStat(el,text){
+  if(!el)return;
+  var len=String(text).length;
+  el.classList.toggle('long',len>7);
+  el.classList.toggle('xlong',len>11);
+}
 function setTxt(id,text,cls){
   var el=document.getElementById(id);if(!el)return;
   el.textContent=text;
   if(cls)el.className=cls;
+  if(id.indexOf('s-main-')===0)fitMainStat(el,text);
 }
 function setColor(id,color){var el=document.getElementById(id);if(el)el.style.color=color||'';}
 function setFill(id,hz){
@@ -807,6 +904,7 @@ function aCardTitleText(a,aState){
 function dasSourceText(id){id=n(id);return id?id:'--';}
 function nagApStateText(d){return d.dasSourceId&&d.dasApState!==undefined?d.dasApState+' @'+d.dasSourceId:'--';}
 function statusClass(level){return 'stat-val '+(level==='ok'?'v-ok':level==='warn'?'v-warn':level==='err'?'v-err':'v-dim');}
+function dotStatusClass(level){return level==='ok'?'dot-ok':level==='warn'?'dot-warn':level==='err'?'dot-err':'dot-wait';}
 function aRateLevel(hz){return n(hz)>0?'ok':'err';}
 function b880RateLevel(hz){hz=n(hz);return hz>=80?'ok':hz>0?'warn':'err';}
 function shortBuildId(id){
@@ -837,14 +935,21 @@ function fmtHzFromPeriod(ms){
   var hz=1000/ms;
   return hz>=10?hz.toFixed(0):hz.toFixed(1);
 }
-function watchedIdHzText(b){
-  return fmtHzFromPeriod(b.id_target_period_ms)+' / '+fmtHzFromPeriod(b.id_921_period_ms)+' / '+fmtHzFromPeriod(b.id_923_period_ms)+' / '+fmtHzFromPeriod(b.id_297_period_ms)+' Hz';
+function setIdHz(id,periodMs){
+  var text=fmtHzFromPeriod(periodMs);
+  setTxt(id,text==='--'?'--':text+' Hz','v');
 }
 function updateChannelStatus(d){
   var ch=d.channels||{},a=ch.a_channel||{},b=ch.b_channel||{};
   var aState=channelAState(a),bState=channelBState(b);
   var aHz=n(a.frame_hz);
   var bHz=n(b.frame_hz);
+  var aMainLevel=aState.level==='ok'?aRateLevel(aHz):aState.level;
+  var bTwai=twaiName(b.twai_state_code);
+  var bMainLevel=bState.level==='ok'?b880RateLevel(bHz):bState.level;
+  setTxt('s-main-a',aHz.toFixed(1)+'Hz',statusClass(aMainLevel));
+  setTxt('s-main-b',bHz.toFixed(1)+'Hz',statusClass(bMainLevel));
+  setTxt('s-main-busoff',n(b.busoff_count),statusClass(n(b.busoff_count)?'err':'ok'));
   setTxt('s-can',aState.text,statusClass(aState.level));
   setTxt('s-bcan',bState.text,statusClass(bState.level));
   setTxt('s-a-eflg','0x'+('0'+n(a.mcp_eflg).toString(16).toUpperCase()).slice(-2),statusClass(n(a.mcp_eflg)?'warn':'ok'));
@@ -863,10 +968,11 @@ function updateChannelStatus(d){
   var hdrA=document.getElementById('hdr-a'),hdrB=document.getElementById('hdr-b');
   var aChTitle=document.getElementById('aChTitle');
   var bChTitle=document.getElementById('bChTitle');
-  if(sdotA)sdotA.className='sdot '+(a.fresh?'dot-live':'dot-wait');
-  if(sdotB)sdotB.className='sdot '+(b.fresh?'dot-live':'dot-wait');
+  var bHdrText=bState.text==='OK'?bTwai:bState.text;
+  if(sdotA)sdotA.className='sdot '+dotStatusClass(aMainLevel);
+  if(sdotB)sdotB.className='sdot '+dotStatusClass(bMainLevel);
   if(hdrA)hdrA.textContent='A '+aState.text;
-  if(hdrB)hdrB.textContent='B '+bState.text;
+  if(hdrB)hdrB.textContent='B '+bHdrText;
   if(aChTitle)aChTitle.textContent=aCardTitleText(a,aState);
   if(bChTitle)bChTitle.textContent=bCardTitleText(b);
   setTxt('aHz',aHz.toFixed(1)+' Hz','val '+(aRateLevel(aHz)==='ok'?'on':'off'));
@@ -877,8 +983,10 @@ function updateChannelStatus(d){
   setTxt('bTwai',twaiName(b.twai_state_code),'val');
   setColor('bTwai',b.driver_ok?(n(b.twai_state_code)===2?'var(--err)':n(b.twai_state_code)===3?'var(--warn)':'var(--acc2)'):'var(--err)');
   setTxt('bDrvErr',n(b.driver_install_err)+' / '+n(b.driver_start_err),'val '+(b.driver_ok?'on':'off'));
-  setTxt('bHz',bHz.toFixed(1)+' Hz','val '+(b880RateLevel(bHz)==='ok'?'on':'off'));
-  setTxt('bFilt',watchedIdHzText(b),'val');
+  setIdHz('bHz880',b.id_target_period_ms);
+  setIdHz('bHz921',b.id_921_period_ms);
+  setIdHz('bHz923',b.id_923_period_ms);
+  setIdHz('bHz297',b.id_297_period_ms);
   var bl=document.getElementById('bTargetLbl');if(bl)bl.textContent='ID '+(b.target_id||880)+' (NAG)';
   setTxt('b880Info',n(b.frames_target)+' / '+fmtPeriod(b.id_target_period_ms),'val');
   setTxt('b921Info',n(b.frames_921)+' / '+fmtPeriod(b.id_921_period_ms),'val');
@@ -918,7 +1026,6 @@ async function poll(){
     if(sEap){sEap.textContent=d.enhanced_autopilot?'ON':'OFF';sEap.className='stat-val '+(d.enhanced_autopilot?'v-ok':'v-err');}
     var sNag=document.getElementById('s-nag');
     if(sNag){sNag.textContent=d.nag_killer?'ON':'OFF';sNag.className='stat-val '+(d.nag_killer?'v-ok':'v-err');}
-    var tAChTx=document.getElementById('tAChTx');if(tAChTx)tAChTx.checked=!!d.a_channel_tx;
     var tEap=document.getElementById('tEap');if(tEap)tEap.checked=!!d.enhanced_autopilot;
     var tTsllc=document.getElementById('tTsllc');if(tTsllc)tTsllc.checked=!!d.tsllc_enabled;
     var tNag=document.getElementById('tNag');if(tNag)tNag.checked=!!d.nag_killer;
@@ -1137,6 +1244,12 @@ function fmtCountdown(ms){
 }
 function updateOtaConfirmBanner(d){
   var state=d.ota_pending_state||0;
+  var stateText=state===2?'확인 대기':state===4?'복구 확인':state===5?'복구 모드':'정상';
+  var stateLevel=state===0?'v-ok':state===2?'v-warn':state===4?'v-warn':'v-err';
+  var cur=document.getElementById('otaPanelCurrent');if(cur)cur.textContent=d.ota_current_label||'--';
+  var fb=document.getElementById('otaPanelFallback');if(fb)fb.textContent=d.ota_fallback_label||'--';
+  var st=document.getElementById('otaPanelState');if(st){st.textContent=stateText;st.className='stat-val '+stateLevel;}
+  var rec=document.getElementById('otaPanelRecovery');if(rec){rec.textContent=d.ota_recovery_mode?'ON':'OFF';rec.className='stat-val '+(d.ota_recovery_mode?'v-err':'v-ok');}
   var cb=document.getElementById('otaConfirmBanner');
   var rb=document.getElementById('otaRollbackConfirmBanner');
   if(state===2&&cb){
@@ -1212,7 +1325,7 @@ function rebootDevice(){
 var STATUS_POLL_MS=1000;
 setInterval(poll,STATUS_POLL_MS);poll();
 setInterval(renderUptimeTick,250);
-setTimeout(startDetailPolling,15000);
+setTimeout(startDetailPolling,1000);
 
 /* wall-clock 동기화: 페이지 로드 시 브라우저 epoch_ms를 디바이스에 POST.
  * 디바이스는 이를 baseline으로 저장해 logRing 타임스탬프를 ISO 형식으로 변환.
@@ -1231,6 +1344,7 @@ setInterval(function(){
 /* ── Collapsible cards ── */
 (function(){
   document.querySelectorAll('.card').forEach(function(card){
+    if(card.classList.contains('no-collapse'))return;
     var hdr=card.querySelector(':scope>h2');
     if(!hdr)return;
     var titleEl=hdr.tagName==='H2'?hdr:hdr.querySelector('h2');
@@ -1253,6 +1367,11 @@ setInterval(function(){
     });
     hdr.appendChild(btn);
   });
+})();
+(function(){
+  var saved='main';
+  try{saved=localStorage.getItem('tcan-view')||'main';}catch(e){}
+  showView(saved);
 })();
 </script>
 </body>

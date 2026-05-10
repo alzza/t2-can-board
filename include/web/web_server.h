@@ -100,12 +100,14 @@ static constexpr char kNvsKeyAOneShot[]     = "a_oneshot";    // A MCP2515 one-s
 static constexpr char kNvsKeyATxGuard[]     = "a_tx_guard";   // A TX guard enable
 // NagConfig NVS 키 (모두 15자 이하)
 static constexpr char kNvsKeyNagMode[]      = "nag_mode";
+static constexpr char kNvsKeyNagProfile[]   = "nag_prof";
 static constexpr char kNvsKeyNagId[]        = "nag_id";       // compatibility: always 880
 static constexpr char kNvsKeyNagTc[]        = "nag_tc";       // uint8: torqueCount
 static constexpr char kNvsKeyNagTb2[]       = "nag_tb2";      // bytes: torqueB2[8]
 static constexpr char kNvsKeyNagTb3[]       = "nag_tb3";      // bytes: torqueB3[8]
 static constexpr char kNvsKeyNagHo[]        = "nag_ho";       // uint8: hoRatePct
 static_assert(sizeof(kNvsKeyNagMode) - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyNagProfile) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyNagId)   - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyNagTc)   - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyNagTb2)  - 1 <= 15, "NVS key too long");
@@ -319,12 +321,12 @@ static void loadAExperimentSettings()
 // NagConfig NVS 저장/로드 헬퍼
 static void nagCfgSave(const NagConfig &c) {
     NagConfig fixed = c;
-    nagCfgDefaultsA(fixed);
-    // mode는 A/B 모두 허용 (사용자가 토글한 값을 유지한다)
-    fixed.mode = (c.mode == kNagModeB) ? kNagModeB : kNagModeA;
+    nagCfgDefaultsSmart(fixed);
+    fixed.smartProfile = nagSmartProfileClamp(c.smartProfile);
     nvs_handle_t h;
     if (nvs_open(kNvsNamespace, NVS_READWRITE, &h) != ESP_OK) return;
     nvs_set_u8(h,  kNvsKeyNagMode, fixed.mode);
+    nvs_set_u8(h,  kNvsKeyNagProfile, fixed.smartProfile);
     nvs_set_u16(h, kNvsKeyNagId,   fixed.targetId);
     nvs_set_u8(h,  kNvsKeyNagTc,   fixed.torqueCount);
     nvs_set_blob(h, kNvsKeyNagTb2, fixed.torqueB2, kNagMaxTorqueEntries);
@@ -336,19 +338,20 @@ static void nagCfgSave(const NagConfig &c) {
 
 static void nagCfgLoad() {
     NagConfig c;
-    nagCfgDefaultsA(c);
-    // NVS에서 mode 복원 (값 0=A / 1=B 이외는 Mode A로 fallback)
+    nagCfgDefaultsSmart(c);
     nvs_handle_t h;
     if (nvs_open(kNvsNamespace, NVS_READONLY, &h) == ESP_OK) {
-        uint8_t savedMode = kNagModeA;
-        nvs_get_u8(h, kNvsKeyNagMode, &savedMode);
-        c.mode = (savedMode == kNagModeB) ? kNagModeB : kNagModeA;
+        uint8_t savedProfile = kNagSmartProfileDefault;
+        nvs_get_u8(h, kNvsKeyNagProfile, &savedProfile);
+        c.mode = kNagModeB;
+        c.smartProfile = nagSmartProfileClamp(savedProfile);
         nvs_close(h);
     }
     portENTER_CRITICAL(&nagCfgMux);
     nagConfig = c;
     portEXIT_CRITICAL(&nagCfgMux);
-    bChannelDiag.nagMode = c.mode;
+    bChannelDiag.nagMode = kNagModeB;
+    bChannelDiag.smartProfile = c.smartProfile;
 }
 
 // --- Rate limiter ---
@@ -426,6 +429,17 @@ static esp_err_t featureToggleHandler(httpd_req_t *req, Shared<bool> &target, bo
     bool enabled = false;
     if (!parseToggleBody(req, enabled))
         return ESP_FAIL;
+
+    if (enabled && ((&target == &enhancedAutopilotRuntime) || (&target == &tsllcRuntime)) && !(bool)aChannelTxRuntime)
+    {
+        if (!nvsWriteBool(kNvsKeyAChTx, true))
+        {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to enable A channel TX");
+            return ESP_FAIL;
+        }
+        aChannelTxRuntime = true;
+        logRing.push("[Web] A_CHANNEL_TX: ON (dependency)", millis());
+    }
 
     if (!nvsWriteBool(nvsKey, enabled))
     {
@@ -772,7 +786,8 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(bch, "das_hands_state", (uint32_t)bChannelDiag.dasHandsOnStateRx);
     cJSON_AddNumberToObject(bch, "das_source_id", (uint32_t)bChannelDiag.dasStatusSourceId);
     cJSON_AddNumberToObject(bch, "last_das_status_rx_ms", (uint32_t)bChannelDiag.lastDasStatusRxMs);
-    cJSON_AddNumberToObject(bch, "nag_mode", (uint32_t)(uint8_t)bChannelDiag.nagMode);
+    cJSON_AddNumberToObject(bch, "nag_mode", (uint32_t)kNagModeB);
+    cJSON_AddNumberToObject(bch, "smart_profile", (uint32_t)nagSmartProfileClamp((uint8_t)bChannelDiag.smartProfile));
     cJSON_AddNumberToObject(bch, "echo_count", (uint32_t)bChannelDiag.echoCount);
     cJSON_AddNumberToObject(bch, "echo_drop_late", (uint32_t)bChannelDiag.echoDroppedLate);
     cJSON_AddNumberToObject(bch, "skip_runtime_or_inactive", (uint32_t)bChannelDiag.skipRuntimeOrInactive);
@@ -995,13 +1010,35 @@ static esp_err_t aTxGuardHandler(httpd_req_t *req)
 
 // ─── GET /api/nag-config  ────────────────────────────────────────────────────
 // 현재 NagConfig를 JSON으로 반환 (v2 /api/config 에 해당)
+static void addNagProfileJson(cJSON *root, const NagSmartProfileSettings &profile)
+{
+    cJSON_AddNumberToObject(root, "smartProfile", profile.id);
+    cJSON_AddStringToObject(root, "profileLabel", profile.label);
+    cJSON_AddStringToObject(root, "profileSummary", profile.summary);
+    cJSON_AddNumberToObject(root, "state1GraceMs", profile.state1GraceMs);
+    cJSON_AddNumberToObject(root, "state2DelayMs", profile.state2DelayMs);
+    cJSON_AddNumberToObject(root, "strongDelayMs", profile.strongDelayMs);
+    cJSON_AddNumberToObject(root, "strongRampMs", profile.strongRampMs);
+    cJSON_AddNumberToObject(root, "state2BurstMs", profile.state2BurstMs);
+    cJSON_AddNumberToObject(root, "state2PauseMs", profile.state2PauseMs);
+    cJSON_AddNumberToObject(root, "strongBurstMs", profile.strongBurstMs);
+    cJSON_AddNumberToObject(root, "strongPauseMs", profile.strongPauseMs);
+}
+
 static esp_err_t nagConfigGetHandler(httpd_req_t *req)
 {
     NagConfig c;
-    nagCfgDefaultsA(c);
+    portENTER_CRITICAL(&nagCfgMux);
+    c = nagConfig;
+    portEXIT_CRITICAL(&nagCfgMux);
+    c.mode = kNagModeB;
+    c.smartProfile = nagSmartProfileClamp(c.smartProfile);
+    const NagSmartProfileSettings &profile = nagSmartProfileSettings(c.smartProfile);
 
     cJSON *root = cJSON_CreateObject();
     cJSON_AddNumberToObject(root, "mode",       c.mode);
+    cJSON_AddStringToObject(root, "modeStr",    "SMART");
+    addNagProfileJson(root, profile);
     cJSON_AddNumberToObject(root, "targetId",   c.targetId);
     cJSON_AddNumberToObject(root, "hoRatePct",  c.hoRatePct);
     cJSON *arr = cJSON_AddArrayToObject(root, "torque");
@@ -1055,8 +1092,11 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
     cJSON_AddStringToObject(root, "canState", (cs < 4) ? csStr[cs] : "unknown");
     cJSON_AddNumberToObject(root, "uptimeS",  millis() / 1000);
 
-    cJSON_AddNumberToObject(root, "mode",     (uint8_t)bChannelDiag.nagMode);
-    cJSON_AddStringToObject(root, "modeStr",  ((uint8_t)bChannelDiag.nagMode == kNagModeB) ? "B" : "A");
+    uint8_t smartProfile = nagSmartProfileClamp((uint8_t)bChannelDiag.smartProfile);
+    const NagSmartProfileSettings &profile = nagSmartProfileSettings(smartProfile);
+    cJSON_AddNumberToObject(root, "mode",     kNagModeB);
+    cJSON_AddStringToObject(root, "modeStr",  "SMART");
+    addNagProfileJson(root, profile);
     cJSON_AddNumberToObject(root, "targetId", kNagFixedTargetId);
     // Mode B 진단
     cJSON_AddNumberToObject(root, "dasApState",  (uint8_t)bChannelDiag.dasAutopilotStateRx);
@@ -1105,9 +1145,8 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
     return sendRet;
 }
 
-// ─── POST /api/nag-mode?m=0|1  ───────────────────────────────────────────────
-// m=0 → Mode A (스텔스 PRNG)  / m=1 → Mode B (스마트 상태머신)
-static esp_err_t nagModeHandler(httpd_req_t *req)
+// ─── POST /api/nag-profile?p=0|1|2  ─────────────────────────────────────────
+static esp_err_t nagProfileHandler(httpd_req_t *req)
 {
     if (!rateLimitOk()) {
         httpd_resp_set_status(req, "429 Too Many Requests");
@@ -1116,36 +1155,66 @@ static esp_err_t nagModeHandler(httpd_req_t *req)
     }
     char queryBuf[32] = {};
     httpd_req_get_url_query_str(req, queryBuf, sizeof(queryBuf));
-    char mBuf[4] = {};
-    int newMode = kNagModeA; // 기본 Mode A
-    if (httpd_query_key_value(queryBuf, "m", mBuf, sizeof(mBuf)) == ESP_OK) {
-        int v = atoi(mBuf);
-        if (v == kNagModeB) newMode = kNagModeB;
+    char pBuf[4] = {};
+    uint8_t newProfile = kNagSmartProfileDefault;
+    if (httpd_query_key_value(queryBuf, "p", pBuf, sizeof(pBuf)) == ESP_OK) {
+        newProfile = nagSmartProfileClamp(static_cast<uint8_t>(atoi(pBuf)));
     }
 
     NagConfig nc;
     portENTER_CRITICAL(&nagCfgMux);
     nc = nagConfig;
     portEXIT_CRITICAL(&nagCfgMux);
-    nc.mode = static_cast<uint8_t>(newMode);
+    nc.mode = kNagModeB;
+    nc.smartProfile = newProfile;
     portENTER_CRITICAL(&nagCfgMux);
     nagConfig = nc;
     portEXIT_CRITICAL(&nagCfgMux);
     nagCfgSave(nc);
-    bChannelDiag.nagMode = static_cast<uint8_t>(newMode);
+    bChannelDiag.nagMode = kNagModeB;
+    bChannelDiag.smartProfile = newProfile;
     eventLogPush(EV_NAG_MODE, (uint16_t)bChannelDiag.twaiTxErrNow,
-                 (uint16_t)bChannelDiag.twaiRxErrNow, (uint32_t)newMode);
+                 (uint16_t)bChannelDiag.twaiRxErrNow, (uint32_t)newProfile);
 
-    char logBuf[48];
-    snprintf(logBuf, sizeof(logBuf), "🔧 [NAG] 모드 전환 → %s",
-             (newMode == kNagModeB) ? "B (스마트)" : "A (스텔스)");
+    const NagSmartProfileSettings &profile = nagSmartProfileSettings(newProfile);
+    char logBuf[72];
+    snprintf(logBuf, sizeof(logBuf), "🔧 [NAG] 스마트 프로파일 → %s", profile.label);
     logRing.push(logBuf, millis());
+
+    return nagConfigGetHandler(req);
+}
+
+// ─── POST /api/nag-mode?m=0|1  ───────────────────────────────────────────────
+// legacy endpoint: 이전 모드 토글 호출은 항상 스마트 토크로 고정한다.
+static esp_err_t nagModeHandler(httpd_req_t *req)
+{
+    if (!rateLimitOk()) {
+        httpd_resp_set_status(req, "429 Too Many Requests");
+        httpd_resp_send(req, "Rate limited", HTTPD_RESP_USE_STRLEN);
+        return ESP_FAIL;
+    }
+    NagConfig nc;
+    portENTER_CRITICAL(&nagCfgMux);
+    nc = nagConfig;
+    portEXIT_CRITICAL(&nagCfgMux);
+    nc.mode = kNagModeB;
+    nc.smartProfile = nagSmartProfileClamp(nc.smartProfile);
+    portENTER_CRITICAL(&nagCfgMux);
+    nagConfig = nc;
+    portEXIT_CRITICAL(&nagCfgMux);
+    nagCfgSave(nc);
+    bChannelDiag.nagMode = kNagModeB;
+    bChannelDiag.smartProfile = nc.smartProfile;
+    eventLogPush(EV_NAG_MODE, (uint16_t)bChannelDiag.twaiTxErrNow,
+                 (uint16_t)bChannelDiag.twaiRxErrNow, (uint32_t)nc.smartProfile);
+
+    logRing.push("🔧 [NAG] /api/nag-mode 호환 호출 → 스마트 토크 유지", millis());
 
     return nagConfigGetHandler(req);  // 변경된 설정 반환
 }
 
 // ─── POST /api/nag-update  ───────────────────────────────────────────────────
-// targetId/토크 테이블 변경 요청은 무시하고 880 고정. mode 변경은 /api/nag-mode 사용.
+// targetId/토크 테이블 변경 요청은 무시하고 880 고정. profile 변경은 /api/nag-profile 사용.
 static esp_err_t nagUpdateHandler(httpd_req_t *req)
 {
     if (!rateLimitOk()) {
@@ -1153,12 +1222,12 @@ static esp_err_t nagUpdateHandler(httpd_req_t *req)
         httpd_resp_send(req, "Rate limited", HTTPD_RESP_USE_STRLEN);
         return ESP_FAIL;
     }
-    logRing.push("🔧 [NAG] /api/nag-update — ID 880 고정 유지 (mode는 /api/nag-mode 사용)", millis());
+    logRing.push("🔧 [NAG] /api/nag-update — ID 880 고정 유지 (profile은 /api/nag-profile 사용)", millis());
     return nagConfigGetHandler(req);
 }
 
 // ─── POST /api/nag-reset  ────────────────────────────────────────────────────
-// Mode A 기본값으로 리셋
+// 스마트 토크 기본 프로파일로 리셋
 static esp_err_t nagResetHandler(httpd_req_t *req)
 {
     if (!rateLimitOk()) {
@@ -1167,12 +1236,14 @@ static esp_err_t nagResetHandler(httpd_req_t *req)
         return ESP_FAIL;
     }
     NagConfig nc;
-    nagCfgDefaultsA(nc);
+    nagCfgDefaultsSmart(nc);
     portENTER_CRITICAL(&nagCfgMux);
     nagConfig = nc;
     portEXIT_CRITICAL(&nagCfgMux);
     nagCfgSave(nc);
-    logRing.push("🔧 [NAG] 설정 리셋 → Mode A 기본값", millis());
+    bChannelDiag.nagMode = kNagModeB;
+    bChannelDiag.smartProfile = nc.smartProfile;
+    logRing.push("🔧 [NAG] 설정 리셋 → 스마트 기본값", millis());
     return nagConfigGetHandler(req);
 }
 
@@ -1319,11 +1390,12 @@ static esp_err_t userMarkerHandler(httpd_req_t *req) {
     uint16_t tec = (uint16_t)(uint32_t)bChannelDiag.twaiTxErrNow;
     uint16_t rec = (uint16_t)(uint32_t)bChannelDiag.twaiRxErrNow;
     eventLogPush(EV_USER_MARK, tec, rec, detail);
+    const NagSmartProfileSettings &profile = nagSmartProfileSettings((uint8_t)bChannelDiag.smartProfile);
 
     char msg[256];
     snprintf(msg, sizeof(msg),
-        "[USER-MARK] AP_WARNING Mode=%c AP=%u Phase=%u 880=%u 921=%u 923=%u 297=%u HO=%u DAS=0x%02X Angle=%.1fdeg Real=%.2fNm MB=%.2fNm E=%u D=%u Last=%s TEC=%u/REC=%u",
-        ((uint8_t)bChannelDiag.nagMode == kNagModeB) ? 'B' : 'A',
+        "[USER-MARK] AP_WARNING Profile=%s AP=%u Phase=%u 880=%u 921=%u 923=%u 297=%u HO=%u DAS=0x%02X Angle=%.1fdeg Real=%.2fNm MB=%.2fNm E=%u D=%u Last=%s TEC=%u/REC=%u",
+        profile.label,
         (unsigned)(uint8_t)bChannelDiag.dasAutopilotStateRx,
         (unsigned)(uint8_t)bChannelDiag.modeBPhase,
         (unsigned)bChannelDiag.frames880,
@@ -1476,7 +1548,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
             (unsigned)aChannelDiag.mcpEflgEventCount);
         httpd_resp_sendstr_chunk(req, line);
     snprintf(line, sizeof(line),
-        "B채널: RX=%u Filt=%u Echo=%u TxFail=%u TEC=%u REC=%u TECpeak=%u 880=%u 921=%u 923=%u 297=%u DAS=%u@%u Mode=%c TWAI=%s InitErr=%d/%d\r\n",
+        "B채널: RX=%u Filt=%u Echo=%u TxFail=%u TEC=%u REC=%u TECpeak=%u 880=%u 921=%u 923=%u 297=%u DAS=%u@%u Profile=%s TWAI=%s InitErr=%d/%d\r\n",
         (unsigned)bChannelDiag.framesReceivedTotal,
         (unsigned)bChannelDiag.framesFilteredInTotal,
         (unsigned)bChannelDiag.echoCount,
@@ -1490,7 +1562,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         (unsigned)bChannelDiag.frames297,
         (unsigned)bChannelDiag.dasHandsOnStateRx,
         (unsigned)bChannelDiag.dasStatusSourceId,
-        ((uint8_t)bChannelDiag.nagMode == kNagModeB) ? 'B' : 'A',
+        nagSmartProfileSettings((uint8_t)bChannelDiag.smartProfile).label,
         twS,
         gWebDriverB ? gWebDriverB->getLastInstallErr() : -1,
         gWebDriverB ? gWebDriverB->getLastStartErr() : -1);
@@ -1517,13 +1589,13 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         uint32_t age297 = (uint32_t)bChannelDiag.last297RxMs ? (now - (uint32_t)bChannelDiag.last297RxMs) : 0;
         uint32_t ageEcho = (uint32_t)bChannelDiag.lastEchoTxMs ? (now - (uint32_t)bChannelDiag.lastEchoTxMs) : 0;
         snprintf(line, sizeof(line),
-            "B나그판정: 880=%u(age=%ums) 921=%u(age=%ums) 923=%u(age=%ums) 297=%u(age=%ums) Echo=%u(age=%ums) | Mode=%c AP=%u Phase=%u HO=%u Torque=%.2fNm DAS=0x%02X@%u Last=%s\r\n",
+            "B나그판정: 880=%u(age=%ums) 921=%u(age=%ums) 923=%u(age=%ums) 297=%u(age=%ums) Echo=%u(age=%ums) | Profile=%s AP=%u Phase=%u HO=%u Torque=%.2fNm DAS=0x%02X@%u Last=%s\r\n",
             (unsigned)bChannelDiag.frames880, (unsigned)age880,
             (unsigned)bChannelDiag.frames921, (unsigned)age921,
             (unsigned)bChannelDiag.frames923, (unsigned)age923,
             (unsigned)bChannelDiag.frames297, (unsigned)age297,
             (unsigned)bChannelDiag.echoCount, (unsigned)ageEcho,
-            ((uint8_t)bChannelDiag.nagMode == kNagModeB) ? 'B' : 'A',
+            nagSmartProfileSettings((uint8_t)bChannelDiag.smartProfile).label,
             (unsigned)(uint8_t)bChannelDiag.dasAutopilotStateRx,
             (unsigned)(uint8_t)bChannelDiag.modeBPhase,
             (unsigned)(uint8_t)bChannelDiag.realHo,
@@ -1600,7 +1672,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         tsSnapRecording ? "ON" : "OFF", (unsigned)tsN);
     httpd_resp_sendstr_chunk(req, line);
     httpd_resp_sendstr_chunk(req,
-        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,nagMode,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,f297,apState,modeBPhase,steerDeg,realTorqueNm,modeBInject,modeBLastNm,age880Ms,ageDasMs,age297Ms,ageEchoMs,modeBStateAgeMs,modeBPhaseAgeMs,modeBFirstEchoDelayMs,modeBDelayTargetMs,d297,dModeBInject\r\n");
+        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,nagMode,smartProfile,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,f297,apState,modeBPhase,steerDeg,realTorqueNm,modeBInject,modeBLastNm,age880Ms,ageDasMs,age297Ms,ageEchoMs,modeBStateAgeMs,modeBPhaseAgeMs,modeBFirstEchoDelayMs,modeBDelayTargetMs,d297,dModeBInject\r\n");
     {
         size_t start = (tsN < TS_CAP) ? 0 : tsSnapHead;
         if (tsN == 0) {
@@ -1610,13 +1682,13 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                 TsSample s;
                 timeseriesCopyAt(start + i, s);
                 formatLogTimestamp(s.t_ms, tsBuf, sizeof(tsBuf));
-                snprintf(line, sizeof(line), "%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%.1f,%.2f,%u,%.2f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+                snprintf(line, sizeof(line), "%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%.1f,%.2f,%u,%.2f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
                     tsBuf, (unsigned)s.t_ms,
                     (unsigned)s.busoff, (unsigned)s.tec, (unsigned)s.rec,
                     (unsigned)s.arbLost, (unsigned)s.busErr, (unsigned)s.txFail,
                     (unsigned)s.echoCnt, (unsigned)s.f880, (unsigned)s.f921, (unsigned)s.f923,
                     (unsigned)s.handsOn, (unsigned)s.dasState,
-                    (unsigned)s.nagMode, (unsigned)s.dasSourceId,
+                    (unsigned)s.nagMode, (unsigned)s.smartProfile, (unsigned)s.dasSourceId,
                     (unsigned)s.echoDrop, (unsigned)s.skipRuntime,
                     (unsigned)s.skipAp, (unsigned)s.skipHandsOn, (unsigned)s.skipDas,
                     (unsigned)s.noDasEcho, (unsigned)s.userMark,
@@ -1642,7 +1714,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
     httpd_resp_sendstr_chunk(req, "\r\n=== [5] 밀리초 이벤트 로그 ===\r\n");
     httpd_resp_sendstr_chunk(req,
         "# type: 0=BUSOFF 1=REC_OK 2=REC_FAIL 3=REC_SOFT 4=ERR_PASS 5=ARB_LOST 6=BUS_ERR 7=TX_FAIL 8=RX_FULL 9=TX_BACKOFF 10=USER_MARK 11=NAG_MODE 12=MODEB_STATE 13=MODEB_PHASE 14=MODEB_FIRST_ECHO\r\n");
-    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING | NAG_MODE detail: 0=A 1=B | MODEB_STATE detail: ap<<16|oldHo<<8|newHo | MODEB_PHASE detail: phase<<24|ap<<16|ho<<8|decision | FIRST_ECHO detail: delay_ms\r\n");
+    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING | NAG_MODE detail: smartProfile 0=default 1=A 2=B | MODEB_STATE detail: ap<<16|oldHo<<8|newHo | MODEB_PHASE detail: phase<<24|ap<<16|ho<<8|decision | FIRST_ECHO detail: delay_ms\r\n");
     httpd_resp_sendstr_chunk(req, "wall_time,timestamp_ms,type,typeName,tec,rec,detail\r\n");
     {
         size_t evtN = 0;
@@ -2265,9 +2337,12 @@ static void timeseriesMetaWrite(httpd_req_t* req) {
     bool soft = gWebDriverB ? gWebDriverB->getSoftRecovery() : false;
     bool boSk = gWebDriverB ? gWebDriverB->getBusOffStopSkip() : false;
     uint32_t cool = gWebDriverB ? gWebDriverB->getCooldownMs() : 0;
+    const NagSmartProfileSettings &profile = nagSmartProfileSettings((uint8_t)bChannelDiag.smartProfile);
     snprintf(line, sizeof(line),
-        "# nag_killer=%s  ss_tx=%s  busoff_mode=%s  busoff_stop_skip=%s  cooldown_ms=%u\n",
+        "# nag_killer=%s  smart_profile=%u(%s)  ss_tx=%s  busoff_mode=%s  busoff_stop_skip=%s  cooldown_ms=%u\n",
         (bool)nagKillerRuntime ? "ON" : "OFF",
+        (unsigned)profile.id,
+        profile.label,
         ssTx ? "ON" : "OFF",
         soft ? "soft" : "hard",
         boSk ? "ON" : "OFF",
@@ -2360,7 +2435,7 @@ static void webServerInit(TWAIDriver* drv = nullptr)
         tsllcRuntime = nvsReadBool(kNvsKeyTsllc, kTsllcDefaultEnabled);
         loadAExperimentSettings();
         nvsReadStr(kNvsKeyTheme, themeRuntime, sizeof(themeRuntime), "dark");
-        nagCfgLoad();  // NagConfig (mode, targetId, torque table, hoRatePct) NVS 복원
+        nagCfgLoad();  // NagConfig (smartProfile, targetId, compatibility fields) NVS 복원
 
         // BUS-OFF 쿨다운 NVS 복원
         {
@@ -2426,7 +2501,7 @@ static void webServerInit(TWAIDriver* drv = nullptr)
     // HTTP server on Core 0
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.core_id = 0;
-    config.max_uri_handlers = 56;
+    config.max_uri_handlers = 57;
     config.lru_purge_enable = true;
     config.stack_size = 16384;
 
@@ -2484,6 +2559,8 @@ static void webServerInit(TWAIDriver* drv = nullptr)
         .uri = "/api/nag-stats", .method = HTTP_GET, .handler = nagStatsGetHandler, .user_ctx = NULL};
     httpd_uri_t uriNagMode = {
         .uri = "/api/nag-mode", .method = HTTP_POST, .handler = nagModeHandler, .user_ctx = NULL};
+    httpd_uri_t uriNagProfile = {
+        .uri = "/api/nag-profile", .method = HTTP_POST, .handler = nagProfileHandler, .user_ctx = NULL};
     httpd_uri_t uriNagUpdate = {
         .uri = "/api/nag-update", .method = HTTP_POST, .handler = nagUpdateHandler, .user_ctx = NULL};
     httpd_uri_t uriNagReset = {
@@ -2549,6 +2626,7 @@ static void webServerInit(TWAIDriver* drv = nullptr)
     httpd_register_uri_handler(webServer, &uriNagConfigGet);
     httpd_register_uri_handler(webServer, &uriNagStatsGet);
     httpd_register_uri_handler(webServer, &uriNagMode);
+    httpd_register_uri_handler(webServer, &uriNagProfile);
     httpd_register_uri_handler(webServer, &uriNagUpdate);
     httpd_register_uri_handler(webServer, &uriNagReset);
     httpd_register_uri_handler(webServer, &uriCanDiagStart);
