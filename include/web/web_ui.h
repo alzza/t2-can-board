@@ -377,7 +377,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   <h1>TeslaCAN <span id="hw-badge" style="display:none"></span><span id="ver-badge" style="display:none"></span></h1>
   <div style="display:flex;gap:8px;align-items:center">
     <a id="log-save-btn" href="/api/logs-bundle" download="canmod_logs.txt"
-       style="padding:6px 14px;border-radius:20px;border:none;background:#c0392b;color:#fff;font-size:.78em;font-weight:700;cursor:pointer;text-decoration:none;font-family:inherit;white-space:nowrap">&#128190; 로그 저장</a>
+       style="padding:6px 14px;border-radius:20px;border:none;background:#c0392b;color:#fff;font-size:.78em;font-weight:700;cursor:pointer;text-decoration:none;font-family:inherit;white-space:nowrap">&#128190; 전체 저장</a>
     <button id="theme-btn" onclick="toggleTheme()">&#9728; Light</button>
   </div>
 </div>
