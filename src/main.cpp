@@ -32,8 +32,8 @@
  *  │           ├─ RX 제한: iter당 최대 30프레임 처리로 WDT 보호               │
  *  │           ├─ SW 필터: 880(EPAS) · 921/923(DAS) · 297(SCCM)               │
  *  │           ├─ NagHandler                                                  │
- *  │           │   ├─ Mode A (Stealth PRNG): DAS/AP gate 기반 echo            │
- *  │           │   ├─ Mode B (Smart FSM): AP/phase/torque/angle 기반 echo     │
+ *  │           │   ├─ Smart Torque: AP/phase/torque/angle 기반 echo           │
+ *  │           │   ├─ Profiles: 기본 / A안 / B안                              │
  *  │           │   └─ checksum: (sum + 0x73) & 0xFF                           │
  *  │           ├─ BUS-OFF 복구: soft(twai_initiate_recovery) → hard fallback  │
  *  │           └─ TEC ≥ 96 조기 경고 / BUS-OFF 이벤트 로그 push               │
@@ -55,8 +55,8 @@
  *  │   └─ Web Dashboard (single-file SPA, web_ui.h / web_server.h)            │
  *  │       ├─ GET  /                     → 대시보드 HTML                      │
  *  │       ├─ GET  /api/status           → 통합 상태 JSON (3s polling)        │
- *  │       ├─ GET  /api/nag-stats        → B채널 Mode A/B 진단 JSON           │
- *  │       ├─ POST /api/nag-mode|update|reset → NagConfig 변경                │
+ *  │       ├─ GET  /api/nag-stats        → B채널 Smart Torque 진단 JSON       │
+ *  │       ├─ POST /api/nag-profile|update|reset → NagConfig 변경             │
  *  │       ├─ POST /api/enhanced-autopilot | /api/tsllc | /api/nag-killer     │
  *  │       ├─ POST /api/busoff-mode|cooldown | /api/twai-ss-tx                │
  *  │       ├─ GET  /api/busoff-log[-dl]  DELETE /api/busoff-log               │
@@ -81,7 +81,7 @@
  * ═══════════════════════════════════════════════════════════════════════════
  *  isa_speed_chime  emerg_veh_det  enh_autopilot  nag_killer  tsllc
  *  a_ch_tx          a_spi_mhz      a_oneshot       a_tx_guard
- *  nag_mode         nag_id         nag_tc          nag_tb2    nag_tb3  nag_ho
+ *  nag_mode         nag_prof       nag_id          nag_tc     nag_tb2  nag_tb3  nag_ho
  *  busoff_cooldown  busoff_soft_mode   theme   ota_pending  ota_fallback
  *  nvs_init_ok  (최초 부팅 감지 플래그 — 존재하면 초기화 이미 완료)
  *
@@ -318,7 +318,7 @@ void nagKillerTask(void* pvParameters) {
                 (driverB && !driverB->isDriverOK()) ? "NO_DRIVER" : "INIT";
             char bBuf[220];
             snprintf(bBuf, sizeof(bBuf),
-                "🔵 [B-CH] RX:%u|Filt:%u|Echo:%u|TxFail:%u|TEC:%u/REC:%u|880:%u|921:%u|923:%u|297:%u|DAS:%u@%u|Mode:%c|TWAI:%s",
+                "🔵 [B-CH] RX:%u|Filt:%u|Echo:%u|TxFail:%u|TEC:%u/REC:%u|880:%u|921:%u|923:%u|297:%u|DAS:%u@%u|Profile:%s|TWAI:%s",
                 (unsigned)bChannelDiag.framesReceivedTotal,
                 (unsigned)bChannelDiag.framesFilteredInTotal,
                 (unsigned)bChannelDiag.echoCount,
@@ -331,7 +331,7 @@ void nagKillerTask(void* pvParameters) {
                 (unsigned)bChannelDiag.frames297,
                 (unsigned)bChannelDiag.dasHandsOnStateRx,
                 (unsigned)bChannelDiag.dasStatusSourceId,
-                ((uint8_t)bChannelDiag.nagMode == kNagModeB) ? 'B' : 'A',
+                nagSmartProfileSettings((uint8_t)bChannelDiag.smartProfile).label,
                 twaiStr);
             logRing.push(bBuf, millis());
             Serial.println(bBuf);
@@ -365,14 +365,14 @@ void nagKillerTask(void* pvParameters) {
             // Verdict는 5초 구간 요약이다. Last는 아래 B-GATE에서 마지막 실제 핸들러 분기로 따로 남긴다.
             char bNag[260];
             snprintf(bNag, sizeof(bNag),
-                "🥷 [B-NAG] 5s 880:+%u 921:+%u 923:+%u 297:+%u Echo:+%u Drop:+%u | Mode=%c AP=%u Phase=%u HO=%u DAS=0x%02X@%u Verdict=%s",
+                "🥷 [B-NAG] 5s 880:+%u 921:+%u 923:+%u 297:+%u Echo:+%u Drop:+%u | Profile=%s AP=%u Phase=%u HO=%u DAS=0x%02X@%u Verdict=%s",
                 (unsigned)d880,
                 (unsigned)d921,
                 (unsigned)d923,
                 (unsigned)d297,
                 (unsigned)dEcho,
                 (unsigned)dDrop,
-                ((uint8_t)bChannelDiag.nagMode == kNagModeB) ? 'B' : 'A',
+                nagSmartProfileSettings((uint8_t)bChannelDiag.smartProfile).label,
                 (unsigned)(uint8_t)bChannelDiag.dasAutopilotStateRx,
                 (unsigned)(uint8_t)bChannelDiag.modeBPhase,
                 (unsigned)(uint8_t)bChannelDiag.realHo,

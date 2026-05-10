@@ -218,7 +218,8 @@ struct BChannelDiagnostics {
     Shared<uint32_t> nagFiredNoDas{0};           // DAS_status 미수신 상태에서 에코 발사 누적
     Shared<uint32_t> echoDroppedLate{0};         // 수신→에코 6ms 초과로 드롭된 에코 수 (ECU TX 충돌 방지)
     // ── Mode B (스마트 상태머신) 진단 필드 ──────────────────────────────────
-    Shared<uint8_t>  nagMode{0};                     // 현재 활성 모드 (0=A 스텔스 / 1=B 스마트)
+    Shared<uint8_t>  nagMode{1};                     // 호환용 모드 값 (현재는 스마트 토크 고정)
+    Shared<uint8_t>  smartProfile{0};                // 스마트 토크 실험 프로파일 (0=기본, 1=A안, 2=B안)
     Shared<uint8_t>  dasAutopilotStateRx{0};         // DAS_status DAS_autopilotState (0|4@1+)
     Shared<float>    steeringAngleDeg{0.0f};         // ID 297 SCCM_steeringAngle (deg)
     Shared<uint32_t> frames297{0};                   // ID 297 수신 프레임 수
@@ -406,7 +407,7 @@ inline void setBit(CanFrame &frame, int bit, bool value)
 
 // ===================================================================
 // [B채널] Nag Killer 런타임 설정 구조체
-// 현재 실차 기준은 Mode A / ID 880 고정이다. 일부 필드는 NVS/API 호환용으로 유지한다.
+// 현재 실차 기준은 스마트 토크 / ID 880 고정이다. 일부 필드는 NVS/API 호환용으로 유지한다.
 // ===================================================================
 
 // 토크 하드 캡 (펌웨어에서 강제, 대시보드에서 초과 불가)
@@ -416,28 +417,107 @@ inline constexpr uint16_t kNagTorqueRawMax = 0x8B6;
 inline constexpr uint16_t kNagTorqueRawMin = 0x74E;
 inline constexpr uint8_t  kNagMaxTorqueEntries = 8;
 
-// 0=A(스텔스 PRNG, 기본) / 1=B(스마트 상태머신: DAS AP state 게이팅 + 조향각 방향 토크)
-inline constexpr uint8_t kNagModeA      = 0;
+// legacy NVS/API mode 값은 읽지 않고 스마트 상태머신 값만 기록한다.
 inline constexpr uint8_t kNagModeB      = 1;
 
+inline constexpr uint8_t kNagSmartProfileDefault = 0;
+inline constexpr uint8_t kNagSmartProfileA       = 1;
+inline constexpr uint8_t kNagSmartProfileB       = 2;
+
+struct NagSmartProfileSettings {
+    uint8_t id;
+    const char *label;
+    const char *summary;
+    uint16_t state1GraceMs;
+    uint16_t state2DelayMs;
+    uint16_t strongDelayMs;
+    uint16_t strongRampMs;
+    uint16_t state2BurstMs;
+    uint16_t state2PauseMs;
+    uint16_t strongBurstMs;
+    uint16_t strongPauseMs;
+};
+
+// 2026-05-09 실차 로그 canmod_20260509_165201 기준 1차 조정.
+// AP=3 허용 구간 첫 echo가 2000/1000ms로 늦어 state2/strong 지연만 줄이고 AP gate는 유지한다.
 inline constexpr uint16_t kNagModeBState1GraceMs = 500;
-inline constexpr uint16_t kNagModeBState2DelayMs = 2000;
-inline constexpr uint16_t kNagModeBStrongDelayMs = 1000;
+inline constexpr uint16_t kNagModeBState2DelayMs = 700;
+inline constexpr uint16_t kNagModeBStrongDelayMs = 400;
 inline constexpr uint16_t kNagModeBStrongRampMs = 500;
+
+inline constexpr NagSmartProfileSettings kNagSmartProfileDefaultSettings = {
+    kNagSmartProfileDefault,
+    "기본",
+    "현재 검증 기준. 700/400ms 타이밍을 유지하고 조건이 맞는 동안 연속 관찰 주입.",
+    kNagModeBState1GraceMs,
+    kNagModeBState2DelayMs,
+    kNagModeBStrongDelayMs,
+    kNagModeBStrongRampMs,
+    0,
+    0,
+    0,
+    0,
+};
+
+inline constexpr NagSmartProfileSettings kNagSmartProfileASettings = {
+    kNagSmartProfileA,
+    "A안",
+    "초기 grace를 줄이고 짧은 burst 후 쉬는 구간을 둔다.",
+    150,
+    kNagModeBState2DelayMs,
+    kNagModeBStrongDelayMs,
+    kNagModeBStrongRampMs,
+    250,
+    750,
+    500,
+    1000,
+};
+
+inline constexpr NagSmartProfileSettings kNagSmartProfileBSettings = {
+    kNagSmartProfileB,
+    "B안",
+    "가장 보수적. state1 주입을 없애고 더 짧게 반응한 뒤 길게 관찰한다.",
+    0,
+    900,
+    600,
+    kNagModeBStrongRampMs,
+    150,
+    1350,
+    300,
+    1700,
+};
+
+inline uint8_t nagSmartProfileClamp(uint8_t profile) {
+    return (profile <= kNagSmartProfileB) ? profile : kNagSmartProfileDefault;
+}
+
+inline const NagSmartProfileSettings& nagSmartProfileSettings(uint8_t profile) {
+    switch (nagSmartProfileClamp(profile)) {
+    case kNagSmartProfileA: return kNagSmartProfileASettings;
+    case kNagSmartProfileB: return kNagSmartProfileBSettings;
+    default: return kNagSmartProfileDefaultSettings;
+    }
+}
+
 struct NagConfig {
-    uint8_t  mode;                              // 현재 항상 kNagModeA
+    uint8_t  mode;                              // 호환용: 현재 항상 kNagModeB
+    uint8_t  smartProfile;                      // 스마트 토크 실험 프로파일
     uint16_t targetId;                          // 현재 항상 kNagFixedTargetId(880)
-    uint8_t  torqueCount;                       // 호환용: Mode A에서는 PRNG가 토크를 관리
+    uint8_t  torqueCount;                       // 호환용
     uint8_t  torqueB2[kNagMaxTorqueEntries];    // 호환용
     uint8_t  torqueB3[kNagMaxTorqueEntries];    // 호환용
     uint8_t  hoRatePct;                         // 호환용
 };
 
-// Mode A 기본값: ID 880, 토크 테이블은 스텔스 PRNG가 관리하므로 1개만 정의
-inline void nagCfgDefaultsA(NagConfig &c) {
-    c.mode         = kNagModeA;
+inline void nagCfgDefaultsSmart(NagConfig &c) {
+    c.mode         = kNagModeB;
+    c.smartProfile = kNagSmartProfileDefault;
     c.targetId     = kNagFixedTargetId;
     c.torqueCount  = 1;
+    for (uint8_t i = 0; i < kNagMaxTorqueEntries; ++i) {
+        c.torqueB2[i] = 0;
+        c.torqueB3[i] = 0;
+    }
     c.torqueB2[0]  = 0x08;  // +1.80 Nm
     c.torqueB3[0]  = 0xB6;
     c.hoRatePct    = 100;
@@ -453,6 +533,8 @@ inline void nagCfgClampTorque(uint8_t &b2, uint8_t &b3) {
 }
 
 inline void nagCfgClampAll(NagConfig &c) {
+    c.mode = kNagModeB;
+    c.smartProfile = nagSmartProfileClamp(c.smartProfile);
     if (c.torqueCount < 1) c.torqueCount = 1;
     if (c.torqueCount > kNagMaxTorqueEntries) c.torqueCount = kNagMaxTorqueEntries;
     if (c.hoRatePct > 100) c.hoRatePct = 100;

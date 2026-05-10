@@ -136,7 +136,7 @@ struct HW3Handler : public CarManagerBase
  
 
 // ===================================================================
-// [B채널] NagHandler (유기적 스텔스 나그 킬러)
+// [B채널] NagHandler (스마트 토크 나그 킬러)
 // ===================================================================
 
 struct NagHandler : public CarManagerBase
@@ -146,11 +146,7 @@ struct NagHandler : public CarManagerBase
     Shared<uint8_t> dasHandsOnState{0xFF};
 
     uint32_t _prngState = 0xDEADBEEF;
-    int16_t _torqWalk = 2230;
-    uint8_t _excFrames = 0;
-    uint16_t _framesUntilExc = 175;
-
-    // ── Mode B 상태머신 변수 ────────────────────────────────────────────────
+    // ── 스마트 토크 상태머신 변수 ────────────────────────────────────────────
     uint8_t  _mbApState    = 0;       // DAS_autopilotState (ID 921/923 data[0]&0x0F)
     float    _mbAngleDeg   = 0.0f;    // SCCM_steeringAngle (ID 297)
     uint8_t  _mbPrevHoSt   = 0xFF;    // 직전 HandsOnState (전이 감지용)
@@ -159,22 +155,21 @@ struct NagHandler : public CarManagerBase
     uint32_t _mbState1HoldTorq = 2048;
     uint8_t  _mbState1HoldHo   = 0;
 
-    uint32_t _mbState2EnterMs  = 0;   // 상태2 진입 시각 (2s 딜레이)
+    uint32_t _mbState2EnterMs  = 0;   // 상태2 진입 시각 (700ms 딜레이)
     int16_t  _mbMildWalkRaw    = 2098;// 상태2 random-walk 현재값
     uint32_t _mbS2HoldUntilMs  = 0;
     uint32_t _mbS2HoldTorqRaw  = 2048;
     uint8_t  _mbS2HoldHo       = 0;
     bool     _mbS2L2WasActive  = false;
 
-    uint32_t _mbStrongEnterMs  = 0;   // 상태3-5 진입 시각 (1s 딜레이)
+    uint32_t _mbStrongEnterMs  = 0;   // 상태3-5 진입 시각 (400ms 딜레이)
     uint32_t _mbStrongActiveMs = 0;   // 강 토크 패턴 시작 시각 (ramp)
 
     uint32_t _mbLastGeneratedTorqRaw = 2048;
     uint8_t  _mbLastSpoofedHo        = 0;
 
     const uint32_t *filterIds() const override {
-        // Mode B는 297(SCCM_steeringAngle)도 필요. 923은 921 대체가 아니라 DAS_status 후보다.
-        // Mode A에서 921/923/297은 handleMessage 내 조기 반환으로 처리된다.
+        // 스마트 토크는 297(SCCM_steeringAngle)도 필요. 923은 921 대체가 아니라 DAS_status 후보다.
         static constexpr uint32_t ids[] = {880, 921, 923, 297};
         return ids;
     }
@@ -186,6 +181,13 @@ struct NagHandler : public CarManagerBase
 
     static uint16_t _mbClampU16(uint32_t v) {
         return v > 65535UL ? 65535U : static_cast<uint16_t>(v);
+    }
+
+    static bool _mbBurstWindowOpen(uint32_t activeMs, uint16_t burstMs, uint16_t pauseMs) {
+        if (burstMs == 0 || pauseMs == 0) return true;
+        uint32_t cycleMs = static_cast<uint32_t>(burstMs) + static_cast<uint32_t>(pauseMs);
+        if (cycleMs == 0) return true;
+        return (activeMs % cycleMs) < burstMs;
     }
 
     static uint32_t _mbPackStateDetail(uint8_t apState, uint8_t oldHoState, uint8_t newHoState) {
@@ -253,8 +255,8 @@ struct NagHandler : public CarManagerBase
         }
     }
 
-    // Mode B 메인 로직: 880 프레임 처리
-    void _handleModeB(const CanFrame &frame, CanDriver &driver) {
+    // 스마트 토크 메인 로직: 880 프레임 처리
+    void _handleModeB(const CanFrame &frame, CanDriver &driver, const NagSmartProfileSettings &profile) {
         uint32_t nowMs = millis();
 
         // 전역 허용 조건: AP state 3-6 + HandsOnState 활성
@@ -315,9 +317,9 @@ struct NagHandler : public CarManagerBase
         uint16_t torqRaw = 2048;
         uint8_t  hoLevel = 0;
 
-        // ── 상태1: idle (500ms grace만) ───────────────────────────────────
+        // ── 상태1: idle (profile grace만) ─────────────────────────────────
         if (hoSt == 1) {
-            if (_mbState1EnterMs != 0 && (nowMs - _mbState1EnterMs) < kNagModeBState1GraceMs) {
+            if (profile.state1GraceMs > 0 && _mbState1EnterMs != 0 && (nowMs - _mbState1EnterMs) < profile.state1GraceMs) {
                 torqRaw = static_cast<uint16_t>(_mbState1HoldTorq);
                 hoLevel = _mbState1HoldHo;
                 _mbSetPhase(1, nowMs, kNagDecisionEcho);
@@ -332,8 +334,14 @@ struct NagHandler : public CarManagerBase
         }
         // ── 상태2: mild random-walk ──────────────────────────────────────
         else if (hoSt == 2) {
-            // 2초 딜레이
-            if (_mbState2EnterMs != 0 && (nowMs - _mbState2EnterMs) < kNagModeBState2DelayMs) {
+            uint32_t state2ElapsedMs = (_mbState2EnterMs != 0) ? (nowMs - _mbState2EnterMs) : 0;
+            if (_mbState2EnterMs != 0 && state2ElapsedMs < profile.state2DelayMs) {
+                _mbSetPhase(2, nowMs, kNagDecisionNoEcho);
+                bChannelDiag.nagLastDecision = kNagDecisionNoEcho;
+                return;
+            }
+            uint32_t state2ActiveMs = (state2ElapsedMs > profile.state2DelayMs) ? (state2ElapsedMs - profile.state2DelayMs) : 0;
+            if (!_mbBurstWindowOpen(state2ActiveMs, profile.state2BurstMs, profile.state2PauseMs)) {
                 _mbSetPhase(2, nowMs, kNagDecisionNoEcho);
                 bChannelDiag.nagLastDecision = kNagDecisionNoEcho;
                 return;
@@ -368,20 +376,25 @@ struct NagHandler : public CarManagerBase
         }
         // ── 상태3-5: 강 ramp-and-hold ────────────────────────────────────
         else if (_mbIsStrongState(hoSt)) {
-            // 1초 초기 대기
-            if (_mbStrongEnterMs != 0 && (nowMs - _mbStrongEnterMs) < kNagModeBStrongDelayMs) {
+            uint32_t strongElapsedMs = (_mbStrongEnterMs != 0) ? (nowMs - _mbStrongEnterMs) : 0;
+            if (_mbStrongEnterMs != 0 && strongElapsedMs < profile.strongDelayMs) {
                 _mbSetPhase(4, nowMs, kNagDecisionNoEcho);
                 bChannelDiag.nagLastDecision = kNagDecisionNoEcho;
                 return;
             }
             if (_mbStrongActiveMs == 0) _mbStrongActiveMs = nowMs;
             uint32_t activeMs = nowMs - _mbStrongActiveMs;
+            if (!_mbBurstWindowOpen(activeMs, profile.strongBurstMs, profile.strongPauseMs)) {
+                _mbSetPhase(4, nowMs, kNagDecisionNoEcho);
+                bChannelDiag.nagLastDecision = kNagDecisionNoEcho;
+                return;
+            }
             uint32_t phase = activeMs % 1500UL;
             // 0-500ms: ramp 0→2.1Nm, 500-1500ms: hold 2.1Nm
             uint16_t magnitude; // raw delta from center
             uint8_t strongPhase = 5;
-            if (phase < kNagModeBStrongRampMs) {
-                magnitude = static_cast<uint16_t>(210UL * phase / kNagModeBStrongRampMs);  // 0→210 (=2.10Nm)
+            if (profile.strongRampMs > 0 && phase < profile.strongRampMs) {
+                magnitude = static_cast<uint16_t>(210UL * phase / profile.strongRampMs);  // 0→210 (=2.10Nm)
             } else {
                 magnitude = 210;
                 strongPhase = 6;
@@ -409,9 +422,9 @@ struct NagHandler : public CarManagerBase
 
         static uint32_t lastMBLog = 0;
         if (millis() - lastMBLog > 3000) {
-            char buf[96];
-            snprintf(buf, sizeof(buf), "🎯 [B-CH] Mode B 주입 hoSt=%u torq=%u ho=%u ap=%u",
-                     hoSt, torqRaw, hoLevel, _mbApState);
+            char buf[128];
+            snprintf(buf, sizeof(buf), "🎯 [B-CH] Smart %s 주입 hoSt=%u torq=%u ho=%u ap=%u",
+                     profile.label, hoSt, torqRaw, hoLevel, _mbApState);
             logRing.push(buf, millis());
             lastMBLog = millis();
         }
@@ -419,7 +432,7 @@ struct NagHandler : public CarManagerBase
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
-        // ── ID 297 SCCM_steeringAngleSensor: 조향각 갱신 (Mode B용) ─────────
+        // ── ID 297 SCCM_steeringAngleSensor: 조향각 갱신 ───────────────────
         if (frame.id == 297) {
             if (frame.dlc >= 4) {
                 // SCCM_steeringAngle: 16|14@1+ (0.1,-819.2) Little-Endian
@@ -465,86 +478,18 @@ struct NagHandler : public CarManagerBase
             return;
         }
 
-        // 현재 모드 스냅샷 (portMUX 아래서 읽기)
-        uint8_t currentMode;
+        // 현재 스마트 프로파일 스냅샷 (portMUX 아래서 읽기)
+        uint8_t currentProfile;
 #ifndef NATIVE_BUILD
         portENTER_CRITICAL(&nagCfgMux);
-        currentMode = nagConfig.mode;
+        currentProfile = nagConfig.smartProfile;
         portEXIT_CRITICAL(&nagCfgMux);
 #else
-        currentMode = nagConfig.mode;
+        currentProfile = nagConfig.smartProfile;
 #endif
-        bChannelDiag.nagMode = currentMode;
-
-        if (currentMode == kNagModeB) {
-            _handleModeB(frame, driver);
-            return;
-        }
-
-        // ── Mode A: 기존 스텔스 PRNG ────────────────────────────────────────
-        if (handsOn != 0) {
-            bChannelDiag.skipHandsOn++;
-            bChannelDiag.nagLastDecision = kNagDecisionHandsOn;
-            return;
-        }
-
-        uint8_t dasState = dasHandsOnState;
-        if (dasState == 0xFF) {
-            bChannelDiag.nagLastDecision = kNagDecisionNo921;
-            return;
-        }
-        if (!nagDasStateRequiresEcho(dasState)) {
-            bChannelDiag.skipDasState++;
-            bChannelDiag.nagLastDecision = kNagDecisionDasIdle;
-            return;
-        }
-
-        uint32_t r = _prngState;
-        r ^= r << 13; r ^= r >> 17; r ^= r << 5;
-        _prngState = r;
-
-        if (_excFrames > 0) {
-            _torqWalk = static_cast<int16_t>(2350 + static_cast<int16_t>(r % 41) - 20);
-            _excFrames--;
-        } else {
-            _torqWalk += static_cast<int16_t>(r % 31) - 15;
-            if (_torqWalk < 2150) _torqWalk = 2150;
-            if (_torqWalk > 2290) _torqWalk = 2290;
-
-            if (_framesUntilExc == 0) {
-                _excFrames = 3 + static_cast<uint8_t>(r % 3);
-                _framesUntilExc = 125 + static_cast<uint16_t>(r % 101);
-            } else {
-                _framesUntilExc--;
-            }
-        }
-        uint16_t torqRaw = static_cast<uint16_t>(_torqWalk);
-
-        // --- 에코 프레임 생성 및 데이터 변조 ---
-        CanFrame echo = frame;
-        echo.data[2] = (frame.data[2] & 0xF0) | static_cast<uint8_t>(torqRaw >> 8);
-        echo.data[3] = static_cast<uint8_t>(torqRaw & 0xFF);
-        echo.data[4] = frame.data[4] | 0x40;
-        echo.data[5] = frame.data[5];
-        uint8_t cnt = (frame.data[6] & 0x0F);
-        cnt = (cnt + 1) & 0x0F;
-        echo.data[6] = (frame.data[6] & 0xF0) | cnt;
-        uint16_t sum = echo.data[0] + echo.data[1] + echo.data[2] + echo.data[3] +
-                       echo.data[4] + echo.data[5] + echo.data[6];
-        echo.data[7] = static_cast<uint8_t>((sum + 0x73) & 0xFF);
-        driver.send(echo);
-        framesSent++;
-        nagEchoCount++;
-        bChannelDiag.echoCount++;
-        bChannelDiag.lastEchoTxMs = millis();
-        bChannelDiag.nagLastDecision = kNagDecisionEcho;
-
-        static unsigned long lastBAction = 0;
-        if (millis() - lastBAction > 3000) {
-            char buf[80];
-            snprintf(buf, sizeof(buf), "🔥 [B-CH] 나그 방어 발사 (토크=%d)", torqRaw);
-            logRing.push(buf, millis());
-            lastBAction = millis();
-        }
+        currentProfile = nagSmartProfileClamp(currentProfile);
+        bChannelDiag.nagMode = kNagModeB;
+        bChannelDiag.smartProfile = currentProfile;
+        _handleModeB(frame, driver, nagSmartProfileSettings(currentProfile));
     }
 };

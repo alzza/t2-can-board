@@ -25,9 +25,9 @@ static void canDiagTaskFn(void* /*pv*/) {
     char buf[128];
     bool ok = true;
 
-    // 4/10 정상 기준: Mode A / ID 880 고정
+    // 정상 기준: 스마트 토크 / ID 880 고정
     uint16_t targetId = kNagFixedTargetId;
-    uint8_t  nagMode  = kNagModeA;
+    uint8_t  smartProfile = nagSmartProfileClamp((uint8_t)bChannelDiag.smartProfile);
 
     auto L = [](const char* m) { diagLog.push(m, millis()); };
 
@@ -56,7 +56,7 @@ static void canDiagTaskFn(void* /*pv*/) {
         L("  \u26a0\ufe0f \uc8fc\uc758: Nag Killer \uae30\ub2a5\uc774 \ud604\uc7ac OFF \uc0c1\ud0dc\uc785\ub2c8\ub2e4. "
           "(\uc774\ud6c4 [4/6] \ub2e8\uacc4\uc5d0\uc11c \uc5d0\ucf54\uac00 \ubc1c\uc0dd\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4)");
     }
-    snprintf(buf, sizeof(buf), "  Mode:%u | \ub300\uc0c1ID: 0x%03X", nagMode, targetId);
+    snprintf(buf, sizeof(buf), "  SmartProfile:%u | \ub300\uc0c1ID: 0x%03X", smartProfile, targetId);
     L(buf);
     vTaskDelay(pdMS_TO_TICKS(200));
 

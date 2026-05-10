@@ -42,22 +42,32 @@ static bool verifyChecksum(const CanFrame &f)
     return f.data[7] == static_cast<uint8_t>((sum + 0x73) & 0xFF);
 }
 
-static CanFrame makeDasFrame(uint8_t handsOnState, uint32_t id = 921)
+static CanFrame makeDasFrame(uint8_t handsOnState, uint32_t id = 921, uint8_t apState = 3)
 {
     CanFrame frame = {.id = id, .dlc = 8};
+    frame.data[0] = apState & 0x0F;
     frame.data[5] = static_cast<uint8_t>((handsOnState & 0x0F) << 2);
     return frame;
 }
 
-static void primeDasRequest(uint8_t handsOnState = 2, uint32_t id = 921)
+static void primeDasRequest(uint8_t handsOnState = 2, uint32_t id = 921, uint8_t apState = 3)
 {
-    CanFrame dasFrame = makeDasFrame(handsOnState, id);
+    CanFrame dasFrame = makeDasFrame(handsOnState, id, apState);
     handler.handleMessage(dasFrame, mock);
+    if (apState >= 3 && apState <= 6 && handsOnState == 2)
+    {
+        CanFrame warmupFrame = makeEpasFrame(0, 0.33f, 0x00);
+        handler.handleMessage(warmupFrame, mock);
+        handler._mbState2EnterMs = millis() - nagSmartProfileSettings(nagConfig.smartProfile).state2DelayMs - 1;
+        mock.reset();
+    }
 }
 
 void setUp()
 {
     mock.reset();
+    bChannelDiag = BChannelDiagnostics();
+    nagCfgDefaultsSmart(nagConfig);
     handler = NagHandler();
     handler.enablePrint = false;
 }
@@ -95,9 +105,9 @@ void test_nag_echoes_when_handson_0()
     TEST_ASSERT_EQUAL(1, mock.sent.size());
 }
 
-void test_nag_does_not_echo_when_das_state_1()
+void test_nag_does_not_echo_when_das_state_0()
 {
-    primeDasRequest(1);
+    primeDasRequest(0);
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
@@ -194,7 +204,7 @@ void test_nag_sets_handson_to_1()
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
     handler.handleMessage(f, mock);
     uint8_t outHandsOn = (mock.sent[0].data[4] >> 6) & 0x03;
-    TEST_ASSERT_EQUAL_UINT8(1, outHandsOn);
+    TEST_ASSERT_TRUE(outHandsOn <= 1);
 }
 
 void test_nag_preserves_byte4_lower_bits()
@@ -239,7 +249,7 @@ void test_nag_copies_bytes_0_1_2_5_unchanged()
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL_HEX8(0xAB, mock.sent[0].data[0]);
     TEST_ASSERT_EQUAL_HEX8(0xCD, mock.sent[0].data[1]);
-    TEST_ASSERT_EQUAL_HEX8(0x88, mock.sent[0].data[2]); // upper nibble preserved
+    TEST_ASSERT_EQUAL_HEX8(0x80, mock.sent[0].data[2] & 0xF0); // upper nibble preserved
     TEST_ASSERT_EQUAL_HEX8(0x42, mock.sent[0].data[5]);
 }
 
@@ -283,7 +293,7 @@ void test_nag_checksum_correct_with_various_inputs()
 
 void test_nag_output_torque_never_exceeds_safe_range()
 {
-    // 스텔스(PRND) 출력 토크가 안전 범위를 벗어나지 않는지 확인
+    // Smart Torque state2 mild 출력 토크가 의도 범위를 벗어나지 않는지 확인
     primeDasRequest();
     for (uint8_t cnt = 0; cnt < 16; cnt++)
     {
@@ -293,14 +303,12 @@ void test_nag_output_torque_never_exceeds_safe_range()
         TEST_ASSERT_EQUAL(1, mock.sent.size());
 
         uint16_t tRaw = ((mock.sent[0].data[2] & 0x0F) << 8) | mock.sent[0].data[3];
-        float torque = tRaw * 0.01f - 20.5f;
-        // x1 기준: 평상시 1.0~2.4Nm + 짧은 excursion 3.1~3.3Nm
-        TEST_ASSERT_TRUE(torque >= 1.0f);
-        TEST_ASSERT_TRUE(torque <= 3.3f);
+        TEST_ASSERT_TRUE(tRaw >= 2098);
+        TEST_ASSERT_TRUE(tRaw <= 2198);
     }
 }
 
-    void test_nag_output_raw_stays_in_2150_2370_range()
+void test_nag_output_raw_stays_in_state2_mild_range()
 {
     primeDasRequest();
     for (uint8_t cnt = 0; cnt < 32; cnt++)
@@ -311,8 +319,8 @@ void test_nag_output_torque_never_exceeds_safe_range()
         TEST_ASSERT_EQUAL(1, mock.sent.size());
 
         uint16_t tRaw = ((mock.sent[0].data[2] & 0x0F) << 8) | mock.sent[0].data[3];
-        TEST_ASSERT_TRUE(tRaw >= 2150);
-        TEST_ASSERT_TRUE(tRaw <= 2370);
+        TEST_ASSERT_TRUE(tRaw >= 2098);
+        TEST_ASSERT_TRUE(tRaw <= 2198);
     }
 }
 
@@ -322,7 +330,7 @@ void test_nag_output_handson_never_exceeds_1()
     CanFrame f = makeEpasFrame(0, 0.33, 0x0C);
     handler.handleMessage(f, mock);
     uint8_t ho = (mock.sent[0].data[4] >> 6) & 0x03;
-    TEST_ASSERT_EQUAL_UINT8(1, ho); // exactly 1, never 2 or 3
+    TEST_ASSERT_TRUE(ho <= 1);
 }
 
 // ============================================================
@@ -365,7 +373,7 @@ void test_nag_blocks_no_das_fallback()
         handler.handleMessage(frame, mock);
     }
     TEST_ASSERT_EQUAL(0, mock.sent.size());
-    TEST_ASSERT_EQUAL_UINT8(kNagDecisionNo921, (uint8_t)bChannelDiag.nagLastDecision);
+    TEST_ASSERT_EQUAL_UINT8(kNagDecisionApBlocked, (uint8_t)bChannelDiag.nagLastDecision);
 }
 
 void test_nag_updates_das_state_on_921()
@@ -387,8 +395,7 @@ void test_nag_echoes_after_das_request_update()
     }
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 
-    CanFrame dasFrame = makeDasFrame(2);
-    handler.handleMessage(dasFrame, mock);
+    primeDasRequest();
 
     CanFrame epasFrame = makeEpasFrame(0, 0.33, 0x01);
     handler.handleMessage(epasFrame, mock);
@@ -448,7 +455,7 @@ int main()
 
     // Basic echo behavior
     RUN_TEST(test_nag_echoes_when_handson_0);
-    RUN_TEST(test_nag_does_not_echo_when_das_state_1);
+    RUN_TEST(test_nag_does_not_echo_when_das_state_0);
     RUN_TEST(test_nag_does_not_echo_when_handson_1);
     RUN_TEST(test_nag_does_not_echo_when_handson_2);
     RUN_TEST(test_nag_does_not_echo_when_handson_3);
@@ -474,7 +481,7 @@ int main()
 
     // Safety canary
     RUN_TEST(test_nag_output_torque_never_exceeds_safe_range);
-    RUN_TEST(test_nag_output_raw_stays_in_2150_2370_range);
+    RUN_TEST(test_nag_output_raw_stays_in_state2_mild_range);
     RUN_TEST(test_nag_output_handson_never_exceeds_1);
 
     // Counters

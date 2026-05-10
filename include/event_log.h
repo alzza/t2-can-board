@@ -25,7 +25,7 @@ enum CanEventType : uint8_t {
     EV_ALERT_RX_FULL  = 8, // RX 큐 오버플로
     EV_TX_BACKOFF     = 9, // TX 백오프 진입
     EV_USER_MARK      = 10, // 사용자가 경고 발생 시점 표시 버튼을 누름
-    EV_NAG_MODE       = 11, // Nag 모드 전환 (detail: 0=A, 1=B)
+    EV_NAG_MODE       = 11, // Smart profile 전환 (detail: 0=기본, 1=A안, 2=B안)
     EV_MODEB_STATE    = 12, // Mode B DAS hands-on state 전이 (detail: ap<<16 | old<<8 | new)
     EV_MODEB_PHASE    = 13, // Mode B phase 전이 (detail: phase<<24 | ap<<16 | ho<<8 | decision)
     EV_MODEB_FIRST_ECHO = 14, // 현재 DAS state 진입 후 첫 echo 지연(ms)
@@ -125,7 +125,7 @@ inline esp_err_t eventLogCsvHandler(httpd_req_t* req) {
     httpd_resp_sendstr_chunk(req, meta);
     httpd_resp_sendstr_chunk(req,
         "# type: 0=BUSOFF 1=REC_OK 2=REC_FAIL 3=REC_SOFT 4=ERR_PASS 5=ARB_LOST 6=BUS_ERR 7=TX_FAIL 8=RX_FULL 9=TX_BACKOFF 10=USER_MARK 11=NAG_MODE 12=MODEB_STATE 13=MODEB_PHASE 14=MODEB_FIRST_ECHO\n");
-    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING | NAG_MODE detail: 0=A 1=B | MODEB_STATE detail: ap<<16|oldHo<<8|newHo | MODEB_PHASE detail: phase<<24|ap<<16|ho<<8|decision | FIRST_ECHO detail: delay_ms\n");
+    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING | NAG_MODE detail: smartProfile 0=default 1=A 2=B | MODEB_STATE detail: ap<<16|oldHo<<8|newHo | MODEB_PHASE detail: phase<<24|ap<<16|ho<<8|decision | FIRST_ECHO detail: delay_ms\n");
     httpd_resp_sendstr_chunk(req, "t_ms,type,typeName,tec,rec,detail\n");
     char line[120];
     size_t start = (n < EVT_CAP) ? 0 : head;

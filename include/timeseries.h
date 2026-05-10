@@ -47,6 +47,7 @@ struct TsSample {
     uint8_t  handsOn;
     uint8_t  dasState;
     uint8_t  nagMode;
+    uint8_t  smartProfile;
     uint16_t dasSourceId;
     uint8_t  lastDecision;
     // intervalDecision은 5초 구간 요약, lastDecision은 마지막 880 처리 분기다.
@@ -125,10 +126,11 @@ inline uint16_t tsElapsed16(uint32_t nowMs, uint32_t startMs) {
     return tsDelta16(nowMs, startMs);
 }
 
-inline uint16_t tsModeBDelayTargetMs(uint8_t phase) {
-    if (phase == 1) return kNagModeBState1GraceMs;
-    if (phase == 2) return kNagModeBState2DelayMs;
-    if (phase == 4) return kNagModeBStrongDelayMs;
+inline uint16_t tsModeBDelayTargetMs(uint8_t phase, uint8_t smartProfile) {
+    const NagSmartProfileSettings &profile = nagSmartProfileSettings(smartProfile);
+    if (phase == 1) return profile.state1GraceMs;
+    if (phase == 2) return profile.state2DelayMs;
+    if (phase == 4) return profile.strongDelayMs;
     return 0;
 }
 
@@ -189,6 +191,7 @@ static void timeseriesTaskFn(void*) {
         s.handsOn  = (uint8_t)bChannelDiag.realHo;
         s.dasState = (uint8_t)bChannelDiag.dasHandsOnStateRx;
         s.nagMode = (uint8_t)bChannelDiag.nagMode;
+        s.smartProfile = nagSmartProfileClamp((uint8_t)bChannelDiag.smartProfile);
         s.dasSourceId = (uint16_t)(uint32_t)bChannelDiag.dasStatusSourceId;
         s.lastDecision = (uint8_t)bChannelDiag.nagLastDecision;
         s.intervalDecision = nagIntervalDecision(s.d880, s.d921 + s.d923, s.dEcho, s.dDrop,
@@ -206,7 +209,7 @@ static void timeseriesTaskFn(void*) {
         s.modeBStateAgeMs = tsElapsed16(s.t_ms, (uint32_t)bChannelDiag.modeBStateEnterMs);
         s.modeBPhaseAgeMs = tsElapsed16(s.t_ms, (uint32_t)bChannelDiag.modeBPhaseEnterMs);
         s.modeBFirstEchoDelayMs = tsDelta16((uint32_t)bChannelDiag.modeBFirstEchoDelayMs, 0);
-        s.modeBDelayTargetMs = tsModeBDelayTargetMs(s.modeBPhase);
+        s.modeBDelayTargetMs = tsModeBDelayTargetMs(s.modeBPhase, s.smartProfile);
         portENTER_CRITICAL(&tsMux);
         tsBuf[tsHead] = s;
         tsPrevEcho = curEcho;
@@ -305,20 +308,20 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
         recording?"ON":"OFF", (unsigned)n);
     httpd_resp_sendstr_chunk(req, meta);
     if (tsMetaWriter) tsMetaWriter(req);  // web_server에서 드라이버 토글 등 주입
-    const char* hdr = "t_s,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,nagMode,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,f297,apState,modeBPhase,steerDeg,realTorqueNm,modeBInject,modeBLastNm,age880Ms,ageDasMs,age297Ms,ageEchoMs,modeBStateAgeMs,modeBPhaseAgeMs,modeBFirstEchoDelayMs,modeBDelayTargetMs,d297,dModeBInject\n";
+    const char* hdr = "t_s,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,nagMode,smartProfile,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,f297,apState,modeBPhase,steerDeg,realTorqueNm,modeBInject,modeBLastNm,age880Ms,ageDasMs,age297Ms,ageEchoMs,modeBStateAgeMs,modeBPhaseAgeMs,modeBFirstEchoDelayMs,modeBDelayTargetMs,d297,dModeBInject\n";
     httpd_resp_sendstr_chunk(req, hdr);
     char line[640];
     size_t start = (n < TS_CAP) ? 0 : head;  // oldest first
     for (size_t i = 0; i < n; ++i) {
         TsSample s;
         timeseriesCopyAt(start + i, s);
-        snprintf(line, sizeof(line), "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%.1f,%.2f,%u,%.2f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+        snprintf(line, sizeof(line), "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%.1f,%.2f,%u,%.2f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
             (unsigned)(s.t_ms / 1000),
             (unsigned)s.busoff, (unsigned)s.tec, (unsigned)s.rec,
             (unsigned)s.arbLost, (unsigned)s.busErr, (unsigned)s.txFail,
             (unsigned)s.echoCnt, (unsigned)s.f880, (unsigned)s.f921, (unsigned)s.f923,
             (unsigned)s.handsOn, (unsigned)s.dasState,
-            (unsigned)s.nagMode, (unsigned)s.dasSourceId,
+            (unsigned)s.nagMode, (unsigned)s.smartProfile, (unsigned)s.dasSourceId,
             (unsigned)s.echoDrop, (unsigned)s.skipRuntime,
             (unsigned)s.skipAp, (unsigned)s.skipHandsOn, (unsigned)s.skipDas,
             (unsigned)s.noDasEcho, (unsigned)s.userMark,
