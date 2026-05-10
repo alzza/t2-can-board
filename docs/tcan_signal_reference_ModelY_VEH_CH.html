@@ -1,0 +1,662 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>T-CAN Signal Detail Reference</title>
+<style>
+:root{color-scheme:light dark;--bg:#f6f8fb;--panel:#ffffff;--text:#1b2430;--muted:#667085;--line:#d6dee8;--accent:#0b6bcb;--accent2:#0f8f72;--warn:#b45309;--code:#111827;--used:#dff4ec;--used-border:#79c7aa;--unused:#f3f5f8}
+@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--panel:#161b22;--text:#e6edf3;--muted:#8b949e;--line:#30363d;--accent:#58a6ff;--accent2:#56d6a6;--warn:#f0b45b;--code:#0b1018;--used:#113a31;--used-border:#2ea77e;--unused:#1f2630}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:1180px;margin:0 auto;padding:28px 18px 56px}h1{font-size:30px;margin:0 0 8px}h2{font-size:24px;margin:0 0 12px}h3{font-size:18px;margin:0}h4{font-size:14px;margin:22px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.intro{color:var(--muted);margin:0 0 18px}.chips{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 22px}.chip{border:1px solid var(--line);background:var(--panel);border-radius:6px;padding:6px 9px;color:var(--muted)}nav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 28px}nav a{color:var(--accent);border:1px solid var(--line);background:var(--panel);padding:7px 10px;border-radius:6px;text-decoration:none}.legend{position:sticky;top:8px;z-index:6;display:flex;flex-wrap:wrap;gap:10px;margin:16px 0 24px;padding:8px;background:color-mix(in srgb,var(--bg) 70%,transparent)}.legend .item{display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:8px 10px;color:var(--muted)}.legend .swatch{width:18px;height:18px;border-radius:4px;border:1px solid var(--line)}.legend .used{background:var(--used);border-color:var(--used-border)}.legend .unused{background:var(--unused)}.legend .byte{background:color-mix(in srgb,var(--panel) 80%,var(--accent) 20%)}.legend .overlap{background:color-mix(in srgb,var(--warn) 20%,var(--panel) 80%);border-color:color-mix(in srgb,var(--warn) 60%,var(--line) 40%)}.frame-card{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:18px;margin:18px 0 24px;box-shadow:0 1px 2px rgba(16,24,40,.05)}.frame-head{display:flex;gap:12px;justify-content:space-between;align-items:flex-start;margin-bottom:14px}.frame-head a{color:var(--accent);text-decoration:none;word-break:break-all}.frame-signals{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 16px}.frame-signals .sig{border:1px solid var(--line);background:color-mix(in srgb,var(--panel) 80%,var(--bg) 20%);border-radius:999px;padding:5px 9px;font-size:12px;color:var(--text)}.signal-card{border:1px solid var(--line);background:color-mix(in srgb,var(--panel) 90%,var(--bg) 10%);border-radius:8px;padding:18px;margin:12px 0 18px}.card-head{display:flex;gap:12px;justify-content:space-between;align-items:flex-start;margin-bottom:14px}.card-head a{color:var(--accent);text-decoration:none;word-break:break-all}.kv-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:9px;margin:10px 0 16px}.kv-grid div{border:1px solid var(--line);border-radius:6px;padding:9px;background:color-mix(in srgb,var(--panel) 88%,var(--bg))}.kv-grid dt{font-size:11px;color:var(--muted);margin-bottom:3px}.kv-grid dd{margin:0;font-weight:650;word-break:break-word}.note{color:var(--muted);margin:6px 0 10px}.bit-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px}.bit-map{width:100%;min-width:760px;border-collapse:separate;border-spacing:0}.bit-map th,.bit-map td{border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:8px;text-align:center;vertical-align:middle}.bit-map thead th{position:sticky;top:0;background:var(--code);color:#f8fafc;font-weight:750;z-index:2}.bit-map thead th:first-child{left:0;z-index:4}.bit-map tr:last-child td,.bit-map tr:last-child th{border-bottom:0}.bit-map th:last-child,.bit-map td:last-child{border-right:0}.bit-map .byte{position:sticky;left:0;z-index:1;background:color-mix(in srgb,var(--panel) 80%,var(--accent) 20%);font-weight:800;white-space:nowrap}.bit-map td.used{background:var(--used);border-color:var(--used-border)}.bit-map td.unused{background:var(--unused);color:var(--muted)}.bit-map td.overlap{background:color-mix(in srgb,var(--warn) 26%,var(--panel) 74%);border-color:color-mix(in srgb,var(--warn) 50%,var(--line) 50%)}.bit-map .raw{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:800}.bit-map .abs{display:block;font-size:11px;color:var(--muted);margin-top:2px}.used .raw{color:var(--accent2)}.overlap .raw{color:color-mix(in srgb,var(--warn) 70%,var(--text) 30%)}pre{background:var(--code);color:#f8fafc;border-radius:8px;padding:12px;overflow-x:auto;white-space:pre;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}.enum{width:100%;border-collapse:collapse}.enum th,.enum td{border:1px solid var(--line);padding:7px 8px;text-align:left}.empty{color:var(--warn);font-weight:700}.missing{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:14px}
+</style>
+</head>
+<body><main>
+<h1>T-CAN Signal Detail Reference</h1>
+<p class="intro">Generated from T-CAN Explorer public JSON. Markdown remains the default output; this HTML view is optimized for visual bit layout inspection.</p>
+<div class="chips">
+<span class="chip">Generated: 2026-05-10T21:58:49+09:00</span>
+<span class="chip">Source: https://tcan.latency.is/data/manifest.json</span>
+<span class="chip">Platform: ModelY</span>
+<span class="chip">Bus: VEH, CH</span>
+</div>
+<nav>
+<a href="#0x52--EPAS3P-sysStatus">0x52 EPAS3P_sysStatus</a>
+<a href="#0x129--SCCM-steeringAngleSensor">0x129 SCCM_steeringAngleSensor</a>
+<a href="#0x399--DAS-status">0x399 DAS_status</a>
+</nav>
+<div class="legend">
+<div class="item"><span class="swatch used"></span><span>Used bit mapped to extracted raw value</span></div>
+<div class="item"><span class="swatch unused"></span><span>Unused payload bit inside displayed byte span</span></div>
+<div class="item"><span class="swatch byte"></span><span>Sticky byte index column</span></div>
+<div class="item"><span class="swatch overlap"></span><span>Overlapping payload bit used by multiple selected signals</span></div>
+</div>
+<section id="0x52--EPAS3P-sysStatus" class="frame-card">
+<div class="frame-head">
+<div><h2>0x52 EPAS3P_sysStatus</h2><p class="intro">Frame-level group for visually comparing multiple signals that share the same payload.</p></div>
+<a href="https://tcan.latency.is/?plat=ModelY&amp;bus=VEH%2CCH&amp;frame=0x52__EPAS3P_sysStatus">Open in T-CAN</a>
+</div>
+<div class="frame-signals">
+<span class="sig">EPAS3P_torsionBarTorque</span>
+<span class="sig">EPAS3P_handsOnLevel</span>
+</div>
+<dl class="kv-grid">
+<div><dt>Frame key</dt><dd>0x52__EPAS3P_sysStatus</dd></div>
+<div><dt>Address</dt><dd>82 / 0x52</dd></div>
+<div><dt>Module</dt><dd>EPAS3P</dd></div>
+<div><dt>Buses</dt><dd>CH</dd></div>
+<div><dt>DLC</dt><dd>8 bytes</dd></div>
+<div><dt>Signal count</dt><dd>13</dd></div>
+<div><dt>Matching frame sources</dt><dd>dbc:ModelY_CH</dd></div>
+</dl>
+<h4>Frame Bit Overlap Map</h4>
+<p class="note">Cells in overlap color are payload bits shared by two or more selected signals in this frame.</p>
+<div class="bit-wrap">
+<table class="bit-map overlap-map">
+<thead><tr><th>byte</th><th>bit7</th><th>bit6</th><th>bit5</th><th>bit4</th><th>bit3</th><th>bit2</th><th>bit1</th><th>bit0</th></tr></thead>
+<tbody>
+<tr><th class="byte">byte 0</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 7</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 6</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 5</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 4</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 3</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 2</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 1</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 0</span></td>
+</tr>
+<tr><th class="byte">byte 1</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 15</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 14</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 13</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 12</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 11</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 10</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 9</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 8</span></td>
+</tr>
+<tr><th class="byte">byte 2</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 23</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 22</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 21</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 20</span></td>
+<td class="used" title="Used by: EPAS3P_torsionBarTorque"><span class="raw">EPAS3P_torsionBarTorque</span><span class="abs">payload 19</span></td>
+<td class="used" title="Used by: EPAS3P_torsionBarTorque"><span class="raw">EPAS3P_torsionBarTorque</span><span class="abs">payload 18</span></td>
+<td class="used" title="Used by: EPAS3P_torsionBarTorque"><span class="raw">EPAS3P_torsionBarTorque</span><span class="abs">payload 17</span></td>
+<td class="used" title="Used by: EPAS3P_torsionBarTorque"><span class="raw">EPAS3P_torsionBarTorque</span><span class="abs">payload 16</span></td>
+</tr>
+<tr><th class="byte">byte 3</th>
+<td class="used" title="Used by: EPAS3P_torsionBarTorque"><span class="raw">EPAS3P_torsionBarTorque</span><span class="abs">payload 31</span></td>
+<td class="used" title="Used by: EPAS3P_torsionBarTorque"><span class="raw">EPAS3P_torsionBarTorque</span><span class="abs">payload 30</span></td>
+<td class="used" title="Used by: EPAS3P_torsionBarTorque"><span class="raw">EPAS3P_torsionBarTorque</span><span class="abs">payload 29</span></td>
+<td class="used" title="Used by: EPAS3P_torsionBarTorque"><span class="raw">EPAS3P_torsionBarTorque</span><span class="abs">payload 28</span></td>
+<td class="used" title="Used by: EPAS3P_torsionBarTorque"><span class="raw">EPAS3P_torsionBarTorque</span><span class="abs">payload 27</span></td>
+<td class="used" title="Used by: EPAS3P_torsionBarTorque"><span class="raw">EPAS3P_torsionBarTorque</span><span class="abs">payload 26</span></td>
+<td class="used" title="Used by: EPAS3P_torsionBarTorque"><span class="raw">EPAS3P_torsionBarTorque</span><span class="abs">payload 25</span></td>
+<td class="used" title="Used by: EPAS3P_torsionBarTorque"><span class="raw">EPAS3P_torsionBarTorque</span><span class="abs">payload 24</span></td>
+</tr>
+<tr><th class="byte">byte 4</th>
+<td class="used" title="Used by: EPAS3P_handsOnLevel"><span class="raw">EPAS3P_handsOnLevel</span><span class="abs">payload 39</span></td>
+<td class="used" title="Used by: EPAS3P_handsOnLevel"><span class="raw">EPAS3P_handsOnLevel</span><span class="abs">payload 38</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 37</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 36</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 35</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 34</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 33</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 32</span></td>
+</tr>
+<tr><th class="byte">byte 5</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 47</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 46</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 45</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 44</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 43</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 42</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 41</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 40</span></td>
+</tr>
+<tr><th class="byte">byte 6</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 55</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 54</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 53</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 52</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 51</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 50</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 49</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 48</span></td>
+</tr>
+<tr><th class="byte">byte 7</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 63</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 62</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 61</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 60</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 59</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 58</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 57</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 56</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+<article class="signal-card">
+<div class="card-head">
+<h3>EPAS3P_torsionBarTorque</h3>
+<a href="https://tcan.latency.is/?plat=ModelY&amp;bus=VEH%2CCH&amp;frame=0x52__EPAS3P_sysStatus">Signal in T-CAN</a>
+</div>
+<h4>Signal Layout</h4>
+<dl class="kv-grid">
+<div><dt>Start bit</dt><dd>19</dd></div>
+<div><dt>Length</dt><dd>12 bits</dd></div>
+<div><dt>Byte order</dt><dd>big</dd></div>
+<div><dt>Signed</dt><dd>False</dd></div>
+<div><dt>Byte span</dt><dd>bytes 2..3</dd></div>
+<div><dt>Bit positions</dt><dd>[19, 18, 17, 16, 31, 30, 29, 28, 27, 26, 25, 24]</dd></div>
+<div><dt>Scale</dt><dd>0.01</dd></div>
+<div><dt>Offset</dt><dd>-20.5</dd></div>
+<div><dt>Raw mask</dt><dd>0xFFF</dd></div>
+<div><dt>Raw range</dt><dd>0 / 4095</dd></div>
+<div><dt>Physical range</dt><dd>-20.5 / 20.45</dd></div>
+<div><dt>Matching signal sources</dt><dd>dbc:ModelY_CH</dd></div>
+<div><dt>Formula</dt><dd>physical = raw * 0.01 - 20.5</dd></div>
+<div><dt>Unit</dt><dd></dd></div>
+<div><dt>Mux</dt><dd>None</dd></div>
+</dl>
+<h4>Bit Layout</h4>
+<p class="note"><code>raw[0]</code> is the least significant bit of the extracted raw value. Each used cell also shows the absolute payload bit.</p>
+<div class="bit-wrap">
+<table class="bit-map">
+<thead><tr><th>byte</th><th>bit7</th><th>bit6</th><th>bit5</th><th>bit4</th><th>bit3</th><th>bit2</th><th>bit1</th><th>bit0</th></tr></thead>
+<tbody>
+<tr><th class="byte">byte 2</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 23</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 22</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 21</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 20</span></td>
+<td class="used"><span class="raw">raw[11]</span><span class="abs">payload 19</span></td>
+<td class="used"><span class="raw">raw[10]</span><span class="abs">payload 18</span></td>
+<td class="used"><span class="raw">raw[9]</span><span class="abs">payload 17</span></td>
+<td class="used"><span class="raw">raw[8]</span><span class="abs">payload 16</span></td>
+</tr>
+<tr><th class="byte">byte 3</th>
+<td class="used"><span class="raw">raw[7]</span><span class="abs">payload 31</span></td>
+<td class="used"><span class="raw">raw[6]</span><span class="abs">payload 30</span></td>
+<td class="used"><span class="raw">raw[5]</span><span class="abs">payload 29</span></td>
+<td class="used"><span class="raw">raw[4]</span><span class="abs">payload 28</span></td>
+<td class="used"><span class="raw">raw[3]</span><span class="abs">payload 27</span></td>
+<td class="used"><span class="raw">raw[2]</span><span class="abs">payload 26</span></td>
+<td class="used"><span class="raw">raw[1]</span><span class="abs">payload 25</span></td>
+<td class="used"><span class="raw">raw[0]</span><span class="abs">payload 24</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+<h4>DBC-style Signal Line</h4>
+<pre>SG_ EPAS3P_torsionBarTorque : 19|12@0+ (0.01,-20.5) [0|0] &quot;&quot; Vector__XXX</pre>
+<h4>Raw Extraction Pseudocode</h4>
+<pre>raw = 0
+for bit_position in [19, 18, 17, 16, 31, 30, 29, 28, 27, 26, 25, 24]:
+    raw = (raw &lt;&lt; 1) | ((data[bit_position // 8] &gt;&gt; (bit_position % 8)) &amp; 1)</pre>
+<p class="note">Enum map: not present in T-CAN data.</p>
+</article>
+<article class="signal-card">
+<div class="card-head">
+<h3>EPAS3P_handsOnLevel</h3>
+<a href="https://tcan.latency.is/?plat=ModelY&amp;bus=VEH%2CCH&amp;frame=0x52__EPAS3P_sysStatus">Signal in T-CAN</a>
+</div>
+<h4>Signal Layout</h4>
+<dl class="kv-grid">
+<div><dt>Start bit</dt><dd>39</dd></div>
+<div><dt>Length</dt><dd>2 bits</dd></div>
+<div><dt>Byte order</dt><dd>big</dd></div>
+<div><dt>Signed</dt><dd>False</dd></div>
+<div><dt>Byte span</dt><dd>byte 4</dd></div>
+<div><dt>Bit positions</dt><dd>[39, 38]</dd></div>
+<div><dt>Scale</dt><dd>1</dd></div>
+<div><dt>Offset</dt><dd>0</dd></div>
+<div><dt>Raw mask</dt><dd>0x3</dd></div>
+<div><dt>Raw range</dt><dd>0 / 3</dd></div>
+<div><dt>Physical range</dt><dd>0 / 3</dd></div>
+<div><dt>Matching signal sources</dt><dd>dbc:ModelY_CH</dd></div>
+<div><dt>Formula</dt><dd>physical = raw * 1</dd></div>
+<div><dt>Unit</dt><dd></dd></div>
+<div><dt>Mux</dt><dd>None</dd></div>
+</dl>
+<h4>Bit Layout</h4>
+<p class="note"><code>raw[0]</code> is the least significant bit of the extracted raw value. Each used cell also shows the absolute payload bit.</p>
+<div class="bit-wrap">
+<table class="bit-map">
+<thead><tr><th>byte</th><th>bit7</th><th>bit6</th><th>bit5</th><th>bit4</th><th>bit3</th><th>bit2</th><th>bit1</th><th>bit0</th></tr></thead>
+<tbody>
+<tr><th class="byte">byte 4</th>
+<td class="used"><span class="raw">raw[1]</span><span class="abs">payload 39</span></td>
+<td class="used"><span class="raw">raw[0]</span><span class="abs">payload 38</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 37</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 36</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 35</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 34</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 33</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 32</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+<h4>DBC-style Signal Line</h4>
+<pre>SG_ EPAS3P_handsOnLevel : 39|2@0+ (1,0) [0|0] &quot;&quot; Vector__XXX</pre>
+<h4>Raw Extraction Pseudocode</h4>
+<pre>raw = 0
+for bit_position in [39, 38]:
+    raw = (raw &lt;&lt; 1) | ((data[bit_position // 8] &gt;&gt; (bit_position % 8)) &amp; 1)</pre>
+<p class="note">Enum map: not present in T-CAN data.</p>
+</article>
+</section>
+<section id="0x129--SCCM-steeringAngleSensor" class="frame-card">
+<div class="frame-head">
+<div><h2>0x129 SCCM_steeringAngleSensor</h2><p class="intro">Frame-level group for visually comparing multiple signals that share the same payload.</p></div>
+<a href="https://tcan.latency.is/?plat=ModelY&amp;bus=VEH%2CCH&amp;frame=0x129__SCCM_steeringAngleSensor">Open in T-CAN</a>
+</div>
+<div class="frame-signals">
+<span class="sig">SCCM_steeringAngle</span>
+</div>
+<dl class="kv-grid">
+<div><dt>Frame key</dt><dd>0x129__SCCM_steeringAngleSensor</dd></div>
+<div><dt>Address</dt><dd>297 / 0x129</dd></div>
+<div><dt>Module</dt><dd>SCCM</dd></div>
+<div><dt>Buses</dt><dd>CH, ETH, PARTY, VEH</dd></div>
+<div><dt>DLC</dt><dd>8 bytes</dd></div>
+<div><dt>Signal count</dt><dd>10</dd></div>
+<div><dt>Matching frame sources</dt><dd>dbc:ModelY_VEH, dbc:ModelY_CH</dd></div>
+</dl>
+<h4>Frame Bit Overlap Map</h4>
+<p class="note">Cells in overlap color are payload bits shared by two or more selected signals in this frame.</p>
+<div class="bit-wrap">
+<table class="bit-map overlap-map">
+<thead><tr><th>byte</th><th>bit7</th><th>bit6</th><th>bit5</th><th>bit4</th><th>bit3</th><th>bit2</th><th>bit1</th><th>bit0</th></tr></thead>
+<tbody>
+<tr><th class="byte">byte 0</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 7</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 6</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 5</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 4</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 3</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 2</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 1</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 0</span></td>
+</tr>
+<tr><th class="byte">byte 1</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 15</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 14</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 13</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 12</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 11</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 10</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 9</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 8</span></td>
+</tr>
+<tr><th class="byte">byte 2</th>
+<td class="used" title="Used by: SCCM_steeringAngle"><span class="raw">SCCM_steeringAngle</span><span class="abs">payload 23</span></td>
+<td class="used" title="Used by: SCCM_steeringAngle"><span class="raw">SCCM_steeringAngle</span><span class="abs">payload 22</span></td>
+<td class="used" title="Used by: SCCM_steeringAngle"><span class="raw">SCCM_steeringAngle</span><span class="abs">payload 21</span></td>
+<td class="used" title="Used by: SCCM_steeringAngle"><span class="raw">SCCM_steeringAngle</span><span class="abs">payload 20</span></td>
+<td class="used" title="Used by: SCCM_steeringAngle"><span class="raw">SCCM_steeringAngle</span><span class="abs">payload 19</span></td>
+<td class="used" title="Used by: SCCM_steeringAngle"><span class="raw">SCCM_steeringAngle</span><span class="abs">payload 18</span></td>
+<td class="used" title="Used by: SCCM_steeringAngle"><span class="raw">SCCM_steeringAngle</span><span class="abs">payload 17</span></td>
+<td class="used" title="Used by: SCCM_steeringAngle"><span class="raw">SCCM_steeringAngle</span><span class="abs">payload 16</span></td>
+</tr>
+<tr><th class="byte">byte 3</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 31</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 30</span></td>
+<td class="used" title="Used by: SCCM_steeringAngle"><span class="raw">SCCM_steeringAngle</span><span class="abs">payload 29</span></td>
+<td class="used" title="Used by: SCCM_steeringAngle"><span class="raw">SCCM_steeringAngle</span><span class="abs">payload 28</span></td>
+<td class="used" title="Used by: SCCM_steeringAngle"><span class="raw">SCCM_steeringAngle</span><span class="abs">payload 27</span></td>
+<td class="used" title="Used by: SCCM_steeringAngle"><span class="raw">SCCM_steeringAngle</span><span class="abs">payload 26</span></td>
+<td class="used" title="Used by: SCCM_steeringAngle"><span class="raw">SCCM_steeringAngle</span><span class="abs">payload 25</span></td>
+<td class="used" title="Used by: SCCM_steeringAngle"><span class="raw">SCCM_steeringAngle</span><span class="abs">payload 24</span></td>
+</tr>
+<tr><th class="byte">byte 4</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 39</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 38</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 37</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 36</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 35</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 34</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 33</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 32</span></td>
+</tr>
+<tr><th class="byte">byte 5</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 47</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 46</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 45</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 44</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 43</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 42</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 41</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 40</span></td>
+</tr>
+<tr><th class="byte">byte 6</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 55</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 54</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 53</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 52</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 51</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 50</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 49</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 48</span></td>
+</tr>
+<tr><th class="byte">byte 7</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 63</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 62</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 61</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 60</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 59</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 58</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 57</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 56</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+<article class="signal-card">
+<div class="card-head">
+<h3>SCCM_steeringAngle</h3>
+<a href="https://tcan.latency.is/?plat=ModelY&amp;bus=VEH%2CCH&amp;frame=0x129__SCCM_steeringAngleSensor">Signal in T-CAN</a>
+</div>
+<h4>Signal Layout</h4>
+<dl class="kv-grid">
+<div><dt>Start bit</dt><dd>16</dd></div>
+<div><dt>Length</dt><dd>14 bits</dd></div>
+<div><dt>Byte order</dt><dd>little</dd></div>
+<div><dt>Signed</dt><dd>False</dd></div>
+<div><dt>Byte span</dt><dd>bytes 2..3</dd></div>
+<div><dt>Bit positions</dt><dd>[16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]</dd></div>
+<div><dt>Scale</dt><dd>0.1</dd></div>
+<div><dt>Offset</dt><dd>-819.2</dd></div>
+<div><dt>Raw mask</dt><dd>0x3FFF</dd></div>
+<div><dt>Raw range</dt><dd>0 / 16383</dd></div>
+<div><dt>Physical range</dt><dd>-819.2 / 819.1</dd></div>
+<div><dt>Matching signal sources</dt><dd>dbc:ModelY_VEH, dbc:ModelY_CH</dd></div>
+<div><dt>Formula</dt><dd>physical = raw * 0.1 - 819.2</dd></div>
+<div><dt>Unit</dt><dd></dd></div>
+<div><dt>Mux</dt><dd>None</dd></div>
+</dl>
+<h4>Bit Layout</h4>
+<p class="note"><code>raw[0]</code> is the least significant bit of the extracted raw value. Each used cell also shows the absolute payload bit.</p>
+<div class="bit-wrap">
+<table class="bit-map">
+<thead><tr><th>byte</th><th>bit7</th><th>bit6</th><th>bit5</th><th>bit4</th><th>bit3</th><th>bit2</th><th>bit1</th><th>bit0</th></tr></thead>
+<tbody>
+<tr><th class="byte">byte 2</th>
+<td class="used"><span class="raw">raw[7]</span><span class="abs">payload 23</span></td>
+<td class="used"><span class="raw">raw[6]</span><span class="abs">payload 22</span></td>
+<td class="used"><span class="raw">raw[5]</span><span class="abs">payload 21</span></td>
+<td class="used"><span class="raw">raw[4]</span><span class="abs">payload 20</span></td>
+<td class="used"><span class="raw">raw[3]</span><span class="abs">payload 19</span></td>
+<td class="used"><span class="raw">raw[2]</span><span class="abs">payload 18</span></td>
+<td class="used"><span class="raw">raw[1]</span><span class="abs">payload 17</span></td>
+<td class="used"><span class="raw">raw[0]</span><span class="abs">payload 16</span></td>
+</tr>
+<tr><th class="byte">byte 3</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 31</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 30</span></td>
+<td class="used"><span class="raw">raw[13]</span><span class="abs">payload 29</span></td>
+<td class="used"><span class="raw">raw[12]</span><span class="abs">payload 28</span></td>
+<td class="used"><span class="raw">raw[11]</span><span class="abs">payload 27</span></td>
+<td class="used"><span class="raw">raw[10]</span><span class="abs">payload 26</span></td>
+<td class="used"><span class="raw">raw[9]</span><span class="abs">payload 25</span></td>
+<td class="used"><span class="raw">raw[8]</span><span class="abs">payload 24</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+<h4>DBC-style Signal Line</h4>
+<pre>SG_ SCCM_steeringAngle : 16|14@1+ (0.1,-819.2) [0|0] &quot;&quot; Vector__XXX</pre>
+<h4>Raw Extraction Pseudocode</h4>
+<pre>payload_le = data[0] | (data[1] &lt;&lt; 8) | ... | (data[7] &lt;&lt; 56)
+raw = (payload_le &gt;&gt; 16) &amp; 0x3FFF</pre>
+<h4>VAPI Metadata</h4>
+<dl class="kv-grid">
+<div><dt>Alias</dt><dd>ETH_SCCM_steeringAngle</dd></div>
+<div><dt>Source</dt><dd>libQtCarVAPI.so.1.0.0</dd></div>
+</dl>
+<h4>Enum Map</h4>
+<table class="enum"><thead><tr><th>Dec</th><th>Hex</th><th>Label</th></tr></thead><tbody>
+<tr><td>16383</td><td>0x3FFF</td><td>SNA</td></tr>
+<tr><td>4294967295</td><td>0xFFFFFFFF</td><td></td></tr>
+</tbody></table>
+</article>
+</section>
+<section id="0x399--DAS-status" class="frame-card">
+<div class="frame-head">
+<div><h2>0x399 DAS_status</h2><p class="intro">Frame-level group for visually comparing multiple signals that share the same payload.</p></div>
+<a href="https://tcan.latency.is/?plat=ModelY&amp;bus=VEH%2CCH&amp;frame=0x399__DAS_status">Open in T-CAN</a>
+</div>
+<div class="frame-signals">
+<span class="sig">DAS_autopilotState</span>
+<span class="sig">DAS_autopilotHandsOnState</span>
+</div>
+<dl class="kv-grid">
+<div><dt>Frame key</dt><dd>0x399__DAS_status</dd></div>
+<div><dt>Address</dt><dd>921 / 0x399</dd></div>
+<div><dt>Module</dt><dd>DAS</dd></div>
+<div><dt>Buses</dt><dd>CH, ETH</dd></div>
+<div><dt>DLC</dt><dd>8 bytes</dd></div>
+<div><dt>Signal count</dt><dd>26</dd></div>
+<div><dt>Matching frame sources</dt><dd>dbc:ModelY_CH</dd></div>
+</dl>
+<h4>Frame Bit Overlap Map</h4>
+<p class="note">Cells in overlap color are payload bits shared by two or more selected signals in this frame.</p>
+<div class="bit-wrap">
+<table class="bit-map overlap-map">
+<thead><tr><th>byte</th><th>bit7</th><th>bit6</th><th>bit5</th><th>bit4</th><th>bit3</th><th>bit2</th><th>bit1</th><th>bit0</th></tr></thead>
+<tbody>
+<tr><th class="byte">byte 0</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 7</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 6</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 5</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 4</span></td>
+<td class="used" title="Used by: DAS_autopilotState"><span class="raw">DAS_autopilotState</span><span class="abs">payload 3</span></td>
+<td class="used" title="Used by: DAS_autopilotState"><span class="raw">DAS_autopilotState</span><span class="abs">payload 2</span></td>
+<td class="used" title="Used by: DAS_autopilotState"><span class="raw">DAS_autopilotState</span><span class="abs">payload 1</span></td>
+<td class="used" title="Used by: DAS_autopilotState"><span class="raw">DAS_autopilotState</span><span class="abs">payload 0</span></td>
+</tr>
+<tr><th class="byte">byte 1</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 15</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 14</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 13</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 12</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 11</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 10</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 9</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 8</span></td>
+</tr>
+<tr><th class="byte">byte 2</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 23</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 22</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 21</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 20</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 19</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 18</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 17</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 16</span></td>
+</tr>
+<tr><th class="byte">byte 3</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 31</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 30</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 29</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 28</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 27</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 26</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 25</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 24</span></td>
+</tr>
+<tr><th class="byte">byte 4</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 39</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 38</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 37</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 36</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 35</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 34</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 33</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 32</span></td>
+</tr>
+<tr><th class="byte">byte 5</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 47</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 46</span></td>
+<td class="used" title="Used by: DAS_autopilotHandsOnState"><span class="raw">DAS_autopilotHandsOnState</span><span class="abs">payload 45</span></td>
+<td class="used" title="Used by: DAS_autopilotHandsOnState"><span class="raw">DAS_autopilotHandsOnState</span><span class="abs">payload 44</span></td>
+<td class="used" title="Used by: DAS_autopilotHandsOnState"><span class="raw">DAS_autopilotHandsOnState</span><span class="abs">payload 43</span></td>
+<td class="used" title="Used by: DAS_autopilotHandsOnState"><span class="raw">DAS_autopilotHandsOnState</span><span class="abs">payload 42</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 41</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 40</span></td>
+</tr>
+<tr><th class="byte">byte 6</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 55</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 54</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 53</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 52</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 51</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 50</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 49</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 48</span></td>
+</tr>
+<tr><th class="byte">byte 7</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 63</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 62</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 61</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 60</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 59</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 58</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 57</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 56</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+<article class="signal-card">
+<div class="card-head">
+<h3>DAS_autopilotState</h3>
+<a href="https://tcan.latency.is/?plat=ModelY&amp;bus=VEH%2CCH&amp;frame=0x399__DAS_status">Signal in T-CAN</a>
+</div>
+<h4>Signal Layout</h4>
+<dl class="kv-grid">
+<div><dt>Start bit</dt><dd>0</dd></div>
+<div><dt>Length</dt><dd>4 bits</dd></div>
+<div><dt>Byte order</dt><dd>little</dd></div>
+<div><dt>Signed</dt><dd>False</dd></div>
+<div><dt>Byte span</dt><dd>byte 0</dd></div>
+<div><dt>Bit positions</dt><dd>[0, 1, 2, 3]</dd></div>
+<div><dt>Scale</dt><dd>1</dd></div>
+<div><dt>Offset</dt><dd>0</dd></div>
+<div><dt>Raw mask</dt><dd>0xF</dd></div>
+<div><dt>Raw range</dt><dd>0 / 15</dd></div>
+<div><dt>Physical range</dt><dd>0 / 15</dd></div>
+<div><dt>Matching signal sources</dt><dd>dbc:ModelY_CH</dd></div>
+<div><dt>Formula</dt><dd>physical = raw * 1</dd></div>
+<div><dt>Unit</dt><dd></dd></div>
+<div><dt>Mux</dt><dd>None</dd></div>
+</dl>
+<h4>Bit Layout</h4>
+<p class="note"><code>raw[0]</code> is the least significant bit of the extracted raw value. Each used cell also shows the absolute payload bit.</p>
+<div class="bit-wrap">
+<table class="bit-map">
+<thead><tr><th>byte</th><th>bit7</th><th>bit6</th><th>bit5</th><th>bit4</th><th>bit3</th><th>bit2</th><th>bit1</th><th>bit0</th></tr></thead>
+<tbody>
+<tr><th class="byte">byte 0</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 7</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 6</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 5</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 4</span></td>
+<td class="used"><span class="raw">raw[3]</span><span class="abs">payload 3</span></td>
+<td class="used"><span class="raw">raw[2]</span><span class="abs">payload 2</span></td>
+<td class="used"><span class="raw">raw[1]</span><span class="abs">payload 1</span></td>
+<td class="used"><span class="raw">raw[0]</span><span class="abs">payload 0</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+<h4>DBC-style Signal Line</h4>
+<pre>SG_ DAS_autopilotState : 0|4@1+ (1,0) [0|0] &quot;&quot; Vector__XXX</pre>
+<h4>Raw Extraction Pseudocode</h4>
+<pre>payload_le = data[0] | (data[1] &lt;&lt; 8) | ... | (data[7] &lt;&lt; 56)
+raw = (payload_le &gt;&gt; 0) &amp; 0xF</pre>
+<h4>Enum Map</h4>
+<table class="enum"><thead><tr><th>Dec</th><th>Hex</th><th>Label</th></tr></thead><tbody>
+<tr><td>0</td><td>0x0</td><td>DISABLED</td></tr>
+<tr><td>1</td><td>0x1</td><td>UNAVAILABLE</td></tr>
+<tr><td>2</td><td>0x2</td><td>AVAILABLE</td></tr>
+<tr><td>3</td><td>0x3</td><td>ACTIVE_NOMINAL</td></tr>
+<tr><td>4</td><td>0x4</td><td>ACTIVE_RESTRICTED</td></tr>
+<tr><td>5</td><td>0x5</td><td>ACTIVE_NAV</td></tr>
+<tr><td>6</td><td>0x6</td><td>ACTIVE_FSD</td></tr>
+<tr><td>8</td><td>0x8</td><td>ABORTING</td></tr>
+<tr><td>9</td><td>0x9</td><td>ABORTED</td></tr>
+<tr><td>14</td><td>0xE</td><td>FAULT</td></tr>
+<tr><td>15</td><td>0xF</td><td>SNA</td></tr>
+<tr><td>4294967295</td><td>0xFFFFFFFF</td><td></td></tr>
+</tbody></table>
+</article>
+<article class="signal-card">
+<div class="card-head">
+<h3>DAS_autopilotHandsOnState</h3>
+<a href="https://tcan.latency.is/?plat=ModelY&amp;bus=VEH%2CCH&amp;frame=0x399__DAS_status">Signal in T-CAN</a>
+</div>
+<h4>Signal Layout</h4>
+<dl class="kv-grid">
+<div><dt>Start bit</dt><dd>42</dd></div>
+<div><dt>Length</dt><dd>4 bits</dd></div>
+<div><dt>Byte order</dt><dd>little</dd></div>
+<div><dt>Signed</dt><dd>False</dd></div>
+<div><dt>Byte span</dt><dd>byte 5</dd></div>
+<div><dt>Bit positions</dt><dd>[42, 43, 44, 45]</dd></div>
+<div><dt>Scale</dt><dd>1</dd></div>
+<div><dt>Offset</dt><dd>0</dd></div>
+<div><dt>Raw mask</dt><dd>0xF</dd></div>
+<div><dt>Raw range</dt><dd>0 / 15</dd></div>
+<div><dt>Physical range</dt><dd>0 / 15</dd></div>
+<div><dt>Matching signal sources</dt><dd>dbc:ModelY_CH</dd></div>
+<div><dt>Formula</dt><dd>physical = raw * 1</dd></div>
+<div><dt>Unit</dt><dd></dd></div>
+<div><dt>Mux</dt><dd>None</dd></div>
+</dl>
+<h4>Bit Layout</h4>
+<p class="note"><code>raw[0]</code> is the least significant bit of the extracted raw value. Each used cell also shows the absolute payload bit.</p>
+<div class="bit-wrap">
+<table class="bit-map">
+<thead><tr><th>byte</th><th>bit7</th><th>bit6</th><th>bit5</th><th>bit4</th><th>bit3</th><th>bit2</th><th>bit1</th><th>bit0</th></tr></thead>
+<tbody>
+<tr><th class="byte">byte 5</th>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 47</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 46</span></td>
+<td class="used"><span class="raw">raw[3]</span><span class="abs">payload 45</span></td>
+<td class="used"><span class="raw">raw[2]</span><span class="abs">payload 44</span></td>
+<td class="used"><span class="raw">raw[1]</span><span class="abs">payload 43</span></td>
+<td class="used"><span class="raw">raw[0]</span><span class="abs">payload 42</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 41</span></td>
+<td class="unused"><span class="raw">.</span><span class="abs">payload 40</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+<h4>DBC-style Signal Line</h4>
+<pre>SG_ DAS_autopilotHandsOnState : 42|4@1+ (1,0) [0|0] &quot;&quot; Vector__XXX</pre>
+<h4>Raw Extraction Pseudocode</h4>
+<pre>payload_le = data[0] | (data[1] &lt;&lt; 8) | ... | (data[7] &lt;&lt; 56)
+raw = (payload_le &gt;&gt; 42) &amp; 0xF</pre>
+<h4>Enum Map</h4>
+<table class="enum"><thead><tr><th>Dec</th><th>Hex</th><th>Label</th></tr></thead><tbody>
+<tr><td>0</td><td>0x0</td><td>NOT_REQD</td></tr>
+<tr><td>1</td><td>0x1</td><td>REQD_DETECTED</td></tr>
+<tr><td>2</td><td>0x2</td><td>REQD_NOT_DETECTED</td></tr>
+<tr><td>3</td><td>0x3</td><td>REQD_VISUAL</td></tr>
+<tr><td>4</td><td>0x4</td><td>REQD_CHIME_1</td></tr>
+<tr><td>5</td><td>0x5</td><td>REQD_CHIME_2</td></tr>
+<tr><td>6</td><td>0x6</td><td>REQD_SLOWING</td></tr>
+<tr><td>7</td><td>0x7</td><td>REQD_STRUCK_OUT</td></tr>
+<tr><td>8</td><td>0x8</td><td>SUSPENDED</td></tr>
+<tr><td>9</td><td>0x9</td><td>REQD_ESCALATED_CHIME_1</td></tr>
+<tr><td>10</td><td>0xA</td><td>REQD_ESCALATED_CHIME_2</td></tr>
+<tr><td>15</td><td>0xF</td><td>SNA</td></tr>
+<tr><td>4294967295</td><td>0xFFFFFFFF</td><td></td></tr>
+</tbody></table>
+</article>
+</section>
+</main></body>
+</html>
