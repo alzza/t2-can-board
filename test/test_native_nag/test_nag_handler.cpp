@@ -324,6 +324,39 @@ void test_nag_output_raw_stays_in_state2_mild_range()
     }
 }
 
+void test_nag_profile_c_settings_match_delay_torque_candidate()
+{
+    const NagSmartProfileSettings &profile = nagSmartProfileSettings(kNagSmartProfileC);
+    TEST_ASSERT_EQUAL_UINT8(kNagSmartProfileC, profile.id);
+    TEST_ASSERT_EQUAL_UINT16(600, profile.state2DelayMs);
+    TEST_ASSERT_EQUAL_UINT16(400, profile.strongDelayMs);
+    TEST_ASSERT_EQUAL_UINT16(50, profile.state2MildMinRawDelta);
+    TEST_ASSERT_EQUAL_UINT16(170, profile.state2MildMaxRawDelta);
+}
+
+void test_nag_profile_clamp_accepts_c_and_rejects_out_of_range()
+{
+    TEST_ASSERT_EQUAL_UINT8(kNagSmartProfileC, nagSmartProfileClamp(kNagSmartProfileC));
+    TEST_ASSERT_EQUAL_UINT8(kNagSmartProfileDefault, nagSmartProfileClamp(99));
+}
+
+void test_nag_profile_c_output_raw_stays_in_state2_mild_range()
+{
+    nagConfig.smartProfile = kNagSmartProfileC;
+    primeDasRequest();
+    for (uint8_t cnt = 0; cnt < 32; cnt++)
+    {
+        mock.reset();
+        CanFrame f = makeEpasFrame(0, 0.33f, cnt & 0x0F);
+        handler.handleMessage(f, mock);
+        TEST_ASSERT_EQUAL(1, mock.sent.size());
+
+        uint16_t tRaw = ((mock.sent[0].data[2] & 0x0F) << 8) | mock.sent[0].data[3];
+        TEST_ASSERT_TRUE(tRaw >= 2098);
+        TEST_ASSERT_TRUE(tRaw <= 2218);
+    }
+}
+
 void test_nag_output_handson_never_exceeds_1()
 {
     primeDasRequest();
@@ -482,6 +515,9 @@ int main()
     // Safety canary
     RUN_TEST(test_nag_output_torque_never_exceeds_safe_range);
     RUN_TEST(test_nag_output_raw_stays_in_state2_mild_range);
+    RUN_TEST(test_nag_profile_c_settings_match_delay_torque_candidate);
+    RUN_TEST(test_nag_profile_clamp_accepts_c_and_rejects_out_of_range);
+    RUN_TEST(test_nag_profile_c_output_raw_stays_in_state2_mild_range);
     RUN_TEST(test_nag_output_handson_never_exceeds_1);
 
     // Counters

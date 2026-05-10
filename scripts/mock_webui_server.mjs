@@ -17,6 +17,10 @@ const profiles = [
     state2DelayMs: 700,
     strongDelayMs: 400,
     strongRampMs: 500,
+    state2MildMinRawDelta: 50,
+    state2MildMaxRawDelta: 150,
+    state2MildMinNm: 0.5,
+    state2MildMaxNm: 1.5,
     state2BurstMs: 0,
     state2PauseMs: 0,
     strongBurstMs: 0,
@@ -30,6 +34,10 @@ const profiles = [
     state2DelayMs: 700,
     strongDelayMs: 400,
     strongRampMs: 500,
+    state2MildMinRawDelta: 50,
+    state2MildMaxRawDelta: 150,
+    state2MildMinNm: 0.5,
+    state2MildMaxNm: 1.5,
     state2BurstMs: 250,
     state2PauseMs: 750,
     strongBurstMs: 500,
@@ -43,10 +51,31 @@ const profiles = [
     state2DelayMs: 900,
     strongDelayMs: 600,
     strongRampMs: 500,
+    state2MildMinRawDelta: 50,
+    state2MildMaxRawDelta: 150,
+    state2MildMinNm: 0.5,
+    state2MildMaxNm: 1.5,
     state2BurstMs: 150,
     state2PauseMs: 1350,
     strongBurstMs: 300,
     strongPauseMs: 1700,
+  },
+  {
+    smartProfile: 3,
+    profileLabel: 'C안',
+    profileSummary: '1차 delay+torque 후보. state2는 600ms로 앞당기고 mild 상한을 1.7Nm까지 올리며 strong은 400ms/2.10Nm 유지.',
+    state1GraceMs: 500,
+    state2DelayMs: 600,
+    strongDelayMs: 400,
+    strongRampMs: 500,
+    state2MildMinRawDelta: 50,
+    state2MildMaxRawDelta: 170,
+    state2MildMinNm: 0.5,
+    state2MildMaxNm: 1.7,
+    state2BurstMs: 0,
+    state2PauseMs: 0,
+    strongBurstMs: 0,
+    strongPauseMs: 0,
   },
 ];
 
@@ -67,6 +96,8 @@ const state = {
   diagLogHead: 0,
   toggles: {
     a_channel_tx: true,
+    ui_ulc_stalk_confirm_enabled: true,
+    ui_alc_off_highway_enable_enabled: true,
     enhanced_autopilot: true,
     tsllc_enabled: true,
     nag_killer: true,
@@ -131,7 +162,7 @@ function pushLog(msg) {
 
 function clampProfile(value) {
   const p = Number(value);
-  return p >= 0 && p <= 2 ? p : 0;
+  return p >= 0 && p <= 3 ? p : 0;
 }
 
 function send(res, status, contentType, body) {
@@ -231,6 +262,8 @@ function statusJson(url) {
     isa_speed_chime_suppress: false,
     emergency_vehicle_detection: false,
     enhanced_autopilot: state.toggles.a_channel_tx && state.toggles.enhanced_autopilot,
+    ui_ulc_stalk_confirm_enabled: state.toggles.a_channel_tx && state.toggles.ui_ulc_stalk_confirm_enabled,
+    ui_alc_off_highway_enable_enabled: state.toggles.a_channel_tx && state.toggles.ui_alc_off_highway_enable_enabled,
     nag_killer: state.toggles.nag_killer,
     a_channel_tx: state.toggles.a_channel_tx,
     tsllc_enabled: state.toggles.a_channel_tx && state.toggles.tsllc_enabled,
@@ -283,6 +316,8 @@ function statusJson(url) {
       isa_speed_chime_suppress: feature(false, false, false),
       emergency_vehicle_detection: feature(false, false, false),
       enhanced_autopilot: feature(state.toggles.enhanced_autopilot),
+      ui_ulc_stalk_confirm: feature(state.toggles.ui_ulc_stalk_confirm_enabled),
+      ui_alc_off_highway_enable: feature(state.toggles.ui_alc_off_highway_enable_enabled),
       nag_killer: feature(state.toggles.nag_killer),
       a_channel_tx: feature(state.toggles.a_channel_tx),
       tsllc_enabled: feature(state.toggles.tsllc_enabled),
@@ -295,8 +330,14 @@ function statusJson(url) {
       a_channel: {
         frames_received: c.aFrames,
         frame_hz: c.noFrames ? 0 : 6.0,
+        frames_1016: c.noFrames ? 0 : Math.floor(c.aFrames / 2),
+        id_1016_period_ms: c.noFrames ? 0 : 333,
         frames_1021: c.aFrames,
         id_1021_period_ms: c.noFrames ? 0 : 167,
+        ulc_stalk_confirm_modified: c.noFrames ? 0 : Math.floor(c.aFrames / 7),
+        ulc_stalk_confirm_skipped: c.noFrames ? 0 : Math.floor(c.aFrames / 5),
+        alc_off_highway_modified: c.noFrames ? 0 : Math.floor(c.aFrames / 6),
+        alc_off_highway_skipped: c.noFrames ? 0 : Math.floor(c.aFrames / 4),
         eap_modified: c.noFrames ? 0 : Math.floor(c.aFrames / 3),
         last_frame_id: c.noFrames ? 0 : 1021,
         last_update_ms: uptimeMs,
@@ -307,6 +348,8 @@ function statusJson(url) {
         spi_reboot_required: false,
         mcp_one_shot: state.toggles.a_mcp_oneshot,
         channel_tx_enabled: state.toggles.a_channel_tx,
+        ui_ulc_stalk_confirm_enabled: state.toggles.a_channel_tx && state.toggles.ui_ulc_stalk_confirm_enabled,
+        ui_alc_off_highway_enable_enabled: state.toggles.a_channel_tx && state.toggles.ui_alc_off_highway_enable_enabled,
         tx_guard_enabled: state.toggles.a_tx_guard,
         mcp_eflg: 0,
         mcp_eflg_peak: 0x40,
@@ -529,6 +572,8 @@ function logsBundleText() {
     '',
     '=== [1] 런타임 로그 ===',
     `[mock] A RX=${c.aFrames} B RX=${c.bFrames} Echo=${c.echo}`,
+    `[mock] UI_ulcStalkConfirm ON=${state.toggles.ui_ulc_stalk_confirm_enabled ? 1 : 0} modified=${c.noFrames ? 0 : Math.floor(c.aFrames / 7)} skip=${c.noFrames ? 0 : Math.floor(c.aFrames / 5)}`,
+    `[mock] UI_alcOffHighwayEnable ON=${state.toggles.ui_alc_off_highway_enable_enabled ? 1 : 0} modified=${c.noFrames ? 0 : Math.floor(c.aFrames / 6)} skip=${c.noFrames ? 0 : Math.floor(c.aFrames / 4)}`,
     `[mock] NAG decision=${state.scenario === 'ap_block' ? 'AP_BLOCK' : 'ECHO'}`,
     '',
     '=== [2] BUS-OFF 이벤트 로그 ===',
@@ -546,6 +591,8 @@ async function handlePost(req, res, url) {
   const body = await readJsonBody(req);
   const toggleRoutes = new Map([
     ['/api/a-channel-tx', 'a_channel_tx'],
+    ['/api/ui-ulc-stalk-confirm', 'ui_ulc_stalk_confirm_enabled'],
+    ['/api/ui-alc-off-highway-enable', 'ui_alc_off_highway_enable_enabled'],
     ['/api/enhanced-autopilot', 'enhanced_autopilot'],
     ['/api/tsllc', 'tsllc_enabled'],
     ['/api/nag-killer', 'nag_killer'],
@@ -557,7 +604,8 @@ async function handlePost(req, res, url) {
   if (toggleRoutes.has(url.pathname)) {
     const key = toggleRoutes.get(url.pathname);
     state.toggles[key] = boolFromBody(body, state.toggles[key]);
-    if ((key === 'enhanced_autopilot' || key === 'tsllc_enabled') && state.toggles[key]) {
+    if ((key === 'enhanced_autopilot' || key === 'tsllc_enabled' ||
+      key === 'ui_ulc_stalk_confirm_enabled' || key === 'ui_alc_off_highway_enable_enabled') && state.toggles[key]) {
       state.toggles.a_channel_tx = true;
     }
     pushLog(`[mock] ${key}: ${state.toggles[key] ? 'ON' : 'OFF'}`);

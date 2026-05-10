@@ -75,16 +75,60 @@ struct HW3Handler : public CarManagerBase
 
     const uint32_t *filterIds() const override
     {
-        static constexpr uint32_t ids[] = {1021};
+        static constexpr uint32_t ids[] = {1016, 1021};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 1; }
+    uint8_t filterIdCount() const override { return 2; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
         aChannelDiag.framesReceivedTotal++;
         aChannelDiag.lastFrameIdReceived = frame.id;
 
+        if (frame.id == 1016) {
+            aChannelDiag.frames1016++;
+            if (frame.dlc < 8) return;
+            uint8_t followDistance = (frame.data[5] >> 5) & 0x07;
+            if (followDistance == 1) speedProfile = 2;
+            else if (followDistance == 2) speedProfile = 1;
+            else if (followDistance == 3) speedProfile = 0;
+#if defined(ENHANCED_AUTOPILOT)
+            const bool ulcEnabled = (bool)uiUlcStalkConfirmRuntime;
+            const bool offHighwayEnabled = (bool)uiAlcOffHighwayEnableRuntime;
+            if (ulcEnabled || offHighwayEnabled) {
+                const bool ulcConfirmSet = (frame.data[0] & 0x02) != 0;
+                const bool alcOffHighwaySet = (frame.data[7] & 0x01) != 0;
+                const bool updateUlcConfirm = ulcEnabled && ulcConfirmSet;
+                const bool updateOffHighway = offHighwayEnabled && !alcOffHighwaySet;
+
+                if (ulcEnabled && !updateUlcConfirm) aChannelDiag.ulcStalkConfirmSkipCount++;
+                if (offHighwayEnabled && !updateOffHighway) aChannelDiag.alcOffHighwaySkipCount++;
+                if (!updateUlcConfirm && !updateOffHighway) return;
+                if (shouldSkipATx("UI 1016")) return;
+
+                if (updateUlcConfirm) {
+                    setBit(frame, 1, false);  // UI_ulcStalkConfirm=0: 고속도로 NoA 컨펌 완화
+                    aChannelDiag.ulcStalkConfirmModifiedCount++;
+                }
+                if (updateOffHighway) {
+                    setBit(frame, 56, true);  // UI_alcOffHighwayEnable=1: 비고속도로 ALC 허용
+                    aChannelDiag.alcOffHighwayModifiedCount++;
+                }
+                framesSent++;
+                if (driver.sendCheck(frame)) { aChannelDiag.aTxOk++; aChannelDiag.lastTxMs = millis(); }
+                else                           aChannelDiag.aTxFail++;
+
+                static unsigned long lastAlcAction = 0;
+                if (millis() - lastAlcAction > 5000) {
+                    logRing.push("🟣⚡ [A-CH] UI_driverAssistControl 주입 완료: UI_ulcStalkConfirm=0 UI_alcOffHighwayEnable=1", millis());
+                    lastAlcAction = millis();
+                }
+            }
+#endif
+            return;
+        }
+
+        if (frame.id != 1021) return;
         aChannelDiag.frames1021++;
 
         if (readMuxID(frame) == 0) {
@@ -155,7 +199,7 @@ struct NagHandler : public CarManagerBase
     uint32_t _mbState1HoldTorq = 2048;
     uint8_t  _mbState1HoldHo   = 0;
 
-    uint32_t _mbState2EnterMs  = 0;   // 상태2 진입 시각 (700ms 딜레이)
+    uint32_t _mbState2EnterMs  = 0;   // 상태2 진입 시각 (profile state2 delay)
     int16_t  _mbMildWalkRaw    = 2098;// 상태2 random-walk 현재값
     uint32_t _mbS2HoldUntilMs  = 0;
     uint32_t _mbS2HoldTorqRaw  = 2048;
@@ -353,8 +397,14 @@ struct NagHandler : public CarManagerBase
                 hoLevel = _mbS2HoldHo;
             } else {
                 // random-walk in direction opposite steering
-                int16_t minR = 2098, maxR = 2198; // +0.5 ~ +1.5 Nm
-                if (_mbAngleDeg > 0.0f) { minR = 1898; maxR = 1998; } // -1.5 ~ -0.5 Nm
+                const int16_t mildMinDelta = static_cast<int16_t>(profile.state2MildMinRawDelta);
+                const int16_t mildMaxDelta = static_cast<int16_t>(profile.state2MildMaxRawDelta);
+                int16_t minR = static_cast<int16_t>(2048 + mildMinDelta);
+                int16_t maxR = static_cast<int16_t>(2048 + mildMaxDelta);
+                if (_mbAngleDeg > 0.0f) {
+                    minR = static_cast<int16_t>(2048 - mildMaxDelta);
+                    maxR = static_cast<int16_t>(2048 - mildMinDelta);
+                }
                 if (_mbMildWalkRaw < minR || _mbMildWalkRaw > maxR)
                     _mbMildWalkRaw = static_cast<int16_t>((minR + maxR) / 2);
                 // xorshift step (재사용)

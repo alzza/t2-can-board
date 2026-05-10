@@ -46,6 +46,18 @@ inline constexpr bool kTsllcDefaultEnabled = false;
 inline constexpr bool kTsllcBuildEnabled = false;
 #endif
 
+#if defined(ENHANCED_AUTOPILOT)
+inline constexpr bool kUlcStalkConfirmDefaultEnabled = false;      // 기본값 OFF (웹 UI에서 활성화)
+inline constexpr bool kUlcStalkConfirmBuildEnabled = true;
+inline constexpr bool kAlcOffHighwayEnableDefaultEnabled = false;  // 기본값 OFF (웹 UI에서 활성화)
+inline constexpr bool kAlcOffHighwayEnableBuildEnabled = true;
+#else
+inline constexpr bool kUlcStalkConfirmDefaultEnabled = false;
+inline constexpr bool kUlcStalkConfirmBuildEnabled = false;
+inline constexpr bool kAlcOffHighwayEnableDefaultEnabled = false;
+inline constexpr bool kAlcOffHighwayEnableBuildEnabled = false;
+#endif
+
 #if defined(NAG_KILLER)
 inline constexpr bool kNagKillerDefaultEnabled = true;
 inline constexpr bool kNagKillerBuildEnabled = true;
@@ -83,6 +95,8 @@ inline Shared<bool> emergencyVehicleDetectionRuntime{kEmergencyVehicleDetectionD
 inline Shared<bool> enhancedAutopilotRuntime{kEnhancedAutopilotDefaultEnabled};
 inline Shared<bool> nagKillerRuntime{kNagKillerDefaultEnabled};
 inline Shared<bool> tsllcRuntime{kTsllcDefaultEnabled};         // TSLLC 런타임 토글 (스톱사인/초록불 제어)
+inline Shared<bool> uiUlcStalkConfirmRuntime{kUlcStalkConfirmDefaultEnabled};              // UI_ulcStalkConfirm bit1 -> 0
+inline Shared<bool> uiAlcOffHighwayEnableRuntime{kAlcOffHighwayEnableDefaultEnabled};      // UI_alcOffHighwayEnable bit56 -> 1
 inline Shared<bool> aChannelTxRuntime{true};     // A채널 1021 수정 송신 마스터 토글
 inline Shared<uint32_t> aMcpSpiFreqHz{kAMcpDefaultSpiFreqHz};
 inline Shared<uint32_t> aMcpRequestedSpiFreqHz{kAMcpDefaultSpiFreqHz};
@@ -219,7 +233,7 @@ struct BChannelDiagnostics {
     Shared<uint32_t> echoDroppedLate{0};         // 수신→에코 6ms 초과로 드롭된 에코 수 (ECU TX 충돌 방지)
     // ── Mode B (스마트 상태머신) 진단 필드 ──────────────────────────────────
     Shared<uint8_t>  nagMode{1};                     // 호환용 모드 값 (현재는 스마트 토크 고정)
-    Shared<uint8_t>  smartProfile{0};                // 스마트 토크 실험 프로파일 (0=기본, 1=A안, 2=B안)
+    Shared<uint8_t>  smartProfile{0};                // 스마트 토크 실험 프로파일 (0=기본, 1=A안, 2=B안, 3=C안)
     Shared<uint8_t>  dasAutopilotStateRx{0};         // DAS_status DAS_autopilotState (0|4@1+)
     Shared<float>    steeringAngleDeg{0.0f};         // ID 297 SCCM_steeringAngle (deg)
     Shared<uint32_t> frames297{0};                   // ID 297 수신 프레임 수
@@ -248,8 +262,13 @@ inline BChannelDiagnostics bChannelDiag;
 struct AChannelDiagnostics {
     Shared<uint32_t> framesReceivedTotal{0};     // 총 수신 프레임 수
     Shared<float>    frameHz{0.0f};              // A채널 수신 프레임레이트 (Hz)
+    Shared<uint32_t> frames1016{0};              // UI_driverAssistControl 프레임 수
     Shared<uint32_t> frames1021{0};              // EAP 프레임 수
     Shared<uint32_t> eapModifiedCount{0};        // 규제 완화 적용 횟수
+    Shared<uint32_t> ulcStalkConfirmModifiedCount{0};      // UI_ulcStalkConfirm 적용 횟수
+    Shared<uint32_t> ulcStalkConfirmSkipCount{0};          // 이미 bit1=0이라 송신하지 않은 횟수
+    Shared<uint32_t> alcOffHighwayModifiedCount{0};        // UI_alcOffHighwayEnable 적용 횟수
+    Shared<uint32_t> alcOffHighwaySkipCount{0};            // 이미 bit56=1이라 송신하지 않은 횟수
     Shared<uint32_t> tsllcModifiedCount{0};       // TSLLC 주입 횟수 (스톱/초록불 비트 세팅)
     Shared<uint32_t> lastFrameIdReceived{0};     // 마지막 수신 프레임 ID
     Shared<uint32_t> lastStatusUpdateMs{0};      // 마지막 상태 업데이트 시각
@@ -423,6 +442,7 @@ inline constexpr uint8_t kNagModeB      = 1;
 inline constexpr uint8_t kNagSmartProfileDefault = 0;
 inline constexpr uint8_t kNagSmartProfileA       = 1;
 inline constexpr uint8_t kNagSmartProfileB       = 2;
+inline constexpr uint8_t kNagSmartProfileC       = 3;
 
 struct NagSmartProfileSettings {
     uint8_t id;
@@ -432,6 +452,8 @@ struct NagSmartProfileSettings {
     uint16_t state2DelayMs;
     uint16_t strongDelayMs;
     uint16_t strongRampMs;
+    uint16_t state2MildMinRawDelta;
+    uint16_t state2MildMaxRawDelta;
     uint16_t state2BurstMs;
     uint16_t state2PauseMs;
     uint16_t strongBurstMs;
@@ -444,6 +466,8 @@ inline constexpr uint16_t kNagModeBState1GraceMs = 500;
 inline constexpr uint16_t kNagModeBState2DelayMs = 700;
 inline constexpr uint16_t kNagModeBStrongDelayMs = 400;
 inline constexpr uint16_t kNagModeBStrongRampMs = 500;
+inline constexpr uint16_t kNagModeBState2MildMinRawDelta = 50;   // 0.50 Nm
+inline constexpr uint16_t kNagModeBState2MildMaxRawDelta = 150;  // 1.50 Nm
 
 inline constexpr NagSmartProfileSettings kNagSmartProfileDefaultSettings = {
     kNagSmartProfileDefault,
@@ -453,6 +477,8 @@ inline constexpr NagSmartProfileSettings kNagSmartProfileDefaultSettings = {
     kNagModeBState2DelayMs,
     kNagModeBStrongDelayMs,
     kNagModeBStrongRampMs,
+    kNagModeBState2MildMinRawDelta,
+    kNagModeBState2MildMaxRawDelta,
     0,
     0,
     0,
@@ -467,6 +493,8 @@ inline constexpr NagSmartProfileSettings kNagSmartProfileASettings = {
     kNagModeBState2DelayMs,
     kNagModeBStrongDelayMs,
     kNagModeBStrongRampMs,
+    kNagModeBState2MildMinRawDelta,
+    kNagModeBState2MildMaxRawDelta,
     250,
     750,
     500,
@@ -481,20 +509,39 @@ inline constexpr NagSmartProfileSettings kNagSmartProfileBSettings = {
     900,
     600,
     kNagModeBStrongRampMs,
+    kNagModeBState2MildMinRawDelta,
+    kNagModeBState2MildMaxRawDelta,
     150,
     1350,
     300,
     1700,
 };
 
+inline constexpr NagSmartProfileSettings kNagSmartProfileCSettings = {
+    kNagSmartProfileC,
+    "C안",
+    "1차 delay+torque 후보. state2는 600ms로 앞당기고 mild 상한을 1.7Nm까지 올리며 strong은 400ms/2.10Nm 유지.",
+    kNagModeBState1GraceMs,
+    600,
+    kNagModeBStrongDelayMs,
+    kNagModeBStrongRampMs,
+    kNagModeBState2MildMinRawDelta,
+    170,
+    0,
+    0,
+    0,
+    0,
+};
+
 inline uint8_t nagSmartProfileClamp(uint8_t profile) {
-    return (profile <= kNagSmartProfileB) ? profile : kNagSmartProfileDefault;
+    return (profile <= kNagSmartProfileC) ? profile : kNagSmartProfileDefault;
 }
 
 inline const NagSmartProfileSettings& nagSmartProfileSettings(uint8_t profile) {
     switch (nagSmartProfileClamp(profile)) {
     case kNagSmartProfileA: return kNagSmartProfileASettings;
     case kNagSmartProfileB: return kNagSmartProfileBSettings;
+    case kNagSmartProfileC: return kNagSmartProfileCSettings;
     default: return kNagSmartProfileDefaultSettings;
     }
 }

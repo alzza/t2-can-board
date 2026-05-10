@@ -33,7 +33,7 @@
  *  │           ├─ SW 필터: 880(EPAS) · 921/923(DAS) · 297(SCCM)               │
  *  │           ├─ NagHandler                                                  │
  *  │           │   ├─ Smart Torque: AP/phase/torque/angle 기반 echo           │
- *  │           │   ├─ Profiles: 기본 / A안 / B안                              │
+ *  │           │   ├─ Profiles: 기본 / A안 / B안 / C안                        │
  *  │           │   └─ checksum: (sum + 0x73) & 0xFF                           │
  *  │           ├─ BUS-OFF 복구: soft(twai_initiate_recovery) → hard fallback  │
  *  │           └─ TEC ≥ 96 조기 경고 / BUS-OFF 이벤트 로그 push               │
@@ -290,14 +290,19 @@ void nagKillerTask(void* pvParameters) {
 
         // 5초 간격 A/B 채널 상태 출력
         if (millis() - lastStatusTime > 5000) {
-            char aBuf[200];
+            char aBuf[240];
             // 진단 신호 한 줄에 통합: TX OK/Fail · TEC/peak · REC · MERRF · RX-OVR · EFLG
             //  · MERRF↑+TxFail=0 → ACK 부재(H1) 또는 동일 ID 충돌(H2)
             //  · TxFail↑           → 송신 큐 포화/하드 실패(H3)
             //  · RX-OVR↑ 누적     → A루프 폴링 부족
             snprintf(aBuf, sizeof(aBuf),
-                "🟢 [A-CH] RX:%u | 1021:%u | mod:%u | TX:OK=%u/Fail=%u | TEC=%u/peak=%u | REC=%u | MERRF=%u | RX-OVR=%u | EFLG=0x%02X",
+                "🟢 [A-CH] RX:%u | 1016:%u ULC:%u/스킵:%u OffHW:%u/스킵:%u | 1021:%u/EAP:%u | TX:OK=%u/Fail=%u | TEC=%u/peak=%u | REC=%u | MERRF=%u | RX-OVR=%u | EFLG=0x%02X",
                 (unsigned)aChannelDiag.framesReceivedTotal,
+                (unsigned)aChannelDiag.frames1016,
+                (unsigned)aChannelDiag.ulcStalkConfirmModifiedCount,
+                (unsigned)aChannelDiag.ulcStalkConfirmSkipCount,
+                (unsigned)aChannelDiag.alcOffHighwayModifiedCount,
+                (unsigned)aChannelDiag.alcOffHighwaySkipCount,
                 (unsigned)aChannelDiag.frames1021,
                 (unsigned)aChannelDiag.eapModifiedCount,
                 (unsigned)aChannelDiag.aTxOk,

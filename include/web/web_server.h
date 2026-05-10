@@ -4,6 +4,7 @@
 #if defined(DRIVER_TWAI) && !defined(NATIVE_BUILD)
 
 #include <algorithm>
+#include <cstring>
 #include <memory>
 #include <time.h>
 #include <WiFi.h>
@@ -95,6 +96,8 @@ static constexpr char kNvsKeyEnhancedAutopilot[] = "enh_autopilot";
 static constexpr char kNvsKeyNagKiller[] = "nag_killer";
 static constexpr char kNvsKeyTsllc[]        = "tsllc";        // TSLLC (스톱사인/초록불 제어)
 static constexpr char kNvsKeyAChTx[]        = "a_ch_tx";      // A채널 1021 수정 송신 마스터
+static constexpr char kNvsKeyUlcStalkConfirm[] = "ulc_stalk"; // UI_ulcStalkConfirm bit1
+static constexpr char kNvsKeyAlcOffHighway[]   = "alc_offhwy";// UI_alcOffHighwayEnable bit56
 static constexpr char kNvsKeyASpiMhz[]      = "a_spi_mhz";    // A MCP2515 SPI MHz: 8 or 10
 static constexpr char kNvsKeyAOneShot[]     = "a_oneshot";    // A MCP2515 one-shot mode
 static constexpr char kNvsKeyATxGuard[]     = "a_tx_guard";   // A TX guard enable
@@ -116,6 +119,8 @@ static_assert(sizeof(kNvsKeyNagHo)   - 1 <= 15, "NVS key too long");
 static constexpr char kNvsKeyTheme[] = "theme";
 static_assert(sizeof(kNvsKeyTsllc) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyAChTx) - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyUlcStalkConfirm) - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyAlcOffHighway) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyASpiMhz) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyAOneShot) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyATxGuard) - 1 <= 15, "NVS key too long");
@@ -165,6 +170,14 @@ static constexpr bool kWebSupportsEnhancedAutopilot = false;
 static constexpr bool kWebSupportsTsllc = true;
 #else
 static constexpr bool kWebSupportsTsllc = false;
+#endif
+
+#if defined(ENHANCED_AUTOPILOT)
+static constexpr bool kWebSupportsUlcStalkConfirm = true;
+static constexpr bool kWebSupportsAlcOffHighway = true;
+#else
+static constexpr bool kWebSupportsUlcStalkConfirm = false;
+static constexpr bool kWebSupportsAlcOffHighway = false;
 #endif
 
 #if defined(NAG_KILLER)
@@ -314,6 +327,8 @@ static void loadAExperimentSettings()
     aMcpSpiFreqHz = (uint32_t)spiMhz * 1000000UL;
     aMcpRequestedSpiFreqHz = (uint32_t)spiMhz * 1000000UL;
     aChannelTxRuntime = nvsReadBool(kNvsKeyAChTx, true);
+    uiUlcStalkConfirmRuntime = nvsReadBool(kNvsKeyUlcStalkConfirm, kUlcStalkConfirmDefaultEnabled);
+    uiAlcOffHighwayEnableRuntime = nvsReadBool(kNvsKeyAlcOffHighway, kAlcOffHighwayEnableDefaultEnabled);
     aMcpOneShotRuntime = nvsReadBool(kNvsKeyAOneShot, kAMcpOneShotDefaultEnabled);
     aTxGuardRuntime = nvsReadBool(kNvsKeyATxGuard, kATxGuardDefaultEnabled);
 }
@@ -430,7 +445,9 @@ static esp_err_t featureToggleHandler(httpd_req_t *req, Shared<bool> &target, bo
     if (!parseToggleBody(req, enabled))
         return ESP_FAIL;
 
-    if (enabled && ((&target == &enhancedAutopilotRuntime) || (&target == &tsllcRuntime)) && !(bool)aChannelTxRuntime)
+    if (enabled && ((&target == &enhancedAutopilotRuntime) || (&target == &tsllcRuntime) ||
+                    (&target == &uiUlcStalkConfirmRuntime) || (&target == &uiAlcOffHighwayEnableRuntime)) &&
+        !(bool)aChannelTxRuntime)
     {
         if (!nvsWriteBool(kNvsKeyAChTx, true))
         {
@@ -530,6 +547,10 @@ static esp_err_t statusHandler(httpd_req_t *req)
         kWebSupportsEnhancedAutopilot ? (aChannelTx && (bool)enhancedAutopilotRuntime) : false;
     bool nagKiller = kWebSupportsNagKiller ? (bool)nagKillerRuntime : false;
     bool tsllcEnabled = kWebSupportsTsllc ? (aChannelTx && (bool)tsllcRuntime) : false;
+    bool ulcStalkConfirmEnabled =
+        kWebSupportsUlcStalkConfirm ? (aChannelTx && (bool)uiUlcStalkConfirmRuntime) : false;
+    bool alcOffHighwayEnabled =
+        kWebSupportsAlcOffHighway ? (aChannelTx && (bool)uiAlcOffHighwayEnableRuntime) : false;
     cJSON *root = cJSON_CreateObject();
     if (!root) {
         webHealthRecordDuration(gWebStatusLastDurMs, gWebStatusMaxDurMs, handlerStartMs);
@@ -543,6 +564,8 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "nag_killer", nagKiller);
     cJSON_AddBoolToObject(root, "a_channel_tx", aChannelTx);
     cJSON_AddBoolToObject(root, "tsllc_enabled", tsllcEnabled);
+    cJSON_AddBoolToObject(root, "ui_ulc_stalk_confirm_enabled", ulcStalkConfirmEnabled);
+    cJSON_AddBoolToObject(root, "ui_alc_off_highway_enable_enabled", alcOffHighwayEnabled);
     cJSON_AddBoolToObject(root, "enable_print", enablePrint);
 
     cJSON_AddStringToObject(root, "theme", themeRuntime);
@@ -640,6 +663,10 @@ static esp_err_t statusHandler(httpd_req_t *req)
     addFeatureState(features, "a_channel_tx", true, aChannelTx, true);
     // TSLLC: 스톱사인/신호등 자동 정지 + 앞차 있을 때 초록불 자동 출발
     addFeatureState(features, "tsllc_enabled", kWebSupportsTsllc, tsllcEnabled, kTsllcBuildEnabled);
+    addFeatureState(features, "ui_ulc_stalk_confirm", kWebSupportsUlcStalkConfirm,
+                    ulcStalkConfirmEnabled, kUlcStalkConfirmBuildEnabled);
+    addFeatureState(features, "ui_alc_off_highway_enable", kWebSupportsAlcOffHighway,
+                    alcOffHighwayEnabled, kAlcOffHighwayEnableBuildEnabled);
     addFeatureState(features, "a_spi_8mhz", true, (uint32_t)aMcpRequestedSpiFreqHz <= 8000000UL, true);
     addFeatureState(features, "a_mcp_oneshot", true, (bool)aMcpOneShotRuntime, true);
     addFeatureState(features, "a_tx_guard", true, (bool)aTxGuardRuntime, true);
@@ -664,11 +691,13 @@ static esp_err_t statusHandler(httpd_req_t *req)
     
     // A/B 채널 ID별 주기 계산 (ms, 1초마다 갱신)
     static uint32_t idRateLastMs = 0;
+    static uint32_t lastFrames1016 = 0;
     static uint32_t lastFrames1021 = 0;
     static uint32_t lastFrames880 = 0;
     static uint32_t lastFrames921 = 0;
     static uint32_t lastFrames923 = 0;
     static uint32_t lastFrames297 = 0;
+    static uint32_t period1016Ms = 0;
     static uint32_t period1021Ms = 0;
     static uint32_t period880Ms = 0;
     static uint32_t period921Ms = 0;
@@ -679,24 +708,28 @@ static esp_err_t statusHandler(httpd_req_t *req)
         uint32_t now = millis();
         uint32_t elapsed = now - idRateLastMs;
         if (elapsed >= 1000) {
+            const uint32_t cur1016 = (uint32_t)aChannelDiag.frames1016;
             const uint32_t cur1021 = (uint32_t)aChannelDiag.frames1021;
             const uint32_t cur880 = (uint32_t)bChannelDiag.frames880;
             const uint32_t cur921 = (uint32_t)bChannelDiag.frames921;
             const uint32_t cur923 = (uint32_t)bChannelDiag.frames923;
             const uint32_t cur297 = (uint32_t)bChannelDiag.frames297;
 
+            const uint32_t d1016 = cur1016 - lastFrames1016;
             const uint32_t d1021 = cur1021 - lastFrames1021;
             const uint32_t d880  = cur880  - lastFrames880;
             const uint32_t d921  = cur921  - lastFrames921;
             const uint32_t d923  = cur923  - lastFrames923;
             const uint32_t d297  = cur297  - lastFrames297;
 
+            period1016Ms = (d1016 > 0) ? (elapsed / d1016) : 0;
             period1021Ms = (d1021 > 0) ? (elapsed / d1021) : 0;
             period880Ms  = (d880  > 0) ? (elapsed / d880)  : 0;
             period921Ms  = (d921  > 0) ? (elapsed / d921)  : 0;
             period923Ms  = (d923  > 0) ? (elapsed / d923)  : 0;
             period297Ms  = (d297  > 0) ? (elapsed / d297)  : 0;
 
+            lastFrames1016 = cur1016;
             lastFrames1021 = cur1021;
             lastFrames880 = cur880;
             lastFrames921 = cur921;
@@ -711,9 +744,15 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON *ach = cJSON_AddObjectToObject(channels, "a_channel");
     cJSON_AddNumberToObject(ach, "frames_received", (uint32_t)aChannelDiag.framesReceivedTotal);
     cJSON_AddNumberToObject(ach, "frame_hz", (double)(float)aChannelDiag.frameHz);
+    cJSON_AddNumberToObject(ach, "frames_1016", (uint32_t)aChannelDiag.frames1016);
+    cJSON_AddNumberToObject(ach, "id_1016_period_ms", (uint32_t)period1016Ms);
     cJSON_AddNumberToObject(ach, "frames_1021", (uint32_t)aChannelDiag.frames1021);
     cJSON_AddNumberToObject(ach, "id_1021_period_ms", (uint32_t)period1021Ms);
     cJSON_AddNumberToObject(ach, "eap_modified", (uint32_t)aChannelDiag.eapModifiedCount);
+    cJSON_AddNumberToObject(ach, "ulc_stalk_confirm_modified", (uint32_t)aChannelDiag.ulcStalkConfirmModifiedCount);
+    cJSON_AddNumberToObject(ach, "ulc_stalk_confirm_skipped", (uint32_t)aChannelDiag.ulcStalkConfirmSkipCount);
+    cJSON_AddNumberToObject(ach, "alc_off_highway_modified", (uint32_t)aChannelDiag.alcOffHighwayModifiedCount);
+    cJSON_AddNumberToObject(ach, "alc_off_highway_skipped", (uint32_t)aChannelDiag.alcOffHighwaySkipCount);
     cJSON_AddNumberToObject(ach, "last_frame_id", (uint32_t)aChannelDiag.lastFrameIdReceived);
     cJSON_AddNumberToObject(ach, "last_update_ms", (uint32_t)aChannelDiag.lastStatusUpdateMs);
     cJSON_AddNumberToObject(ach, "last_loop_ms", (uint32_t)aChannelDiag.lastLoopMs);
@@ -723,6 +762,8 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddBoolToObject(ach, "spi_reboot_required", (uint32_t)aMcpSpiFreqHz != (uint32_t)aMcpRequestedSpiFreqHz);
     cJSON_AddBoolToObject(ach, "mcp_one_shot", (bool)aMcpOneShotRuntime);
     cJSON_AddBoolToObject(ach, "channel_tx_enabled", (bool)aChannelTxRuntime);
+    cJSON_AddBoolToObject(ach, "ui_ulc_stalk_confirm_enabled", ulcStalkConfirmEnabled);
+    cJSON_AddBoolToObject(ach, "ui_alc_off_highway_enable_enabled", alcOffHighwayEnabled);
     cJSON_AddBoolToObject(ach, "tx_guard_enabled", (bool)aTxGuardRuntime);
     // MCP2515 에러 플래그 (EFLG 레지스터, 5초 폴링)
     cJSON_AddNumberToObject(ach, "mcp_eflg", (uint32_t)aChannelDiag.mcpEflg);
@@ -929,6 +970,18 @@ static esp_err_t tsllcHandler(httpd_req_t *req)
     return featureToggleHandler(req, tsllcRuntime, kWebSupportsTsllc, kNvsKeyTsllc, "TSLLC");
 }
 
+static esp_err_t uiUlcStalkConfirmHandler(httpd_req_t *req)
+{
+    return featureToggleHandler(req, uiUlcStalkConfirmRuntime, kWebSupportsUlcStalkConfirm,
+                                kNvsKeyUlcStalkConfirm, "UI_ulcStalkConfirm");
+}
+
+static esp_err_t uiAlcOffHighwayHandler(httpd_req_t *req)
+{
+    return featureToggleHandler(req, uiAlcOffHighwayEnableRuntime, kWebSupportsAlcOffHighway,
+                                kNvsKeyAlcOffHighway, "UI_alcOffHighwayEnable");
+}
+
 static esp_err_t aChannelTxHandler(httpd_req_t *req)
 {
     return featureToggleHandler(req, aChannelTxRuntime, true, kNvsKeyAChTx, "A_CHANNEL_TX");
@@ -1019,6 +1072,10 @@ static void addNagProfileJson(cJSON *root, const NagSmartProfileSettings &profil
     cJSON_AddNumberToObject(root, "state2DelayMs", profile.state2DelayMs);
     cJSON_AddNumberToObject(root, "strongDelayMs", profile.strongDelayMs);
     cJSON_AddNumberToObject(root, "strongRampMs", profile.strongRampMs);
+    cJSON_AddNumberToObject(root, "state2MildMinRawDelta", profile.state2MildMinRawDelta);
+    cJSON_AddNumberToObject(root, "state2MildMaxRawDelta", profile.state2MildMaxRawDelta);
+    cJSON_AddNumberToObject(root, "state2MildMinNm", (double)profile.state2MildMinRawDelta * 0.01);
+    cJSON_AddNumberToObject(root, "state2MildMaxNm", (double)profile.state2MildMaxRawDelta * 0.01);
     cJSON_AddNumberToObject(root, "state2BurstMs", profile.state2BurstMs);
     cJSON_AddNumberToObject(root, "state2PauseMs", profile.state2PauseMs);
     cJSON_AddNumberToObject(root, "strongBurstMs", profile.strongBurstMs);
@@ -1145,7 +1202,7 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
     return sendRet;
 }
 
-// ─── POST /api/nag-profile?p=0|1|2  ─────────────────────────────────────────
+// ─── POST /api/nag-profile?p=0|1|2|3  ───────────────────────────────────────
 static esp_err_t nagProfileHandler(httpd_req_t *req)
 {
     if (!rateLimitOk()) {
@@ -1506,10 +1563,15 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
 
     // 섹션 3: 채널 상태 스냅샷
     httpd_resp_sendstr_chunk(req, "\r\n=== [3] 채널 상태 스냅샷 ===\r\n");
-    snprintf(line, sizeof(line), "A채널: RX=%u 1021=%u mod=%u\r\n",
+    snprintf(line, sizeof(line), "A채널: RX=%u 1016=%u 1021=%u EAP=%u ULC=%u/스킵=%u OffHW=%u/스킵=%u\r\n",
         (unsigned)aChannelDiag.framesReceivedTotal,
+        (unsigned)aChannelDiag.frames1016,
         (unsigned)aChannelDiag.frames1021,
-        (unsigned)aChannelDiag.eapModifiedCount);
+        (unsigned)aChannelDiag.eapModifiedCount,
+        (unsigned)aChannelDiag.ulcStalkConfirmModifiedCount,
+        (unsigned)aChannelDiag.ulcStalkConfirmSkipCount,
+        (unsigned)aChannelDiag.alcOffHighwayModifiedCount,
+        (unsigned)aChannelDiag.alcOffHighwaySkipCount);
     httpd_resp_sendstr_chunk(req, line);
     // A채널 진단 카운터 (TEC/REC/MERRF/RX-OVR/EFLG/TX OK·Fail)
     uint32_t aGuardUntil = (uint32_t)aChannelDiag.aTxGuardUntilMs;
@@ -1714,7 +1776,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
     httpd_resp_sendstr_chunk(req, "\r\n=== [5] 밀리초 이벤트 로그 ===\r\n");
     httpd_resp_sendstr_chunk(req,
         "# type: 0=BUSOFF 1=REC_OK 2=REC_FAIL 3=REC_SOFT 4=ERR_PASS 5=ARB_LOST 6=BUS_ERR 7=TX_FAIL 8=RX_FULL 9=TX_BACKOFF 10=USER_MARK 11=NAG_MODE 12=MODEB_STATE 13=MODEB_PHASE 14=MODEB_FIRST_ECHO\r\n");
-    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING | NAG_MODE detail: smartProfile 0=default 1=A 2=B | MODEB_STATE detail: ap<<16|oldHo<<8|newHo | MODEB_PHASE detail: phase<<24|ap<<16|ho<<8|decision | FIRST_ECHO detail: delay_ms\r\n");
+    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING | NAG_MODE detail: smartProfile 0=default 1=A 2=B 3=C | MODEB_STATE detail: ap<<16|oldHo<<8|newHo | MODEB_PHASE detail: phase<<24|ap<<16|ho<<8|decision | FIRST_ECHO detail: delay_ms\r\n");
     httpd_resp_sendstr_chunk(req, "wall_time,timestamp_ms,type,typeName,tec,rec,detail\r\n");
     {
         size_t evtN = 0;
@@ -1914,6 +1976,8 @@ static void applyEmergencyDisableAllFeatures()
     nvsWriteBool("bk_eap", enhancedAutopilotRuntime);
     nvsWriteBool("bk_nag", nagKillerRuntime);
     nvsWriteBool("bk_tsllc", tsllcRuntime);
+    nvsWriteBool("bk_ui_ulc", uiUlcStalkConfirmRuntime);
+    nvsWriteBool("bk_alc_off", uiAlcOffHighwayEnableRuntime);
     nvsWriteBool("bk_a_ch_tx", aChannelTxRuntime);
 
     isaSpeedChimeSuppressRuntime = false;
@@ -1921,6 +1985,8 @@ static void applyEmergencyDisableAllFeatures()
     enhancedAutopilotRuntime = false;
     nagKillerRuntime = false;
     tsllcRuntime = false;
+    uiUlcStalkConfirmRuntime = false;
+    uiAlcOffHighwayEnableRuntime = false;
     aChannelTxRuntime = false;
 
     nvsWriteBool(kNvsKeyIsaSpeedChime, false);
@@ -1928,6 +1994,8 @@ static void applyEmergencyDisableAllFeatures()
     nvsWriteBool(kNvsKeyEnhancedAutopilot, false);
     nvsWriteBool(kNvsKeyNagKiller, false);
     nvsWriteBool(kNvsKeyTsllc, false);
+    nvsWriteBool(kNvsKeyUlcStalkConfirm, false);
+    nvsWriteBool(kNvsKeyAlcOffHighway, false);
     nvsWriteBool(kNvsKeyAChTx, false);
 
 }
@@ -1939,6 +2007,8 @@ static void applyEmergencyRestoreAllFeatures()
     enhancedAutopilotRuntime = nvsReadBool("bk_eap", false);
     nagKillerRuntime = nvsReadBool("bk_nag", false);
     tsllcRuntime = nvsReadBool("bk_tsllc", false);
+    uiUlcStalkConfirmRuntime = nvsReadBool("bk_ui_ulc", false);
+    uiAlcOffHighwayEnableRuntime = nvsReadBool("bk_alc_off", false);
     aChannelTxRuntime = nvsReadBool("bk_a_ch_tx", false);
 
     nvsWriteBool(kNvsKeyIsaSpeedChime, isaSpeedChimeSuppressRuntime);
@@ -1946,6 +2016,8 @@ static void applyEmergencyRestoreAllFeatures()
     nvsWriteBool(kNvsKeyEnhancedAutopilot, enhancedAutopilotRuntime);
     nvsWriteBool(kNvsKeyNagKiller, nagKillerRuntime);
     nvsWriteBool(kNvsKeyTsllc, tsllcRuntime);
+    nvsWriteBool(kNvsKeyUlcStalkConfirm, uiUlcStalkConfirmRuntime);
+    nvsWriteBool(kNvsKeyAlcOffHighway, uiAlcOffHighwayEnableRuntime);
     nvsWriteBool(kNvsKeyAChTx, aChannelTxRuntime);
 }
 
@@ -2062,6 +2134,14 @@ static esp_err_t otaHandler(httpd_req_t *req)
     if (req->content_len <= 0)
     {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing firmware payload");
+        return ESP_FAIL;
+    }
+
+    char contentType[64] = {};
+    if (httpd_req_get_hdr_value_str(req, "Content-Type", contentType, sizeof(contentType)) == ESP_OK &&
+        strstr(contentType, "multipart/form-data") != nullptr)
+    {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Upload raw firmware .bin, not multipart/form-data");
         return ESP_FAIL;
     }
 
@@ -2332,7 +2412,7 @@ static httpd_handle_t webServer = NULL;
 
 // timeseries CSV 메타 라이터: 드라이버 토글 + 기능 토글 상태를 '#' 주석 라인으로 주입
 static void timeseriesMetaWrite(httpd_req_t* req) {
-    char line[320];
+    char line[420];
     bool ssTx = gWebDriverB ? gWebDriverB->getSingleShotTx() : false;
     bool soft = gWebDriverB ? gWebDriverB->getSoftRecovery() : false;
     bool boSk = gWebDriverB ? gWebDriverB->getBusOffStopSkip() : false;
@@ -2349,9 +2429,11 @@ static void timeseriesMetaWrite(httpd_req_t* req) {
         (unsigned)cool);
     httpd_resp_sendstr_chunk(req, line);
     snprintf(line, sizeof(line),
-        "# a_tx=%s  tsllc=%s  a_spi=%lu  a_spi_req=%lu  a_oneshot=%u  a_guard=%u  version=%s  build=%s  env=%s  built_at=%s  git=%s/%s  dirty=%u  source=%s\n",
+        "# a_tx=%s  tsllc=%s  UI_ulcStalkConfirm=%s  UI_alcOffHighwayEnable=%s  a_spi=%lu  a_spi_req=%lu  a_oneshot=%u  a_guard=%u  version=%s  build=%s  env=%s  built_at=%s  git=%s/%s  dirty=%u  source=%s\n",
         (bool)aChannelTxRuntime ? "ON" : "OFF",
         (bool)tsllcRuntime ? "ON" : "OFF",
+        (bool)uiUlcStalkConfirmRuntime ? "ON" : "OFF",
+        (bool)uiAlcOffHighwayEnableRuntime ? "ON" : "OFF",
         (unsigned long)(uint32_t)aMcpSpiFreqHz,
         (unsigned long)(uint32_t)aMcpRequestedSpiFreqHz,
         (unsigned)((bool)aMcpOneShotRuntime),
@@ -2457,8 +2539,10 @@ static void webServerInit(TWAIDriver* drv = nullptr)
         Serial.printf("NVS: ENHANCED_AUTOPILOT = %d\n",
                       (bool)enhancedAutopilotRuntime);
         Serial.printf("NVS: NAG_KILLER = %d\n", (bool)nagKillerRuntime);
-        Serial.printf("NVS: A_TX = %d, A_SPI = %lu Hz, A_ONESHOT = %d, A_TX_GUARD = %d\n",
+        Serial.printf("NVS: A_TX = %d, UI_ulcStalkConfirm = %d, UI_alcOffHighwayEnable = %d, A_SPI = %lu Hz, A_ONESHOT = %d, A_TX_GUARD = %d\n",
               (int)(bool)aChannelTxRuntime,
+                  (int)(bool)uiUlcStalkConfirmRuntime,
+                  (int)(bool)uiAlcOffHighwayEnableRuntime,
                   (unsigned long)(uint32_t)aMcpSpiFreqHz,
                   (int)(bool)aMcpOneShotRuntime,
                   (int)(bool)aTxGuardRuntime);
@@ -2526,6 +2610,10 @@ static void webServerInit(TWAIDriver* drv = nullptr)
         .uri = "/api/nag-killer", .method = HTTP_POST, .handler = nagKillerHandler, .user_ctx = NULL};
     httpd_uri_t uriTsllc = {
         .uri = "/api/tsllc", .method = HTTP_POST, .handler = tsllcHandler, .user_ctx = NULL};
+    httpd_uri_t uriUlcStalkConfirm = {
+        .uri = "/api/ui-ulc-stalk-confirm", .method = HTTP_POST, .handler = uiUlcStalkConfirmHandler, .user_ctx = NULL};
+    httpd_uri_t uriAlcOffHighway = {
+        .uri = "/api/ui-alc-off-highway-enable", .method = HTTP_POST, .handler = uiAlcOffHighwayHandler, .user_ctx = NULL};
     httpd_uri_t uriAChannelTx = {
         .uri = "/api/a-channel-tx", .method = HTTP_POST, .handler = aChannelTxHandler, .user_ctx = NULL};
     httpd_uri_t uriASpi8Mhz = {
@@ -2610,6 +2698,8 @@ static void webServerInit(TWAIDriver* drv = nullptr)
     httpd_register_uri_handler(webServer, &uriEnhancedAutopilot);
     httpd_register_uri_handler(webServer, &uriNagKiller);
     httpd_register_uri_handler(webServer, &uriTsllc);
+    httpd_register_uri_handler(webServer, &uriUlcStalkConfirm);
+    httpd_register_uri_handler(webServer, &uriAlcOffHighway);
     httpd_register_uri_handler(webServer, &uriAChannelTx);
     httpd_register_uri_handler(webServer, &uriASpi8Mhz);
     httpd_register_uri_handler(webServer, &uriAOneShot);

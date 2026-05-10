@@ -14,15 +14,97 @@ void setUp()
     handler = HW3Handler();
     handler.enablePrint = false;
     enhancedAutopilotRuntime = true;
+    uiUlcStalkConfirmRuntime = true;
+    uiAlcOffHighwayEnableRuntime = true;
+    aChannelTxRuntime = true;
+    aChannelDiag.ulcStalkConfirmModifiedCount = 0;
+    aChannelDiag.ulcStalkConfirmSkipCount = 0;
+    aChannelDiag.alcOffHighwayModifiedCount = 0;
+    aChannelDiag.alcOffHighwaySkipCount = 0;
 }
 
 void tearDown() {}
 
 // --- Speed profile from follow distance (CAN ID 1016) ---
 
+void test_hw3_1016_updates_both_signals_only_when_needed()
+{
+    CanFrame f = {.id = 1016, .dlc = 8};
+    setBit(f, 1, true);
+    setBit(f, 56, false);
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1, aChannelDiag.ulcStalkConfirmModifiedCount);
+    TEST_ASSERT_EQUAL_UINT32(0, aChannelDiag.ulcStalkConfirmSkipCount);
+    TEST_ASSERT_EQUAL_UINT32(1, aChannelDiag.alcOffHighwayModifiedCount);
+    TEST_ASSERT_EQUAL_UINT32(0, aChannelDiag.alcOffHighwaySkipCount);
+    TEST_ASSERT_FALSE((mock.sent[0].data[0] >> 1) & 0x01);
+    TEST_ASSERT_TRUE(mock.sent[0].data[7] & 0x01);
+}
+
+void test_hw3_1016_skips_when_enabled_signals_already_applied()
+{
+    CanFrame f = {.id = 1016, .dlc = 8};
+    setBit(f, 1, false);
+    setBit(f, 56, true);
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(0, aChannelDiag.ulcStalkConfirmModifiedCount);
+    TEST_ASSERT_EQUAL_UINT32(1, aChannelDiag.ulcStalkConfirmSkipCount);
+    TEST_ASSERT_EQUAL_UINT32(0, aChannelDiag.alcOffHighwayModifiedCount);
+    TEST_ASSERT_EQUAL_UINT32(1, aChannelDiag.alcOffHighwaySkipCount);
+}
+
+void test_hw3_1016_ulc_toggle_off_leaves_bit1_unchanged()
+{
+    uiUlcStalkConfirmRuntime = false;
+    CanFrame f = {.id = 1016, .dlc = 8};
+    setBit(f, 1, true);
+    setBit(f, 56, false);
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_TRUE((mock.sent[0].data[0] >> 1) & 0x01);
+    TEST_ASSERT_TRUE(mock.sent[0].data[7] & 0x01);
+    TEST_ASSERT_EQUAL_UINT32(0, aChannelDiag.ulcStalkConfirmModifiedCount);
+    TEST_ASSERT_EQUAL_UINT32(1, aChannelDiag.alcOffHighwayModifiedCount);
+}
+
+void test_hw3_1016_off_highway_toggle_off_leaves_bit56_unchanged()
+{
+    uiAlcOffHighwayEnableRuntime = false;
+    CanFrame f = {.id = 1016, .dlc = 8};
+    setBit(f, 1, true);
+    setBit(f, 56, false);
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_FALSE((mock.sent[0].data[0] >> 1) & 0x01);
+    TEST_ASSERT_FALSE(mock.sent[0].data[7] & 0x01);
+    TEST_ASSERT_EQUAL_UINT32(1, aChannelDiag.ulcStalkConfirmModifiedCount);
+    TEST_ASSERT_EQUAL_UINT32(0, aChannelDiag.alcOffHighwayModifiedCount);
+}
+
+void test_hw3_1016_both_toggles_off_does_not_send()
+{
+    uiUlcStalkConfirmRuntime = false;
+    uiAlcOffHighwayEnableRuntime = false;
+    CanFrame f = {.id = 1016, .dlc = 8};
+    setBit(f, 1, true);
+    setBit(f, 56, false);
+    handler.handleMessage(f, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(0, aChannelDiag.ulcStalkConfirmModifiedCount);
+    TEST_ASSERT_EQUAL_UINT32(0, aChannelDiag.alcOffHighwayModifiedCount);
+}
+
 void test_hw3_follow_distance_1_sets_profile_2()
 {
     CanFrame f = {.id = 1016};
+    setBit(f, 56, true);
     f.data[5] = 0b00100000; // followDistance = 1
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL_INT(2, handler.speedProfile);
@@ -32,6 +114,7 @@ void test_hw3_follow_distance_1_sets_profile_2()
 void test_hw3_follow_distance_2_sets_profile_1()
 {
     CanFrame f = {.id = 1016};
+    setBit(f, 56, true);
     f.data[5] = 0b01000000; // followDistance = 2
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL_INT(1, handler.speedProfile);
@@ -40,6 +123,7 @@ void test_hw3_follow_distance_2_sets_profile_1()
 void test_hw3_follow_distance_3_sets_profile_0()
 {
     CanFrame f = {.id = 1016};
+    setBit(f, 56, true);
     f.data[5] = 0b01100000; // followDistance = 3
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL_INT(0, handler.speedProfile);
@@ -48,6 +132,7 @@ void test_hw3_follow_distance_3_sets_profile_0()
 void test_hw3_follow_distance_0_keeps_default()
 {
     CanFrame f = {.id = 1016};
+    setBit(f, 56, true);
     f.data[5] = 0x00; // followDistance = 0
     handler.handleMessage(f, mock);
     TEST_ASSERT_EQUAL_INT(1, handler.speedProfile); // default
@@ -56,6 +141,7 @@ void test_hw3_follow_distance_0_keeps_default()
 void test_hw3_follow_distance_profile_survives_mux0_with_zero_offset()
 {
     CanFrame followDistanceFrame = {.id = 1016};
+    setBit(followDistanceFrame, 56, true);
     followDistanceFrame.data[5] = 0b00100000; // followDistance = 1 => profile 2
     handler.handleMessage(followDistanceFrame, mock);
     TEST_ASSERT_EQUAL_INT(2, handler.speedProfile);
@@ -202,15 +288,14 @@ void test_hw3_mux1_sends_exactly_1()
 
 void test_hw3_filter_ids_count()
 {
-    TEST_ASSERT_EQUAL_UINT8(3, handler.filterIdCount());
+    TEST_ASSERT_EQUAL_UINT8(2, handler.filterIdCount());
 }
 
 void test_hw3_filter_ids_values()
 {
     const uint32_t *ids = handler.filterIds();
-    TEST_ASSERT_EQUAL_UINT32(787, ids[0]);
-    TEST_ASSERT_EQUAL_UINT32(1016, ids[1]);
-    TEST_ASSERT_EQUAL_UINT32(1021, ids[2]);
+    TEST_ASSERT_EQUAL_UINT32(1016, ids[0]);
+    TEST_ASSERT_EQUAL_UINT32(1021, ids[1]);
 }
 
 int main()
@@ -219,6 +304,12 @@ int main()
 
     RUN_TEST(test_hw3_filter_ids_count);
     RUN_TEST(test_hw3_filter_ids_values);
+
+    RUN_TEST(test_hw3_1016_updates_both_signals_only_when_needed);
+    RUN_TEST(test_hw3_1016_skips_when_enabled_signals_already_applied);
+    RUN_TEST(test_hw3_1016_ulc_toggle_off_leaves_bit1_unchanged);
+    RUN_TEST(test_hw3_1016_off_highway_toggle_off_leaves_bit56_unchanged);
+    RUN_TEST(test_hw3_1016_both_toggles_off_does_not_send);
 
     RUN_TEST(test_hw3_follow_distance_1_sets_profile_2);
     RUN_TEST(test_hw3_follow_distance_2_sets_profile_1);
