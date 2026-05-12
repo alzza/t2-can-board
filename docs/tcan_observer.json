@@ -1,0 +1,65 @@
+{
+  "signals": [
+    {
+      "name": "SCCM_turnIndicatorStalkStatus",
+      "channel": "A+B",
+      "frame_id": 585,
+      "frame_hex": "0x249",
+      "start_bit": 16,
+      "length": 4,
+      "idle": 0,
+      "byte_order": "little"
+    },
+    {
+      "name": "UI_autoLaneChangeEnable",
+      "channel": "A+B",
+      "frame_id": 659,
+      "frame_hex": "0x293",
+      "start_bit": 24,
+      "length": 2,
+      "idle": 0,
+      "byte_order": "little"
+    },
+    {
+      "name": "UI_alcOffHighwayEnable",
+      "channel": "A+B",
+      "frame_id": 1016,
+      "frame_hex": "0x3F8",
+      "start_bit": 56,
+      "length": 1,
+      "idle": 0,
+      "byte_order": "little"
+    }
+  ],
+  "meta": {
+    "generatedAt": "2026-05-12T02:04:52+09:00",
+    "source": "https://tcan.latency.is/data/manifest.json",
+    "platforms": [
+      "ModelY"
+    ],
+    "buses": [
+      "VEH",
+      "CH"
+    ],
+    "channel": "auto",
+    "maxSignals": 10,
+    "maxAFilterIds": 6,
+    "observerLimit": 10,
+    "aFilterLimit": 6,
+    "aFilterBaseIds": [
+      659,
+      1016,
+      1021
+    ],
+    "aFilterIds": [
+      585,
+      659,
+      1016,
+      1021
+    ],
+    "aFilterUsed": 4,
+    "aFilterAdditionalCapacity": 3,
+    "aFilterRemaining": 2,
+    "missingSignals": []
+  }
+}
