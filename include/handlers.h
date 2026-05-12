@@ -75,15 +75,51 @@ struct HW3Handler : public CarManagerBase
 
     const uint32_t *filterIds() const override
     {
-        static constexpr uint32_t ids[] = {1016, 1021};
+        static uint32_t ids[kSignalObserverMaxAFilterIds] = {};
+        signalObserverFillAFilterIds(ids, kSignalObserverMaxAFilterIds);
         return ids;
     }
-    uint8_t filterIdCount() const override { return 2; }
+    uint8_t filterIdCount() const override
+    {
+        static uint32_t ids[kSignalObserverMaxAFilterIds] = {};
+        return signalObserverFillAFilterIds(ids, kSignalObserverMaxAFilterIds);
+    }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
         aChannelDiag.framesReceivedTotal++;
         aChannelDiag.lastFrameIdReceived = frame.id;
+        signalObserverObserveFrame(kSignalObserverChannelA, frame, millis());
+
+        if (frame.id == 659) {
+            aChannelDiag.frames293++;
+            if (frame.dlc < 8) return;
+#if defined(ENHANCED_AUTOPILOT)
+            if (uiAutoLaneChangeEnableRuntime) {
+                const uint8_t alcRaw = frame.data[3] & 0x03;
+                const bool updateAutoLaneChange = alcRaw != 1;
+                if (!updateAutoLaneChange) {
+                    aChannelDiag.autoLaneChangeSkipCount++;
+                    return;
+                }
+                if (shouldSkipATx("UI 293")) return;
+
+                frame.data[3] = static_cast<uint8_t>((frame.data[3] & ~0x03U) | 0x01U);
+                finalizeTeslaCounter52Checksum56(frame);
+                aChannelDiag.autoLaneChangeModifiedCount++;
+                framesSent++;
+                if (driver.sendCheck(frame)) { aChannelDiag.aTxOk++; aChannelDiag.lastTxMs = millis(); }
+                else                           aChannelDiag.aTxFail++;
+
+                static unsigned long lastAutoLaneChangeAction = 0;
+                if (millis() - lastAutoLaneChangeAction > 5000) {
+                    logRing.push("🟣⚡ [A-CH] UI_chassisControl 주입: UI_autoLaneChangeEnable=ON", millis());
+                    lastAutoLaneChangeAction = millis();
+                }
+            }
+#endif
+            return;
+        }
 
         if (frame.id == 1016) {
             aChannelDiag.frames1016++;
@@ -94,25 +130,52 @@ struct HW3Handler : public CarManagerBase
             else if (followDistance == 3) speedProfile = 0;
 #if defined(ENHANCED_AUTOPILOT)
             const bool ulcEnabled = (bool)uiUlcStalkConfirmRuntime;
+            const bool ulcOffHighwayEnabled = (bool)uiUlcOffHighwayRuntime;
             const bool offHighwayEnabled = (bool)uiAlcOffHighwayEnableRuntime;
-            if (ulcEnabled || offHighwayEnabled) {
+            const uint8_t speedTarget = (uint8_t)uiUlcSpeedConfigRuntime;
+            const uint8_t blindSpotTarget = (uint8_t)uiUlcBlindSpotConfigRuntime;
+            const bool speedConfigEnabled = speedTarget <= 3;
+            const bool blindSpotConfigEnabled = blindSpotTarget <= 2;
+            if (ulcEnabled || ulcOffHighwayEnabled || offHighwayEnabled || speedConfigEnabled || blindSpotConfigEnabled) {
                 const bool ulcConfirmSet = (frame.data[0] & 0x02) != 0;
+                const bool ulcOffHighwaySet = (frame.data[1] & 0x80) != 0;
                 const bool alcOffHighwaySet = (frame.data[7] & 0x01) != 0;
+                const uint8_t speedRaw = (frame.data[6] >> 2) & 0x03;
+                const uint8_t blindSpotRaw = (frame.data[6] >> 4) & 0x03;
                 const bool updateUlcConfirm = ulcEnabled && ulcConfirmSet;
+                const bool updateUlcOffHighway = ulcOffHighwayEnabled && !ulcOffHighwaySet;
                 const bool updateOffHighway = offHighwayEnabled && !alcOffHighwaySet;
+                const bool updateSpeedConfig = speedConfigEnabled && speedRaw != speedTarget;
+                const bool updateBlindSpotConfig = blindSpotConfigEnabled && blindSpotRaw != blindSpotTarget;
 
                 if (ulcEnabled && !updateUlcConfirm) aChannelDiag.ulcStalkConfirmSkipCount++;
+                if (ulcOffHighwayEnabled && !updateUlcOffHighway) aChannelDiag.ulcOffHighwaySkipCount++;
                 if (offHighwayEnabled && !updateOffHighway) aChannelDiag.alcOffHighwaySkipCount++;
-                if (!updateUlcConfirm && !updateOffHighway) return;
+                if (speedConfigEnabled && !updateSpeedConfig) aChannelDiag.ulcSpeedConfigSkipCount++;
+                if (blindSpotConfigEnabled && !updateBlindSpotConfig) aChannelDiag.ulcBlindSpotConfigSkipCount++;
+                if (!updateUlcConfirm && !updateUlcOffHighway && !updateOffHighway &&
+                    !updateSpeedConfig && !updateBlindSpotConfig) return;
                 if (shouldSkipATx("UI 1016")) return;
 
                 if (updateUlcConfirm) {
                     setBit(frame, 1, false);  // UI_ulcStalkConfirm=0: 고속도로 NoA 컨펌 완화
                     aChannelDiag.ulcStalkConfirmModifiedCount++;
                 }
+                if (updateUlcOffHighway) {
+                    setBit(frame, 15, true);  // UI_ulcOffHighway=1: ULC 비고속도로 허용 실험
+                    aChannelDiag.ulcOffHighwayModifiedCount++;
+                }
                 if (updateOffHighway) {
                     setBit(frame, 56, true);  // UI_alcOffHighwayEnable=1: 비고속도로 ALC 허용
                     aChannelDiag.alcOffHighwayModifiedCount++;
+                }
+                if (updateSpeedConfig) {
+                    frame.data[6] = static_cast<uint8_t>((frame.data[6] & ~(0x03U << 2)) | ((speedTarget & 0x03U) << 2));
+                    aChannelDiag.ulcSpeedConfigModifiedCount++;
+                }
+                if (updateBlindSpotConfig) {
+                    frame.data[6] = static_cast<uint8_t>((frame.data[6] & ~(0x03U << 4)) | ((blindSpotTarget & 0x03U) << 4));
+                    aChannelDiag.ulcBlindSpotConfigModifiedCount++;
                 }
                 framesSent++;
                 if (driver.sendCheck(frame)) { aChannelDiag.aTxOk++; aChannelDiag.lastTxMs = millis(); }
@@ -120,7 +183,15 @@ struct HW3Handler : public CarManagerBase
 
                 static unsigned long lastAlcAction = 0;
                 if (millis() - lastAlcAction > 5000) {
-                    logRing.push("🟣⚡ [A-CH] UI_driverAssistControl 주입 완료: UI_ulcStalkConfirm=0 UI_alcOffHighwayEnable=1", millis());
+                    char buf[176];
+                    snprintf(buf, sizeof(buf),
+                             "🟣⚡ [A-CH] UI_driverAssistControl 주입: stalk=%s ulcOffHW=%s alcOffHW=%s speed=%s blind=%s",
+                             ulcEnabled ? "0" : "stock",
+                             ulcOffHighwayEnabled ? "1" : "stock",
+                             offHighwayEnabled ? "1" : "stock",
+                             uiUlcSpeedConfigName(speedTarget),
+                             uiUlcBlindSpotConfigName(blindSpotTarget));
+                    logRing.push(buf, millis());
                     lastAlcAction = millis();
                 }
             }
@@ -193,6 +264,8 @@ struct NagHandler : public CarManagerBase
     // ── 스마트 토크 상태머신 변수 ────────────────────────────────────────────
     uint8_t  _mbApState    = 0;       // DAS_autopilotState (ID 921/923 data[0]&0x0F)
     float    _mbAngleDeg   = 0.0f;    // SCCM_steeringAngle (ID 297)
+    int8_t   _mbHeldTorqueDir = 0;     // D안: +1=양토크, -1=음토크
+    uint32_t _mbDirHoldUntilMs = 0;    // D안: 부호 전환 보류 종료 시각
     uint8_t  _mbPrevHoSt   = 0xFF;    // 직전 HandsOnState (전이 감지용)
 
     uint32_t _mbState1EnterMs  = 0;   // 상태1 진입 시각 (500ms grace)
@@ -232,6 +305,45 @@ struct NagHandler : public CarManagerBase
         uint32_t cycleMs = static_cast<uint32_t>(burstMs) + static_cast<uint32_t>(pauseMs);
         if (cycleMs == 0) return true;
         return (activeMs % cycleMs) < burstMs;
+    }
+
+    static int8_t _mbImmediateTorqueDir(float angleDeg) {
+        return (angleDeg > 0.0f) ? -1 : 1;
+    }
+
+    void _mbResetTorqueDirHold() {
+        _mbHeldTorqueDir = 0;
+        _mbDirHoldUntilMs = 0;
+    }
+
+    int8_t _mbTorqueDirForProfile(const NagSmartProfileSettings &profile, uint32_t nowMs) {
+        int8_t immediateDir = _mbImmediateTorqueDir(_mbAngleDeg);
+        if (profile.id != kNagSmartProfileD) return immediateDir;
+
+        constexpr float kDirDeadbandDeg = 0.6f;
+        constexpr float kDirSwitchDeg = 1.2f;
+        constexpr uint32_t kDirHoldMs = 1500UL;
+        float absDeg = (_mbAngleDeg < 0.0f) ? -_mbAngleDeg : _mbAngleDeg;
+
+        if (_mbHeldTorqueDir == 0) {
+            _mbHeldTorqueDir = immediateDir;
+            _mbDirHoldUntilMs = nowMs + kDirHoldMs;
+            return _mbHeldTorqueDir;
+        }
+        if (absDeg <= kDirDeadbandDeg) {
+            _mbDirHoldUntilMs = nowMs + kDirHoldMs;
+            return _mbHeldTorqueDir;
+        }
+        if (immediateDir == _mbHeldTorqueDir) {
+            _mbDirHoldUntilMs = nowMs + kDirHoldMs;
+            return _mbHeldTorqueDir;
+        }
+        if (absDeg < kDirSwitchDeg || nowMs < _mbDirHoldUntilMs) {
+            return _mbHeldTorqueDir;
+        }
+        _mbHeldTorqueDir = immediateDir;
+        _mbDirHoldUntilMs = nowMs + kDirHoldMs;
+        return _mbHeldTorqueDir;
     }
 
     static uint32_t _mbPackStateDetail(uint8_t apState, uint8_t oldHoState, uint8_t newHoState) {
@@ -306,6 +418,7 @@ struct NagHandler : public CarManagerBase
         // 전역 허용 조건: AP state 3-6 + HandsOnState 활성
         if (_mbApState < 3 || _mbApState > 6) {
             bChannelDiag.skipApState++;
+            _mbResetTorqueDirHold();
             _mbSetPhase(0, nowMs, kNagDecisionApBlocked);
             bChannelDiag.nagLastDecision = kNagDecisionApBlocked;
             return;
@@ -314,6 +427,7 @@ struct NagHandler : public CarManagerBase
         if (hoSt == 0 || hoSt == 8 || hoSt == 15 || hoSt == 0xFF) {
             // DAS 미수신(0xFF)은 fallback: 스킵(Mode B는 보수적)
             uint8_t decision = (hoSt == 0xFF) ? kNagDecisionNo921 : kNagDecisionDasIdle;
+            _mbResetTorqueDirHold();
             _mbSetPhase(0, nowMs, decision);
             bChannelDiag.nagLastDecision = decision;
             return;
@@ -322,6 +436,7 @@ struct NagHandler : public CarManagerBase
         uint8_t realHo = (frame.data[4] >> 6) & 0x03;
         if (realHo != 0) {
             bChannelDiag.skipHandsOn++;
+            _mbResetTorqueDirHold();
             _mbSetPhase(0, nowMs, kNagDecisionHandsOn);
             bChannelDiag.nagLastDecision = kNagDecisionHandsOn;
             return;
@@ -371,6 +486,7 @@ struct NagHandler : public CarManagerBase
                 // grace 종료 — 주입 없음
                 _mbLastGeneratedTorqRaw = 2048;
                 _mbLastSpoofedHo = 0;
+                _mbResetTorqueDirHold();
                 _mbSetPhase(0, nowMs, kNagDecisionNoEcho);
                 bChannelDiag.nagLastDecision = kNagDecisionNoEcho;
                 return;
@@ -401,7 +517,7 @@ struct NagHandler : public CarManagerBase
                 const int16_t mildMaxDelta = static_cast<int16_t>(profile.state2MildMaxRawDelta);
                 int16_t minR = static_cast<int16_t>(2048 + mildMinDelta);
                 int16_t maxR = static_cast<int16_t>(2048 + mildMaxDelta);
-                if (_mbAngleDeg > 0.0f) {
+                if (_mbTorqueDirForProfile(profile, nowMs) < 0) {
                     minR = static_cast<int16_t>(2048 - mildMaxDelta);
                     maxR = static_cast<int16_t>(2048 - mildMinDelta);
                 }
@@ -450,7 +566,7 @@ struct NagHandler : public CarManagerBase
                 strongPhase = 6;
             }
             _mbSetPhase(strongPhase, nowMs, kNagDecisionEcho);
-            torqRaw = (_mbAngleDeg > 0.0f)
+            torqRaw = (_mbTorqueDirForProfile(profile, nowMs) < 0)
                       ? static_cast<uint16_t>(2048 - magnitude)
                       : static_cast<uint16_t>(2048 + magnitude);
             // 범위 클램프 (abs 최대 2.1Nm = raw ±210)
@@ -524,6 +640,7 @@ struct NagHandler : public CarManagerBase
 
         if (!nagKillerActive || !nagKillerRuntime) {
             bChannelDiag.skipRuntimeOrInactive++;
+            _mbResetTorqueDirHold();
             bChannelDiag.nagLastDecision = kNagDecisionRuntimeOff;
             return;
         }

@@ -77,10 +77,57 @@ const profiles = [
     strongBurstMs: 0,
     strongPauseMs: 0,
   },
+  {
+    smartProfile: 4,
+    profileLabel: 'D안',
+    profileSummary: 'C안 + 직선 저조향각 sign hold 후보. 토크와 timing은 C안과 같고 방향만 1.5초 유지.',
+    state1GraceMs: 500,
+    state2DelayMs: 600,
+    strongDelayMs: 400,
+    strongRampMs: 500,
+    state2MildMinRawDelta: 50,
+    state2MildMaxRawDelta: 170,
+    state2MildMinNm: 0.5,
+    state2MildMaxNm: 1.7,
+    state2BurstMs: 0,
+    state2PauseMs: 0,
+    strongBurstMs: 0,
+    strongPauseMs: 0,
+  },
 ];
 
 const scenarios = new Set(['normal', 'ap_block', 'bus_off', 'bus_err', 'no_frames']);
 const cli = parseArgs(process.argv.slice(2));
+
+function defaultSignalObserverSignals() {
+  return [
+    { name: 'DAS_autosteerHealthState', channel: 'B', frame_id: 586, byte_order: 'little', start_bit: 21, length: 3, idle: 0 },
+    { name: 'DAS_ulcType', channel: 'B', frame_id: 586, byte_order: 'little', start_bit: 58, length: 2, idle: 0 },
+    { name: 'DAS_ulcConfirmationRequestActive', channel: 'A', frame_id: 1001, byte_order: 'little', start_bit: 28, length: 1, idle: 0 },
+    { name: 'SCCM_turnIndicatorStalkStatus', channel: 'A+B', frame_id: 585, byte_order: 'little', start_bit: 16, length: 4, idle: 0 },
+  ];
+}
+
+function defaultToggles() {
+  return {
+    a_channel_tx: true,
+    ui_ulc_stalk_confirm_enabled: true,
+    ui_alc_off_highway_enable_enabled: true,
+    ui_ulc_off_highway_enabled: false,
+    ui_auto_lane_change_enable_enabled: false,
+    ui_ulc_speed_config_value: 255,
+    ui_ulc_blind_spot_config_value: 255,
+    enhanced_autopilot: true,
+    tsllc_enabled: true,
+    nag_killer: true,
+    enable_print: true,
+    a_spi_8mhz: false,
+    a_mcp_oneshot: false,
+    a_tx_guard: false,
+    singleShotTx: false,
+    busOffStopSkip: false,
+  };
+}
 
 const state = {
   bootMs: Date.now(),
@@ -94,21 +141,33 @@ const state = {
   samples: 24,
   diagStartedMs: 0,
   diagLogHead: 0,
-  toggles: {
-    a_channel_tx: true,
-    ui_ulc_stalk_confirm_enabled: true,
-    ui_alc_off_highway_enable_enabled: true,
-    enhanced_autopilot: true,
-    tsllc_enabled: true,
-    nag_killer: true,
-    enable_print: true,
-    a_spi_8mhz: false,
-    a_mcp_oneshot: false,
-    a_tx_guard: false,
-    singleShotTx: false,
-    busOffStopSkip: false,
-  },
+  userMarkerActive: false,
+  userMarkerCount: 0,
+  userMarkerLastMs: 0,
+  userMarkerLastDetail: 0,
+  observerResetMs: 0,
+  observerRuntime: true,
+  observerFrozenElapsedMs: 0,
+  observerSignals: defaultSignalObserverSignals(),
+  toggles: defaultToggles(),
 };
+
+function resetMockNvsState() {
+  state.theme = 'dark';
+  state.smartProfile = 0;
+  state.rec = false;
+  state.recStartMs = 0;
+  state.samples = 24;
+  state.userMarkerActive = false;
+  state.userMarkerCount = 0;
+  state.userMarkerLastMs = 0;
+  state.userMarkerLastDetail = 0;
+  state.observerResetMs = nowMs();
+  state.observerRuntime = true;
+  state.observerFrozenElapsedMs = 0;
+  state.observerSignals = defaultSignalObserverSignals();
+  state.toggles = defaultToggles();
+}
 
 let cachedHtml = '';
 let cachedMtimeMs = 0;
@@ -162,7 +221,7 @@ function pushLog(msg) {
 
 function clampProfile(value) {
   const p = Number(value);
-  return p >= 0 && p <= 3 ? p : 0;
+  return p >= 0 && p <= 4 ? p : 0;
 }
 
 function send(res, status, contentType, body) {
@@ -249,6 +308,117 @@ function feature(enabled, build = true, supported = true) {
   return { supported, enabled, build_enabled: build };
 }
 
+function ulcSpeedConfigName(value) {
+  if (value === 0) return 'DISABLED';
+  if (value === 1) return 'MILD';
+  if (value === 2) return 'AVERAGE';
+  if (value === 3) return 'MAD_MAX';
+  return 'STOCK';
+}
+
+function ulcBlindSpotConfigName(value) {
+  if (value === 0) return 'STANDARD';
+  if (value === 1) return 'AGGRESSIVE';
+  if (value === 2) return 'MAD_MAX';
+  return 'STOCK';
+}
+
+function clampExperimentValue(value, max) {
+  const raw = Number(value);
+  if (raw === 255) return 255;
+  return raw >= 0 && raw <= max ? raw : 255;
+}
+
+function normalizeObserverChannel(value) {
+  const text = String(value || 'A').toUpperCase();
+  if (text === 'B' || text === 'CH') return 'B';
+  if (text === 'BOTH' || text === 'A+B' || text === 'AB') return 'A+B';
+  return 'A';
+}
+
+function normalizeObserverSignal(entry) {
+  const frameId = Number(entry.frame_id ?? entry.id);
+  const startBit = Number(entry.start_bit ?? entry.startBit);
+  const length = Number(entry.length);
+  if (!Number.isFinite(frameId) || frameId < 0 || frameId > 0x7ff) throw new Error('invalid frame_id');
+  const byteOrder = String(entry.byte_order ?? entry.byteOrder ?? 'little').toLowerCase();
+  if (!['little', 'big', 'intel', 'motorola'].includes(byteOrder)) throw new Error('byte_order must be little or big');
+  const normalizedByteOrder = (byteOrder === 'big' || byteOrder === 'motorola') ? 'big' : 'little';
+  if (!Number.isFinite(startBit) || !Number.isFinite(length) || startBit < 0 || startBit > 63 || length <= 0 || length > 32 || (normalizedByteOrder !== 'big' && startBit + length > 64)) {
+    throw new Error('invalid bit layout');
+  }
+  return {
+    name: String(entry.name || 'signal').slice(0, 39),
+    enabled: entry.enabled !== false,
+    channel: normalizeObserverChannel(entry.channel),
+    frame_id: frameId,
+    byte_order: normalizedByteOrder,
+    start_bit: startBit,
+    length,
+    idle: Number(entry.idle ?? 0) || 0,
+  };
+}
+
+function observerAFilterFits(signals) {
+  const ids = new Set([659, 1016, 1021]);
+  for (const sig of signals) {
+    if (!sig.enabled || !sig.channel.includes('A')) continue;
+    ids.add(sig.frame_id);
+    if (ids.size > 6) return false;
+  }
+  return true;
+}
+
+function observerStatusJson(counts, uptimeMs) {
+  const elapsed = state.observerRuntime ? Math.max(0, uptimeMs - state.observerResetMs) : state.observerFrozenElapsedMs;
+  const sampleMs = state.observerRuntime ? uptimeMs : state.observerResetMs + elapsed;
+  const tick = Math.floor(elapsed / 500);
+  const noFrames = counts.noFrames;
+  const signals = state.observerSignals.map((sig, idx) => {
+    const baseRate = sig.channel === 'B' ? 100 : sig.channel === 'A+B' ? 20 : 6;
+    const frameCount = noFrames ? 0 : Math.floor((elapsed / 1000) * baseRate) + idx * 3;
+    let raw = 0;
+    if (!noFrames && sig.enabled) {
+      if (sig.name === 'SCCM_turnIndicatorStalkStatus') raw = Math.floor(elapsed / 3500) % 3 === 1 ? 1 : Math.floor(elapsed / 3500) % 3 === 2 ? 2 : 0;
+      else raw = (tick + idx) % (1 << Math.min(sig.length, 4));
+    }
+    const active = raw !== (sig.idle || 0);
+    const burstCount = noFrames ? 0 : Math.floor(elapsed / 3500) + (active ? 1 : 0);
+    const currentRunFrames = active ? Math.floor((elapsed % 3500) / (sig.channel === 'B' ? 10 : 167)) + 1 : 0;
+    const lastRunFrames = active ? Math.max(0, Math.floor(3500 / (sig.channel === 'B' ? 10 : 167)) - 3) : Math.floor((elapsed % 3500) / (sig.channel === 'B' ? 10 : 167));
+    return {
+      ...sig,
+      channel: sig.channel,
+      frame_hex: `0x${sig.frame_id.toString(16).toUpperCase().padStart(3, '0')}`,
+      seen: frameCount > 0,
+      active,
+      raw,
+      prev_raw: Math.max(0, raw - 1),
+      frame_count: frameCount,
+      active_frame_count: active ? Math.floor(frameCount / 2) : Math.floor(frameCount / 3),
+      change_count: noFrames ? 0 : Math.floor(elapsed / 1500),
+      burst_count: burstCount,
+      current_run_frames: currentRunFrames,
+      last_run_frames: lastRunFrames,
+      max_run_frames: Math.max(currentRunFrames, lastRunFrames),
+      first_seen_ms: frameCount > 0 ? state.observerResetMs : 0,
+      last_seen_ms: frameCount > 0 ? sampleMs : 0,
+      last_change_ms: frameCount > 0 ? Math.max(state.observerResetMs, sampleMs - 400) : 0,
+      age_ms: frameCount > 0 ? Math.max(0, uptimeMs - sampleMs) : 0,
+    };
+  });
+  return {
+    enabled: state.observerRuntime,
+    max_signals: 10,
+    max_a_filter_ids: 6,
+    event_count: Math.min(256, Math.floor(elapsed / 1500)),
+    event_capacity: 256,
+    event_overwritten: 0,
+    count: signals.length,
+    signals,
+  };
+}
+
 function statusJson(url) {
   const c = tickCounts();
   const logSince = Number(url.searchParams.get('log_since') || 0);
@@ -264,6 +434,14 @@ function statusJson(url) {
     enhanced_autopilot: state.toggles.a_channel_tx && state.toggles.enhanced_autopilot,
     ui_ulc_stalk_confirm_enabled: state.toggles.a_channel_tx && state.toggles.ui_ulc_stalk_confirm_enabled,
     ui_alc_off_highway_enable_enabled: state.toggles.a_channel_tx && state.toggles.ui_alc_off_highway_enable_enabled,
+    ui_ulc_off_highway_enabled: state.toggles.a_channel_tx && state.toggles.ui_ulc_off_highway_enabled,
+    ui_auto_lane_change_enable_enabled: state.toggles.a_channel_tx && state.toggles.ui_auto_lane_change_enable_enabled,
+    ui_ulc_speed_config_value: state.toggles.ui_ulc_speed_config_value,
+    ui_ulc_speed_config_name: ulcSpeedConfigName(state.toggles.ui_ulc_speed_config_value),
+    ui_ulc_speed_config_active: state.toggles.a_channel_tx && state.toggles.ui_ulc_speed_config_value <= 3,
+    ui_ulc_blind_spot_config_value: state.toggles.ui_ulc_blind_spot_config_value,
+    ui_ulc_blind_spot_config_name: ulcBlindSpotConfigName(state.toggles.ui_ulc_blind_spot_config_value),
+    ui_ulc_blind_spot_config_active: state.toggles.a_channel_tx && state.toggles.ui_ulc_blind_spot_config_value <= 2,
     nag_killer: state.toggles.nag_killer,
     a_channel_tx: state.toggles.a_channel_tx,
     tsllc_enabled: state.toggles.a_channel_tx && state.toggles.tsllc_enabled,
@@ -281,6 +459,12 @@ function statusJson(url) {
     firmware_source_hash: 'mock',
     firmware_git_dirty: true,
     hw_handler: 'HW3',
+    user_marker_count: state.userMarkerCount,
+    user_marker_log_count: state.userMarkerCount,
+    user_marker_last_ms: state.userMarkerLastMs,
+    user_marker_last_detail: state.userMarkerLastDetail,
+    user_marker_last_detail_text: userMarkerDetailName(state.userMarkerLastDetail),
+    user_marker_active: state.userMarkerActive,
     log_head: state.logHead,
     logs,
     web_health: {
@@ -318,6 +502,10 @@ function statusJson(url) {
       enhanced_autopilot: feature(state.toggles.enhanced_autopilot),
       ui_ulc_stalk_confirm: feature(state.toggles.ui_ulc_stalk_confirm_enabled),
       ui_alc_off_highway_enable: feature(state.toggles.ui_alc_off_highway_enable_enabled),
+      ui_ulc_off_highway: feature(state.toggles.ui_ulc_off_highway_enabled),
+      ui_auto_lane_change_enable: feature(state.toggles.ui_auto_lane_change_enable_enabled),
+      ui_ulc_speed_config: feature(state.toggles.ui_ulc_speed_config_value <= 3),
+      ui_ulc_blind_spot_config: feature(state.toggles.ui_ulc_blind_spot_config_value <= 2),
       nag_killer: feature(state.toggles.nag_killer),
       a_channel_tx: feature(state.toggles.a_channel_tx),
       tsllc_enabled: feature(state.toggles.tsllc_enabled),
@@ -330,14 +518,24 @@ function statusJson(url) {
       a_channel: {
         frames_received: c.aFrames,
         frame_hz: c.noFrames ? 0 : 6.0,
+        frames_293: c.noFrames ? 0 : Math.floor(c.aFrames / 4),
+        id_293_period_ms: c.noFrames ? 0 : 667,
         frames_1016: c.noFrames ? 0 : Math.floor(c.aFrames / 2),
         id_1016_period_ms: c.noFrames ? 0 : 333,
         frames_1021: c.aFrames,
         id_1021_period_ms: c.noFrames ? 0 : 167,
         ulc_stalk_confirm_modified: c.noFrames ? 0 : Math.floor(c.aFrames / 7),
         ulc_stalk_confirm_skipped: c.noFrames ? 0 : Math.floor(c.aFrames / 5),
+        auto_lane_change_modified: c.noFrames || !state.toggles.ui_auto_lane_change_enable_enabled ? 0 : Math.floor(c.aFrames / 9),
+        auto_lane_change_skipped: c.noFrames || !state.toggles.ui_auto_lane_change_enable_enabled ? 0 : Math.floor(c.aFrames / 11),
+        ulc_off_highway_modified: c.noFrames || !state.toggles.ui_ulc_off_highway_enabled ? 0 : Math.floor(c.aFrames / 8),
+        ulc_off_highway_skipped: c.noFrames || !state.toggles.ui_ulc_off_highway_enabled ? 0 : Math.floor(c.aFrames / 10),
         alc_off_highway_modified: c.noFrames ? 0 : Math.floor(c.aFrames / 6),
         alc_off_highway_skipped: c.noFrames ? 0 : Math.floor(c.aFrames / 4),
+        ulc_speed_config_modified: c.noFrames || state.toggles.ui_ulc_speed_config_value > 3 ? 0 : Math.floor(c.aFrames / 12),
+        ulc_speed_config_skipped: c.noFrames || state.toggles.ui_ulc_speed_config_value > 3 ? 0 : Math.floor(c.aFrames / 13),
+        ulc_blind_spot_config_modified: c.noFrames || state.toggles.ui_ulc_blind_spot_config_value > 2 ? 0 : Math.floor(c.aFrames / 14),
+        ulc_blind_spot_config_skipped: c.noFrames || state.toggles.ui_ulc_blind_spot_config_value > 2 ? 0 : Math.floor(c.aFrames / 15),
         eap_modified: c.noFrames ? 0 : Math.floor(c.aFrames / 3),
         last_frame_id: c.noFrames ? 0 : 1021,
         last_update_ms: uptimeMs,
@@ -350,6 +548,14 @@ function statusJson(url) {
         channel_tx_enabled: state.toggles.a_channel_tx,
         ui_ulc_stalk_confirm_enabled: state.toggles.a_channel_tx && state.toggles.ui_ulc_stalk_confirm_enabled,
         ui_alc_off_highway_enable_enabled: state.toggles.a_channel_tx && state.toggles.ui_alc_off_highway_enable_enabled,
+        ui_ulc_off_highway_enabled: state.toggles.a_channel_tx && state.toggles.ui_ulc_off_highway_enabled,
+        ui_auto_lane_change_enable_enabled: state.toggles.a_channel_tx && state.toggles.ui_auto_lane_change_enable_enabled,
+        ui_ulc_speed_config_value: state.toggles.ui_ulc_speed_config_value,
+        ui_ulc_speed_config_name: ulcSpeedConfigName(state.toggles.ui_ulc_speed_config_value),
+        ui_ulc_speed_config_active: state.toggles.a_channel_tx && state.toggles.ui_ulc_speed_config_value <= 3,
+        ui_ulc_blind_spot_config_value: state.toggles.ui_ulc_blind_spot_config_value,
+        ui_ulc_blind_spot_config_name: ulcBlindSpotConfigName(state.toggles.ui_ulc_blind_spot_config_value),
+        ui_ulc_blind_spot_config_active: state.toggles.a_channel_tx && state.toggles.ui_ulc_blind_spot_config_value <= 2,
         tx_guard_enabled: state.toggles.a_tx_guard,
         mcp_eflg: 0,
         mcp_eflg_peak: 0x40,
@@ -440,6 +646,7 @@ function statusJson(url) {
         loop_age_ms: 8,
       },
     },
+    signal_observer: observerStatusJson(c, uptimeMs),
     can: {
       state: c.bBusOff ? 'BUS_OFF' : 'RUNNING',
       rx_errors: 0,
@@ -563,6 +770,7 @@ function canDiagLogJson() {
 
 function logsBundleText() {
   const c = tickCounts();
+  const obs = observerStatusJson(c, nowMs());
   return [
     '=== CanMod Mock 통합 로그 ===',
     `Generated: ${new Date().toISOString()}`,
@@ -574,7 +782,9 @@ function logsBundleText() {
     `[mock] A RX=${c.aFrames} B RX=${c.bFrames} Echo=${c.echo}`,
     `[mock] UI_ulcStalkConfirm ON=${state.toggles.ui_ulc_stalk_confirm_enabled ? 1 : 0} modified=${c.noFrames ? 0 : Math.floor(c.aFrames / 7)} skip=${c.noFrames ? 0 : Math.floor(c.aFrames / 5)}`,
     `[mock] UI_alcOffHighwayEnable ON=${state.toggles.ui_alc_off_highway_enable_enabled ? 1 : 0} modified=${c.noFrames ? 0 : Math.floor(c.aFrames / 6)} skip=${c.noFrames ? 0 : Math.floor(c.aFrames / 4)}`,
+    `[mock] UI_ulcOffHighway ON=${state.toggles.ui_ulc_off_highway_enabled ? 1 : 0} AutoLC=${state.toggles.ui_auto_lane_change_enable_enabled ? 1 : 0} Speed=${ulcSpeedConfigName(state.toggles.ui_ulc_speed_config_value)} Blind=${ulcBlindSpotConfigName(state.toggles.ui_ulc_blind_spot_config_value)}`,
     `[mock] NAG decision=${state.scenario === 'ap_block' ? 'AP_BLOCK' : 'ECHO'}`,
+    ...obs.signals.map((sig) => `[mock] OBS ${sig.name},${sig.channel},${sig.frame_hex},raw=${sig.raw},frames=${sig.frame_count},active=${sig.active_frame_count},bursts=${sig.burst_count},run=${sig.current_run_frames}/${sig.last_run_frames}/${sig.max_run_frames}`),
     '',
     '=== [2] BUS-OFF 이벤트 로그 ===',
     state.scenario === 'bus_off' ? 'seq,timestamp_ms,tec,rec,recovered\n1,0,255,0,0' : '(BUS-OFF 없음)',
@@ -593,6 +803,8 @@ async function handlePost(req, res, url) {
     ['/api/a-channel-tx', 'a_channel_tx'],
     ['/api/ui-ulc-stalk-confirm', 'ui_ulc_stalk_confirm_enabled'],
     ['/api/ui-alc-off-highway-enable', 'ui_alc_off_highway_enable_enabled'],
+    ['/api/ui-ulc-off-highway', 'ui_ulc_off_highway_enabled'],
+    ['/api/ui-auto-lane-change-enable', 'ui_auto_lane_change_enable_enabled'],
     ['/api/enhanced-autopilot', 'enhanced_autopilot'],
     ['/api/tsllc', 'tsllc_enabled'],
     ['/api/nag-killer', 'nag_killer'],
@@ -605,11 +817,76 @@ async function handlePost(req, res, url) {
     const key = toggleRoutes.get(url.pathname);
     state.toggles[key] = boolFromBody(body, state.toggles[key]);
     if ((key === 'enhanced_autopilot' || key === 'tsllc_enabled' ||
-      key === 'ui_ulc_stalk_confirm_enabled' || key === 'ui_alc_off_highway_enable_enabled') && state.toggles[key]) {
+      key === 'ui_ulc_stalk_confirm_enabled' || key === 'ui_alc_off_highway_enable_enabled' ||
+      key === 'ui_ulc_off_highway_enabled' || key === 'ui_auto_lane_change_enable_enabled') && state.toggles[key]) {
       state.toggles.a_channel_tx = true;
     }
     pushLog(`[mock] ${key}: ${state.toggles[key] ? 'ON' : 'OFF'}`);
     sendJson(res, { ok: true });
+    return;
+  }
+
+  if (url.pathname === '/api/ui-ulc-speed-config') {
+    state.toggles.ui_ulc_speed_config_value = clampExperimentValue(body.value, 3);
+    if (state.toggles.ui_ulc_speed_config_value <= 3) state.toggles.a_channel_tx = true;
+    pushLog(`[mock] ui_ulc_speed_config: ${ulcSpeedConfigName(state.toggles.ui_ulc_speed_config_value)}`);
+    sendJson(res, { ok: true, value: state.toggles.ui_ulc_speed_config_value, name: ulcSpeedConfigName(state.toggles.ui_ulc_speed_config_value) });
+    return;
+  }
+
+  if (url.pathname === '/api/ui-ulc-blind-spot-config') {
+    state.toggles.ui_ulc_blind_spot_config_value = clampExperimentValue(body.value, 2);
+    if (state.toggles.ui_ulc_blind_spot_config_value <= 2) state.toggles.a_channel_tx = true;
+    pushLog(`[mock] ui_ulc_blind_spot_config: ${ulcBlindSpotConfigName(state.toggles.ui_ulc_blind_spot_config_value)}`);
+    sendJson(res, { ok: true, value: state.toggles.ui_ulc_blind_spot_config_value, name: ulcBlindSpotConfigName(state.toggles.ui_ulc_blind_spot_config_value) });
+    return;
+  }
+
+  if (url.pathname === '/api/signal-observer/config') {
+    const rawSignals = Array.isArray(body) ? body : body.signals;
+    if (!Array.isArray(rawSignals) || rawSignals.length === 0) {
+      sendJson(res, { ok: false, error: 'signals array required' }, 400);
+      return;
+    }
+    try {
+      const signals = rawSignals.slice(0, 10).map(normalizeObserverSignal);
+      if (!observerAFilterFits(signals)) {
+        sendJson(res, { ok: false, error: 'too many A-channel IDs for MCP2515 filters' }, 400);
+        return;
+      }
+      state.observerSignals = signals;
+      state.observerResetMs = nowMs();
+      state.observerRuntime = true;
+      state.observerFrozenElapsedMs = 0;
+      pushLog(`[mock] signal_observer loaded ${signals.length} signals`);
+      sendJson(res, { ok: true, count: signals.length });
+    } catch (error) {
+      sendJson(res, { ok: false, error: error.message }, 400);
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/signal-observer/reset') {
+    state.observerResetMs = nowMs();
+    state.observerFrozenElapsedMs = 0;
+    pushLog('[mock] signal_observer counters reset');
+    sendJson(res, { ok: true });
+    return;
+  }
+
+  if (url.pathname === '/api/signal-observer/capture') {
+    const enabled = boolFromBody(body, state.observerRuntime);
+    if (enabled) {
+      state.observerResetMs = nowMs();
+      state.observerFrozenElapsedMs = 0;
+      state.observerRuntime = true;
+      pushLog('[mock] signal_observer capture started');
+    } else {
+      state.observerFrozenElapsedMs = Math.max(0, nowMs() - state.observerResetMs);
+      state.observerRuntime = false;
+      pushLog('[mock] signal_observer capture stopped');
+    }
+    sendJson(res, { ok: true, enabled: state.observerRuntime });
     return;
   }
 
@@ -653,6 +930,10 @@ async function handlePost(req, res, url) {
     state.samples = 0;
     state.recStartMs = 0;
     state.rec = false;
+    state.userMarkerActive = false;
+    state.userMarkerCount = 0;
+    state.userMarkerLastMs = 0;
+    state.userMarkerLastDetail = 0;
     sendJson(res, { ok: true });
     return;
   }
@@ -660,13 +941,37 @@ async function handlePost(req, res, url) {
   if (url.pathname === '/api/timeseries/rec') {
     state.rec = !!body.start;
     state.recStartMs = state.rec ? nowMs() : state.recStartMs;
+    if (state.rec) {
+      state.userMarkerActive = false;
+      state.userMarkerCount = 0;
+      state.userMarkerLastMs = 0;
+      state.userMarkerLastDetail = 0;
+    }
     sendJson(res, { ok: true, ...timeseriesStatusJson() });
     return;
   }
 
   if (url.pathname === '/api/user-marker') {
-    pushLog(`[mock] marker ${url.searchParams.get('type') || 'manual'}`);
-    sendJson(res, { ok: true, timestamp_ms: nowMs() });
+    const requestedType = url.searchParams.get('type') || 'ap_warning';
+    const activeBefore = state.userMarkerActive;
+    let detail = state.userMarkerActive ? 2 : 1;
+    if (requestedType === 'ap_warning_start' || requestedType === 'start') detail = 1;
+    else if (requestedType === 'ap_warning_end' || requestedType === 'end') detail = 2;
+    state.userMarkerActive = detail === 1;
+    if (detail === 2 && activeBefore) state.userMarkerCount += 1;
+    state.userMarkerLastMs = nowMs();
+    state.userMarkerLastDetail = detail;
+    const detailText = userMarkerDetailName(detail);
+    pushLog(`[mock] marker ${detailText}`);
+    sendJson(res, {
+      ok: true,
+      timestamp_ms: state.userMarkerLastMs,
+      count: state.userMarkerCount,
+      log_count: state.userMarkerCount,
+      active: state.userMarkerActive,
+      detail,
+      detail_text: detailText,
+    });
     return;
   }
 
@@ -685,6 +990,13 @@ async function handlePost(req, res, url) {
   if (url.pathname === '/api/reboot') {
     pushLog('[mock] reboot requested');
     sendJson(res, { ok: true, restarting: true, mock: true });
+    return;
+  }
+
+  if (url.pathname === '/api/nvs-reset') {
+    resetMockNvsState();
+    pushLog('[mock] nvs reset requested');
+    sendJson(res, { ok: true, erased: true, restarting: true, mock: true });
     return;
   }
 
@@ -768,6 +1080,12 @@ function start(port) {
   process.on('SIGINT', () => {
     server.close(() => process.exit(0));
   });
+}
+
+function userMarkerDetailName(detail) {
+  if (detail === 1) return 'AP_WARNING_START';
+  if (detail === 2) return 'AP_WARNING_END';
+  return 'NONE';
 }
 
 pushLog(`[mock] server boot scenario=${state.scenario}`);

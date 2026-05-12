@@ -4,6 +4,7 @@
 #pragma once
 #include <stdint.h>
 #include <string.h>
+#include "can_helpers.h"
 
 #ifndef NATIVE_BUILD
 #include <Arduino.h>
@@ -25,7 +26,7 @@ enum CanEventType : uint8_t {
     EV_ALERT_RX_FULL  = 8, // RX 큐 오버플로
     EV_TX_BACKOFF     = 9, // TX 백오프 진입
     EV_USER_MARK      = 10, // 사용자가 경고 발생 시점 표시 버튼을 누름
-    EV_NAG_MODE       = 11, // Smart profile 전환 (detail: 0=기본, 1=A안, 2=B안, 3=C안)
+    EV_NAG_MODE       = 11, // Smart profile 전환 (detail: 0=기본, 1=A안, 2=B안, 3=C안, 4=D안)
     EV_MODEB_STATE    = 12, // Mode B DAS hands-on state 전이 (detail: ap<<16 | old<<8 | new)
     EV_MODEB_PHASE    = 13, // Mode B phase 전이 (detail: phase<<24 | ap<<16 | ho<<8 | decision)
     EV_MODEB_FIRST_ECHO = 14, // 현재 DAS state 진입 후 첫 echo 지연(ms)
@@ -52,6 +53,52 @@ inline const char* eventTypeName(uint8_t type) {
     default: return "UNKNOWN";
     }
 }
+
+#ifndef NATIVE_BUILD
+inline const char* eventDetailText(uint8_t type, uint32_t detail, char* out, size_t outLen) {
+    if (!out || outLen == 0) return "";
+    out[0] = '\0';
+    switch (type) {
+    case EV_USER_MARK:
+        snprintf(out, outLen, "marker=%s", userMarkerDetailName(detail));
+        break;
+    case EV_NAG_MODE: {
+        uint8_t profileId = nagSmartProfileClamp(static_cast<uint8_t>(detail));
+        snprintf(out, outLen, "profile=%u label=%s", (unsigned)profileId, nagSmartProfileSettings(profileId).label);
+        break;
+    }
+    case EV_MODEB_STATE: {
+        uint8_t ap = static_cast<uint8_t>((detail >> 16) & 0xFF);
+        uint8_t oldHo = static_cast<uint8_t>((detail >> 8) & 0xFF);
+        uint8_t newHo = static_cast<uint8_t>(detail & 0xFF);
+        snprintf(out, outLen, "ap=%u oldHo=0x%02X oldName=%s newHo=0x%02X newName=%s group=%s warnLevel=%u warning=%u",
+                 (unsigned)ap,
+                 (unsigned)oldHo, dasHandsOnStateName(oldHo),
+                 (unsigned)newHo, dasHandsOnStateName(newHo), dasHandsOnStateGroup(newHo),
+                 (unsigned)dasHandsOnWarningLevel(newHo), dasHandsOnStateIsWarning(newHo) ? 1U : 0U);
+        break;
+    }
+    case EV_MODEB_PHASE: {
+        uint8_t phase = static_cast<uint8_t>((detail >> 24) & 0xFF);
+        uint8_t ap = static_cast<uint8_t>((detail >> 16) & 0xFF);
+        uint8_t ho = static_cast<uint8_t>((detail >> 8) & 0xFF);
+        uint8_t decision = static_cast<uint8_t>(detail & 0xFF);
+        snprintf(out, outLen, "phase=%u ap=%u ho=0x%02X hoName=%s warnLevel=%u decision=%s",
+                 (unsigned)phase, (unsigned)ap,
+                 (unsigned)ho, dasHandsOnStateName(ho),
+                 (unsigned)dasHandsOnWarningLevel(ho), nagDecisionName(decision));
+        break;
+    }
+    case EV_MODEB_FIRST_ECHO:
+        snprintf(out, outLen, "delay_ms=%u", (unsigned)detail);
+        break;
+    default:
+        snprintf(out, outLen, "raw=%u", (unsigned)detail);
+        break;
+    }
+    return out;
+}
+#endif
 
 struct CanEvent {
     uint32_t t_ms;
@@ -125,17 +172,19 @@ inline esp_err_t eventLogCsvHandler(httpd_req_t* req) {
     httpd_resp_sendstr_chunk(req, meta);
     httpd_resp_sendstr_chunk(req,
         "# type: 0=BUSOFF 1=REC_OK 2=REC_FAIL 3=REC_SOFT 4=ERR_PASS 5=ARB_LOST 6=BUS_ERR 7=TX_FAIL 8=RX_FULL 9=TX_BACKOFF 10=USER_MARK 11=NAG_MODE 12=MODEB_STATE 13=MODEB_PHASE 14=MODEB_FIRST_ECHO\n");
-    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING | NAG_MODE detail: smartProfile 0=default 1=A 2=B 3=C | MODEB_STATE detail: ap<<16|oldHo<<8|newHo | MODEB_PHASE detail: phase<<24|ap<<16|ho<<8|decision | FIRST_ECHO detail: delay_ms\n");
-    httpd_resp_sendstr_chunk(req, "t_ms,type,typeName,tec,rec,detail\n");
-    char line[120];
+    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING_START 2=AP_WARNING_END | NAG_MODE detail: smartProfile 0=default 1=A 2=B 3=C 4=D | MODEB_STATE detail: ap<<16|oldHo<<8|newHo | MODEB_PHASE detail: phase<<24|ap<<16|ho<<8|decision | FIRST_ECHO detail: delay_ms | detailText is decoded for analysis\n");
+    httpd_resp_sendstr_chunk(req, "t_ms,type,typeName,tec,rec,detail,detailText\n");
+    char line[260];
+    char detailText[180];
     size_t start = (n < EVT_CAP) ? 0 : head;
     for (size_t i = 0; i < n; ++i) {
         CanEvent e;
         eventLogCopyAt(start + i, e);
-        snprintf(line, sizeof(line), "%u,%u,%s,%u,%u,%u\n",
+        snprintf(line, sizeof(line), "%u,%u,%s,%u,%u,%u,%s\n",
             (unsigned)e.t_ms, (unsigned)e.type,
             eventTypeName(e.type),
-            (unsigned)e.tec, (unsigned)e.rec, (unsigned)e.detail);
+            (unsigned)e.tec, (unsigned)e.rec, (unsigned)e.detail,
+            eventDetailText(e.type, e.detail, detailText, sizeof(detailText)));
         httpd_resp_sendstr_chunk(req, line);
     }
     httpd_resp_sendstr_chunk(req, NULL);

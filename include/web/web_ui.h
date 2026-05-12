@@ -59,18 +59,27 @@ body{
 
 /* ── Page header ── */
 #page-hdr{
-  display:flex;align-items:center;justify-content:space-between;
+  display:flex;flex-direction:column;gap:8px;
   margin-bottom:16px
 }
 h1{font-size:1.55em;color:var(--acc);margin:0;font-weight:700}
+.header-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.title-wrap{min-width:0}
+.title-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 #hw-badge{
   display:inline-block;background:var(--acc);color:var(--btn-tx);
   font-size:.52em;font-weight:800;letter-spacing:.05em;
-  padding:2px 8px;border-radius:6px;margin-left:8px;vertical-align:middle
+  padding:2px 8px;border-radius:6px;vertical-align:middle
+}
+#build-badge{
+  display:inline-block;background:var(--btn-dis-bg);color:var(--tx2);
+  font-size:.52em;font-weight:800;letter-spacing:0;
+  padding:2px 8px;border-radius:6px;vertical-align:middle;
+  max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap
 }
 #ver-badge{
-  color:var(--tx3);font-size:.44em;font-weight:500;
-  margin-top:2px;line-height:1.25;max-width:260px;overflow-wrap:anywhere
+  color:var(--tx3);font-size:.74em;font-weight:600;
+  line-height:1.25;max-width:100%;overflow-wrap:anywhere
 }
 #theme-btn{
   padding:6px 14px;border:1.5px solid var(--bd);border-radius:20px;
@@ -79,9 +88,21 @@ h1{font-size:1.55em;color:var(--acc);margin:0;font-weight:700}
   transition:all .2s;white-space:nowrap;flex-shrink:0
 }
 #theme-btn:hover{border-color:var(--acc);color:var(--acc)}
+.header-actions{display:flex;gap:8px;align-items:center;justify-content:flex-start;flex-wrap:wrap}
+#log-save-btn{
+  display:inline-flex;align-items:center;justify-content:center;
+  padding:6px 14px;border-radius:20px;border:none;background:#c0392b;color:#fff;
+  font-size:.78em;font-weight:700;cursor:pointer;text-decoration:none;
+  font-family:inherit;white-space:nowrap
+}
+.user-mark-wrap{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.user-mark-btn{box-sizing:border-box;min-width:104px;padding:6px 12px;border-radius:20px;border:1.5px solid var(--bd);background:var(--card);color:var(--tx2);font-size:.78em;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap;text-align:center;transition:background .18s,border-color .18s,color .18s,box-shadow .18s}
+.user-mark-btn.active{background:#c0392b;border-color:#e74c3c;color:#fff;box-shadow:0 0 0 2px rgba(192,57,43,.22)}
+.user-mark-btn:disabled{opacity:.65;cursor:wait}
+.user-mark-count{font-size:.76em;color:var(--tx3);font-weight:700;min-width:26px;text-align:left}
 
 /* ── Main navigation ── */
-.main-tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:0 0 14px}
+.main-tabs{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:0 0 14px}
 .main-tab{min-height:42px;border:1.5px solid var(--bd);border-radius:12px;background:var(--card);color:var(--tx3);font-family:inherit;font-size:.86em;font-weight:800;cursor:pointer;transition:background .18s,border-color .18s,color .18s}
 .main-tab.active{background:var(--btn-dis-bg);border-color:var(--tx4);color:var(--tx)}
 .view{display:none}.view.active{display:block}
@@ -230,12 +251,35 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
 .mode-toggle input:checked+.mode-track span:last-child{color:var(--btn-tx)}
 .profile-mode-toggle{align-items:stretch;gap:6px}
 .profile-current{font-size:12px;font-weight:700;color:var(--muted)}
-.profile-seg{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;min-width:0;max-width:420px;flex:1}
+.profile-seg{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;min-width:0;max-width:520px;flex:1}
 .profile-seg label{display:block}
 .profile-seg input{display:none}
 .profile-seg span{display:block;text-align:center;border:1.5px solid var(--bd);border-radius:6px;background:var(--bg2);padding:8px 6px;font-size:12px;font-weight:800;color:var(--tx3);cursor:pointer}
 .profile-seg input:checked+span{background:var(--acc);border-color:transparent;color:var(--btn-tx)}
 .profile-desc{font-size:11px;line-height:1.6;margin-bottom:8px;padding:5px 7px;background:rgba(0,0,0,.12);border-radius:5px;color:var(--muted)}
+.experiment-seg{display:grid;grid-template-columns:repeat(auto-fit,minmax(82px,1fr));gap:5px;width:100%}
+.experiment-seg label{display:block}
+.experiment-seg input{display:none}
+.experiment-seg span{display:block;text-align:center;border:1.5px solid var(--bd);border-radius:6px;background:var(--bg2);padding:8px 5px;font-size:11px;font-weight:800;color:var(--tx3);cursor:pointer;min-height:32px}
+.experiment-seg input:checked+span{background:var(--acc);border-color:transparent;color:var(--btn-tx)}
+.experiment-current{font-size:11px;color:var(--muted);line-height:1.45;margin-top:5px}
+.observer-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+.observer-head h2{margin-bottom:0}
+.observer-file-input{display:none}
+.observer-file-btn{width:auto;min-width:92px;padding:9px 12px}
+.observer-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:8px;align-items:stretch}
+.observer-actions .btn-action{padding:9px 8px}
+.observer-actions .btn-action:disabled{opacity:.48;cursor:not-allowed;border-color:var(--bd);color:var(--tx4)}
+.observer-table-wrap{overflow:auto;max-height:360px;border:1px solid var(--bd);border-radius:8px;background:var(--bg2);scroll-behavior:smooth}
+.observer-table{width:100%;min-width:850px;border-collapse:collapse;font-size:11px;font-variant-numeric:tabular-nums}
+.observer-table th,.observer-table td{padding:7px 8px;border-bottom:1px solid var(--row-sep);text-align:left;white-space:nowrap}
+.observer-table th{color:var(--tx3);font-size:10px;text-transform:uppercase;letter-spacing:.04em;background:rgba(0,0,0,.08)}
+.observer-table td{color:var(--tx2)}
+.observer-table tr:last-child td{border-bottom:0}
+.observer-table .obs-name{font-weight:800;color:var(--tx);max-width:210px;overflow:hidden;text-overflow:ellipsis}
+.observer-table .obs-active{color:var(--acc2);font-weight:800}
+.observer-table .obs-idle{color:var(--tx4)}
+.observer-status{min-height:16px;margin-bottom:8px}
 /* Nag v2 stat 박스 */
 .stat{background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:6px 8px}
 .stat .k{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
@@ -306,6 +350,34 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
 .main-stat-grid .stat-val{font-size:19px;font-weight:900;text-align:center;font-variant-numeric:tabular-nums}
 .main-stat-grid .stat-val.long{font-size:16px}.main-stat-grid .stat-val.xlong{font-size:14px}
 .stat.subtle{background:var(--bg2)}
+.main-guidance{border:1px solid var(--bd);border-radius:10px;background:var(--bg2);padding:11px 12px;margin:0 0 12px;min-width:0}
+.main-guidance .k{font-size:10px;color:var(--tx3);letter-spacing:.05em;margin-bottom:5px;font-weight:700;text-transform:uppercase}
+.main-guidance .m1{font-size:14px;font-weight:800;line-height:1.35;color:var(--tx);overflow-wrap:anywhere}
+.main-guidance .m2{margin-top:4px;font-size:11px;line-height:1.45;color:var(--tx3);overflow-wrap:anywhere}
+.main-guidance.ok .m1{color:var(--acc2)}
+.main-guidance.warn .m1{color:var(--warn)}
+.main-guidance.err .m1{color:var(--err)}
+.main-guidance.dim .m1{color:var(--tx2)}
+.guidance-state-row{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.guidance-chip{font-size:10px;font-weight:700;padding:3px 7px;border-radius:999px;border:1px solid var(--bd);background:var(--card);color:var(--tx3);line-height:1.3;white-space:nowrap}
+.guidance-chip.active{border-color:var(--acc);background:rgba(0,212,170,.16);color:var(--tx)}
+.guidance-chip.active.warn{border-color:var(--warn);background:rgba(245,166,35,.2)}
+.guidance-chip.active.err{border-color:var(--err);background:rgba(239,68,68,.2)}
+.guidance-actions{display:flex;justify-content:flex-end;margin-top:8px}
+.guidance-detail-btn{width:auto;padding:6px 10px;border-radius:8px;border:1px solid var(--bd);background:var(--card);color:var(--tx2);font-size:11px;font-weight:700;cursor:pointer}
+.guidance-detail-btn:hover{border-color:var(--acc);color:var(--acc)}
+.guidance-detail-page{position:fixed;inset:0;background:rgba(0,0,0,.52);display:none;z-index:1200;align-items:flex-end;justify-content:center;padding:12px}
+.guidance-detail-page.open{display:flex}
+.guidance-detail-sheet{width:100%;max-width:520px;max-height:85vh;overflow:auto;background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px}
+.guidance-detail-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.guidance-detail-head h3{margin:0;font-size:14px;color:var(--tx)}
+.guidance-close-btn{width:auto;padding:6px 10px;border-radius:8px;border:1px solid var(--bd);background:var(--bg2);color:var(--tx3);font-size:11px;font-weight:700;cursor:pointer}
+.guidance-close-btn:hover{border-color:var(--acc);color:var(--acc)}
+.guidance-detail-note{font-size:11px;line-height:1.45;color:var(--tx3);margin-bottom:10px}
+.guidance-detail-list{display:grid;grid-template-columns:1fr;gap:6px}
+.guidance-detail-item{border:1px solid var(--bd);border-radius:10px;background:var(--bg2);padding:8px 9px}
+.guidance-detail-item .t{font-size:11px;font-weight:800;color:var(--tx)}
+.guidance-detail-item .d{font-size:10px;line-height:1.4;color:var(--tx3);margin-top:3px}
 .control-card>.row{border:1px solid var(--bd);border-radius:12px;padding:13px 14px;margin-bottom:10px;background:var(--bg2)}
 .control-card>.row+.row{border-top:1px solid var(--bd)}
 .control-card>.row.child-row{padding-left:14px}
@@ -326,8 +398,18 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
 .busoff-card table{min-width:520px}
 .ota-status-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:10px}
 .ota-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ota-actions .btn-nvs-reset{grid-column:1/-1;background:#7f1d1d;color:#fff}
 @media(max-width:520px){.diag-id-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:380px){.main-tabs{gap:6px}.main-tab{font-size:.8em;min-height:38px}.ota-actions{grid-template-columns:1fr}}
+@media(max-width:520px){
+  .header-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  #log-save-btn,.user-mark-wrap{width:100%;justify-content:center}
+  .observer-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:420px){
+  .observer-head{gap:8px}
+  .observer-file-btn{padding:8px 10px;min-width:84px;font-size:11px}
+}
 /* ── 진단 화면: 항상 펼친 채널별 상태판 ─────────────────────── */
 .diag-card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px;margin-bottom:12px}
 .diag-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
@@ -377,11 +459,23 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   </div>
 </div>
 <div id="page-hdr">
-  <h1>TeslaCAN <span id="hw-badge" style="display:none"></span><span id="ver-badge" style="display:none"></span></h1>
-  <div style="display:flex;gap:8px;align-items:center">
-    <a id="log-save-btn" href="/api/logs-bundle" download="canmod_logs.txt"
-       style="padding:6px 14px;border-radius:20px;border:none;background:#c0392b;color:#fff;font-size:.78em;font-weight:700;cursor:pointer;text-decoration:none;font-family:inherit;white-space:nowrap">&#128190; 전체 저장</a>
+  <div class="header-top">
+    <div class="title-wrap">
+      <div class="title-row">
+        <h1>TeslaCAN</h1>
+        <span id="hw-badge" style="display:none"></span>
+        <span id="build-badge" style="display:none"></span>
+      </div>
+      <span id="ver-badge" style="display:none"></span>
+    </div>
     <button id="theme-btn" onclick="toggleTheme()">&#9728; Light</button>
+  </div>
+  <div class="header-actions">
+    <a id="log-save-btn" href="/api/logs-bundle" download="canmod_logs.txt">&#128190; 전체 저장</a>
+    <span class="user-mark-wrap">
+      <button id="userMarkBtn" class="user-mark-btn" onclick="markApWarning()">USER_MARK</button>
+      <span id="userMarkCount" class="user-mark-count">0회</span>
+    </span>
   </div>
 </div>
 <div class="main-tabs" role="tablist" aria-label="TeslaCAN 화면 선택">
@@ -389,6 +483,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   <button class="main-tab" id="tab-control" role="tab" aria-selected="false" onclick="showView('control')">제어</button>
   <button class="main-tab" id="tab-diag" role="tab" aria-selected="false" onclick="showView('diag')">진단</button>
   <button class="main-tab" id="tab-ota" role="tab" aria-selected="false" onclick="showView('ota')">OTA</button>
+  <button class="main-tab" id="tab-experiment" role="tab" aria-selected="false" onclick="showView('experiment')">실험</button>
 </div>
 <div id="connErr" class="err">Connection lost. Retrying...</div>
 
@@ -411,6 +506,59 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   <div class="stat" title="Smart Torque 상태 페이즈"><div class="stat-lbl">Smart Torque</div><div class="stat-val v-dim" id="s-main-phase">--</div></div>
   <div class="stat" title="Mode B 누적 토크 주입 횟수"><div class="stat-lbl">주입 횟수</div><div class="stat-val v-acc" id="s-main-inject">0</div></div>
   <div class="stat" title="현재 Smart Torque 프로파일"><div class="stat-lbl">프로파일</div><div class="stat-val v-dim" id="s-main-profile">--</div></div>
+</div>
+<div class="main-guidance dim" id="mainGuidanceCard">
+  <div class="k">운전자 안내</div>
+  <div class="m1" id="mainGuidancePrimary">상태 수신 대기 중입니다.</div>
+  <div class="m2" id="mainGuidanceSecondary">주행 데이터를 확인 중입니다.</div>
+  <div class="guidance-state-row" id="mainGuidanceStateRow">
+    <span class="guidance-chip" id="gState-NONE">NONE</span>
+    <span class="guidance-chip" id="gState-OFF">OFF</span>
+    <span class="guidance-chip" id="gState-AP_BLOCK">AP_BLOCK</span>
+    <span class="guidance-chip" id="gState-HANDS_ON">HANDS_ON</span>
+    <span class="guidance-chip" id="gState-DAS_IDLE">DAS_IDLE</span>
+    <span class="guidance-chip" id="gState-NO_880">NO_880</span>
+    <span class="guidance-chip" id="gState-NO_921">NO_921</span>
+    <span class="guidance-chip" id="gState-NO_ECHO">NO_ECHO</span>
+    <span class="guidance-chip" id="gState-LATE_DROP">LATE_DROP</span>
+    <span class="guidance-chip" id="gState-ECHO">ECHO</span>
+  </div>
+  <div class="guidance-actions">
+    <button class="guidance-detail-btn" type="button" onclick="openGuidanceDetailPage()">상세보기</button>
+  </div>
+</div>
+<div class="guidance-detail-page" id="guidanceDetailPage" onclick="closeGuidanceDetailPage(event)">
+  <div class="guidance-detail-sheet" onclick="event.stopPropagation()">
+    <div class="guidance-detail-head">
+      <h3>Nag Killer 상태 상세</h3>
+      <button class="guidance-close-btn" type="button" onclick="closeGuidanceDetailPage()">닫기</button>
+    </div>
+    <div class="guidance-detail-note">활성 상태는 메인 카드와 동일하게 강조됩니다.</div>
+    <div class="guidance-state-row" id="guidanceDetailStateRow">
+      <span class="guidance-chip" id="gDetailState-NONE">NONE</span>
+      <span class="guidance-chip" id="gDetailState-OFF">OFF</span>
+      <span class="guidance-chip" id="gDetailState-AP_BLOCK">AP_BLOCK</span>
+      <span class="guidance-chip" id="gDetailState-HANDS_ON">HANDS_ON</span>
+      <span class="guidance-chip" id="gDetailState-DAS_IDLE">DAS_IDLE</span>
+      <span class="guidance-chip" id="gDetailState-NO_880">NO_880</span>
+      <span class="guidance-chip" id="gDetailState-NO_921">NO_921</span>
+      <span class="guidance-chip" id="gDetailState-NO_ECHO">NO_ECHO</span>
+      <span class="guidance-chip" id="gDetailState-LATE_DROP">LATE_DROP</span>
+      <span class="guidance-chip" id="gDetailState-ECHO">ECHO</span>
+    </div>
+    <div class="guidance-detail-list" style="margin-top:10px">
+      <div class="guidance-detail-item"><div class="t">NONE</div><div class="d">초기 상태 또는 판정 정보 없음.</div></div>
+      <div class="guidance-detail-item"><div class="t">OFF</div><div class="d">Nag Killer 런타임이 꺼져 있어 주입하지 않음.</div></div>
+      <div class="guidance-detail-item"><div class="t">AP_BLOCK</div><div class="d">AP 상태가 3~6 구간이 아니어서 주입 차단.</div></div>
+      <div class="guidance-detail-item"><div class="t">HANDS_ON</div><div class="d">실제 핸들 손 감지가 있어 주입 중단.</div></div>
+      <div class="guidance-detail-item"><div class="t">DAS_IDLE</div><div class="d">DAS 경고 조건이 없어 주입 대기.</div></div>
+      <div class="guidance-detail-item"><div class="t">NO_880</div><div class="d">NAG 타겟 880 프레임 미수신.</div></div>
+      <div class="guidance-detail-item"><div class="t">NO_921</div><div class="d">DAS 상태 프레임 미수신.</div></div>
+      <div class="guidance-detail-item"><div class="t">NO_ECHO</div><div class="d">조건이 아직 미충족이라 이번 구간 주입 없음.</div></div>
+      <div class="guidance-detail-item"><div class="t">LATE_DROP</div><div class="d">주입 타이밍 창을 놓쳐 구간 드롭.</div></div>
+      <div class="guidance-detail-item"><div class="t">ECHO</div><div class="d">가상 토크 echo 주입 중.</div></div>
+    </div>
+  </div>
 </div>
 <div class="card no-collapse">
   <h2>메인 상태</h2>
@@ -470,6 +618,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
         <label><input type="radio" name="nagProfile" value="1" onchange="setNagProfile(1)"><span>A안</span></label>
         <label><input type="radio" name="nagProfile" value="2" onchange="setNagProfile(2)"><span>B안</span></label>
         <label><input type="radio" name="nagProfile" value="3" onchange="setNagProfile(3)"><span>C안</span></label>
+        <label><input type="radio" name="nagProfile" value="4" onchange="setNagProfile(4)"><span>D안</span></label>
       </div>
       <div id="nagProfileDesc" class="profile-desc">
         --
@@ -689,7 +838,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
     <button class="btn" id="diagBtn" onclick="startCanDiag()">CAN 진단</button>
     <button class="btn" onclick="resetTimeseries()">🗑 로그 초기화</button>
     <button class="btn" id="recBtn" onclick="toggleTimeseriesRec()">⏺ 기록 시작</button>
-    <button class="btn" id="markBtn" onclick="markApWarning()">⚠ 경고 기록</button>
+    <button class="btn user-mark-btn" id="markBtn" onclick="markApWarning()">USER_MARK</button>
     <a class="btn" href="/api/logs-bundle" download="canmod_logs.txt" style="text-decoration:none;display:inline-flex;align-items:center">💾 전체 저장</a>
     <span id="recStatus" style="font-size:12px;color:var(--muted)"></span>
     <span id="diagStatus" style="font-size:12px;color:var(--muted)"></span>
@@ -716,8 +865,95 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   <div class="ota-actions">
     <button class="btn" id="otaBtn" onclick="uploadOta()">펌웨어 업로드</button>
     <button class="btn" onclick="rebootDevice()" style="background:var(--btn-dis-bg);color:var(--tx2)">보드 재부팅</button>
+    <button class="btn btn-nvs-reset" id="nvsResetBtn" onclick="resetNvsAll()">모든 NVS 초기화</button>
   </div>
   <div id="otaStatus"></div>
+</div>
+</section>
+
+<section class="view" id="view-experiment" role="tabpanel" aria-labelledby="tab-experiment">
+<div class="card no-collapse">
+  <h2>A채널 실험</h2>
+  <div class="hint">차량 UI가 보내는 AP 보조 설정 비트를 복사 프레임에 덮어쓰는 실험 탭입니다. 기본값은 순정 유지이며, ON 또는 선택값을 고르면 A TX가 자동으로 켜집니다.</div>
+  <div class="row">
+    <div class="labelWrap">
+      <span class="label">UI_autoLaneChangeEnable</span>
+      <span class="meta">ID 0x293 bit24-25. ON이면 자동 차선변경 허용값(1)을 유지합니다.</span>
+    </div>
+    <label class="sw"><input type="checkbox" id="tAutoLaneChange" onchange="togSwitch('/api/ui-auto-lane-change-enable',this)"><span class="sl"></span></label>
+  </div>
+  <div class="row">
+    <div class="labelWrap">
+      <span class="label">UI_ulcOffHighway</span>
+      <span class="meta">ID 0x3F8 bit15. ON이면 ULC 고속도로 외 허용 비트(1)를 유지합니다.</span>
+    </div>
+    <label class="sw"><input type="checkbox" id="tUlcOffHighway" onchange="togSwitch('/api/ui-ulc-off-highway',this)"><span class="sl"></span></label>
+  </div>
+  <div class="row">
+    <div class="labelWrap">
+      <span class="label">UI_alcOffHighwayEnable</span>
+      <span class="meta">ID 0x3F8 bit56. 이미 구현된 비고속도로 ALC 허용 토글을 이 탭에도 연결합니다.</span>
+    </div>
+    <label class="sw"><input type="checkbox" id="tExpAlcOffHighway" onchange="togSwitch('/api/ui-alc-off-highway-enable',this)"><span class="sl"></span></label>
+  </div>
+  <div class="row" style="align-items:flex-start">
+    <div class="labelWrap">
+      <span class="label">UI_ulcSpeedConfig</span>
+      <span class="meta">ID 0x3F8 bit50-51. ULC 속도 회복/가속 성향으로 추정됩니다.</span>
+    </div>
+  </div>
+  <div class="row child-row" style="display:block">
+    <div class="experiment-seg" role="radiogroup" aria-label="UI_ulcSpeedConfig">
+      <label><input type="radio" name="ulcSpeedConfig" value="255" onchange="setExperimentValue('/api/ui-ulc-speed-config',255)"><span>순정</span></label>
+      <label><input type="radio" name="ulcSpeedConfig" value="0" onchange="setExperimentValue('/api/ui-ulc-speed-config',0)"><span>DISABLED</span></label>
+      <label><input type="radio" name="ulcSpeedConfig" value="1" onchange="setExperimentValue('/api/ui-ulc-speed-config',1)"><span>MILD</span></label>
+      <label><input type="radio" name="ulcSpeedConfig" value="2" onchange="setExperimentValue('/api/ui-ulc-speed-config',2)"><span>AVERAGE</span></label>
+      <label><input type="radio" name="ulcSpeedConfig" value="3" onchange="setExperimentValue('/api/ui-ulc-speed-config',3)"><span>MAD_MAX</span></label>
+    </div>
+    <div class="experiment-current" id="expSpeedCurrent">현재: --</div>
+  </div>
+  <div class="row" style="align-items:flex-start">
+    <div class="labelWrap">
+      <span class="label">UI_ulcBlindSpotConfig</span>
+      <span class="meta">ID 0x3F8 bit52-53. 차선 변경 전 사각지대 차단 강도로 추정됩니다.</span>
+    </div>
+  </div>
+  <div class="row child-row" style="display:block">
+    <div class="experiment-seg" role="radiogroup" aria-label="UI_ulcBlindSpotConfig">
+      <label><input type="radio" name="ulcBlindSpotConfig" value="255" onchange="setExperimentValue('/api/ui-ulc-blind-spot-config',255)"><span>순정</span></label>
+      <label><input type="radio" name="ulcBlindSpotConfig" value="0" onchange="setExperimentValue('/api/ui-ulc-blind-spot-config',0)"><span>STANDARD</span></label>
+      <label><input type="radio" name="ulcBlindSpotConfig" value="1" onchange="setExperimentValue('/api/ui-ulc-blind-spot-config',1)"><span>AGGRESSIVE</span></label>
+      <label><input type="radio" name="ulcBlindSpotConfig" value="2" onchange="setExperimentValue('/api/ui-ulc-blind-spot-config',2)"><span>MAD_MAX</span></label>
+    </div>
+    <div class="experiment-current" id="expBlindCurrent">현재: --</div>
+  </div>
+  <div class="row">
+    <div class="labelWrap">
+      <span class="label">실험 주입 카운터</span>
+      <span class="meta" id="expInjectCounters">0x293/0x3F8 수신 대기 중</span>
+    </div>
+  </div>
+</div>
+<div class="card no-collapse">
+  <div class="observer-head">
+    <h2>신호 관찰기</h2>
+    <button class="btn-action observer-file-btn" type="button" onclick="openSignalObserverFile()">파일 선택</button>
+  </div>
+  <div class="hint">프레임을 보내지 않고 수신값만 집계합니다. A채널은 MCP2515 필터 제한 때문에 기본 3개 ID(0x293/0x3F8/0x3FD)를 포함해 최대 6개 ID까지만 관찰합니다.</div>
+  <input class="file observer-file-input" type="file" id="signalObserverFile" accept=".json,application/json" onchange="uploadSignalObserverConfig(this)">
+  <div class="observer-actions">
+    <button class="btn-action" onclick="resetSignalObserver()">카운터 리셋</button>
+    <button class="btn-action" id="signalObserverStartBtn" onclick="setSignalObserverCapture(true)">시작</button>
+    <button class="btn-action rec-active" id="signalObserverStopBtn" onclick="setSignalObserverCapture(false)">정지</button>
+    <a class="btn-action btn-dl" href="/api/signal-observer-log-dl" download="CAN_SNIPPER.csv">관찰기 저장</a>
+  </div>
+  <div class="experiment-current observer-status" id="signalObserverStatus">기본 프리셋 대기 중</div>
+  <div class="observer-table-wrap">
+    <table class="observer-table" aria-label="신호 관찰기">
+      <thead><tr><th>Signal</th><th>Ch</th><th>ID</th><th>Bit</th><th>Raw</th><th>Frames</th><th>Active</th><th>Change</th><th>Δ/s</th><th>Burst</th><th>Run</th><th>Age</th></tr></thead>
+      <tbody id="signalObserverBody"><tr><td colspan="12" class="obs-idle">수신 대기 중</td></tr></tbody>
+    </table>
+  </div>
 </div>
 </section>
 <script>
@@ -726,7 +962,7 @@ var baseUptimeMs=0,baseUptimeTs=0,detailPollingStarted=false;
 var _activeView='main';
 var _otaUploadInProgress=false;
 function showView(name){
-  var views={main:1,control:1,diag:1,ota:1};
+  var views={main:1,control:1,diag:1,ota:1,experiment:1};
   if(!views[name])name='main';
   _activeView=name;
   document.querySelectorAll('.view').forEach(function(el){el.classList.toggle('active',el.id==='view-'+name);});
@@ -759,6 +995,123 @@ async function togSwitch(path,el,confirmMsg){
     if(!r.ok)throw new Error('toggle');
   }catch(e){el.checked=!el.checked;}
 }
+function setRadioValue(name,value){
+  var items=document.querySelectorAll('input[name="'+name+'"]');
+  for(var i=0;i<items.length;i++)items[i].checked=String(items[i].value)===String(value);
+}
+async function setExperimentValue(path,value){
+  try{
+    var r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:value})});
+    if(!r.ok)throw new Error('value');
+  }catch(e){poll();}
+}
+function htmlEscape(s){return String(s===undefined?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+var _signalObserverPrev={};
+function signalObserverKey(s,i){return i+'|'+(s.name||'')+'|'+(s.channel||'')+'|'+n(s.frame_id)+'|'+n(s.start_bit)+'|'+n(s.length);}
+function signalObserverRateText(s,key,now){
+  var cur={t:now,frame:n(s.frame_count),active:n(s.active_frame_count),change:n(s.change_count)};
+  var prev=_signalObserverPrev[key];
+  _signalObserverPrev[key]=cur;
+  if(!prev||cur.t<=prev.t)return '--';
+  var dt=(cur.t-prev.t)/1000;
+  if(dt<=0)return '--';
+  function r(a,b){var v=(a-b)/dt;if(v<0)v=0;return v>=100?String(Math.round(v)):(v>=10?v.toFixed(1):v.toFixed(2));}
+  return r(cur.frame,prev.frame)+'/'+r(cur.active,prev.active)+'/'+r(cur.change,prev.change);
+}
+function updateSignalObserverCaptureUi(enabled){
+  var start=document.getElementById('signalObserverStartBtn');
+  var stop=document.getElementById('signalObserverStopBtn');
+  if(start)start.disabled=!!enabled;
+  if(stop)stop.disabled=!enabled;
+}
+function openSignalObserverFile(){
+  var input=document.getElementById('signalObserverFile');
+  if(input)input.click();
+}
+function renderSignalObserver(obs){
+  var body=document.getElementById('signalObserverBody');
+  var status=document.getElementById('signalObserverStatus');
+  if(!body)return;
+  var captureEnabled=!!(obs&&obs.enabled);
+  updateSignalObserverCaptureUi(captureEnabled);
+  if(!obs||!obs.signals||!obs.signals.length){
+    body.innerHTML='<tr><td colspan="12" class="obs-idle">수신 대기 중</td></tr>';
+    if(status)status.textContent='관찰 설정 없음';
+    _signalObserverPrev={};
+    return;
+  }
+  var rows=[];
+  var now=Date.now();
+  for(var i=0;i<obs.signals.length;i++){
+    var s=obs.signals[i]||{};
+    var bit=n(s.start_bit)+'+'+n(s.length);
+    var run=n(s.current_run_frames)+' / '+n(s.last_run_frames)+' / '+n(s.max_run_frames);
+    var age=s.seen?n(s.age_ms)+'ms':'--';
+    var key=signalObserverKey(s,i);
+    var rate=signalObserverRateText(s,key,now);
+    rows.push('<tr>'+[
+      '<td class="obs-name" title="'+htmlEscape(s.name||'')+'">'+htmlEscape(s.name||'signal')+'</td>',
+      '<td>'+htmlEscape(s.channel||'--')+'</td>',
+      '<td>'+htmlEscape(s.frame_hex||('0x'+n(s.frame_id).toString(16).toUpperCase()))+'</td>',
+      '<td>'+bit+'</td>',
+      '<td class="'+(s.active?'obs-active':'obs-idle')+'">'+n(s.raw)+'</td>',
+      '<td>'+n(s.frame_count)+'</td>',
+      '<td>'+n(s.active_frame_count)+'</td>',
+      '<td>'+n(s.change_count)+'</td>',
+      '<td title="Frames/Active/Change per second">'+rate+'</td>',
+      '<td>'+n(s.burst_count)+'</td>',
+      '<td>'+run+'</td>',
+      '<td>'+age+'</td>'
+    ].join('')+'</tr>');
+  }
+  body.innerHTML=rows.join('');
+  var eventText=obs.event_capacity?(' · 이벤트 '+n(obs.event_count||0)+'/'+n(obs.event_capacity)):'';
+  if(status)status.textContent=(captureEnabled?'캡처 중':'캡처 정지')+' · 관찰 '+n(obs.count||obs.signals.length)+'개'+eventText+' · A필터 최대 '+n(obs.max_a_filter_ids||6)+' ID(기본 3 포함) · Δ/s=Frames/Active/Change · Run=현재/직전/최대 프레임';
+}
+async function setSignalObserverCapture(enabled){
+  var status=document.getElementById('signalObserverStatus');
+  if(status)status.textContent=enabled?'캡처 시작 중...':'캡처 정지 중...';
+  updateSignalObserverCaptureUi(enabled);
+  try{
+    var r=await fetch('/api/signal-observer/capture',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!!enabled})});
+    if(!r.ok)throw new Error('capture');
+    if(enabled)_signalObserverPrev={};
+    if(status)status.textContent=enabled?'캡처 시작됨':'캡처 정지됨';
+    poll();
+  }catch(e){if(status)status.textContent='캡처 전환 실패';poll();}
+}
+async function resetSignalObserver(){
+  var status=document.getElementById('signalObserverStatus');
+  if(status)status.textContent='리셋 중...';
+  try{
+    var r=await fetch('/api/signal-observer/reset',{method:'POST'});
+    if(!r.ok)throw new Error('reset');
+    _signalObserverPrev={};
+    if(status)status.textContent='카운터 리셋 완료';
+    poll();
+  }catch(e){if(status)status.textContent='리셋 실패';}
+}
+async function uploadSignalObserverConfig(input){
+  if(!input||!input.files||!input.files.length)return;
+  var status=document.getElementById('signalObserverStatus');
+  var file=input.files[0];
+  try{
+    if(status)status.textContent='JSON 읽는 중...';
+    var text=await file.text();
+    var parsed=JSON.parse(text);
+    var payload=Array.isArray(parsed)?{signals:parsed}:parsed;
+    var r=await fetch('/api/signal-observer/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    var resp=await r.text();
+    if(!r.ok)throw new Error(resp||'config');
+    _signalObserverPrev={};
+    if(status)status.textContent='설정 적용 완료';
+    poll();
+  }catch(e){
+    if(status)status.textContent='업로드 실패: '+(e&&e.message?e.message:'JSON 확인 필요');
+  }finally{
+    input.value='';
+  }
+}
 async function emergencyToggle(){
   var targets=[
     {id:'tNag',   path:'/api/nag-killer'},
@@ -766,6 +1119,9 @@ async function emergencyToggle(){
     {id:'tTsllc', path:'/api/tsllc'},
     {id:'tUlcStalkConfirm', path:'/api/ui-ulc-stalk-confirm'},
     {id:'tAlcOffHighway', path:'/api/ui-alc-off-highway-enable'},
+    {id:'tExpAlcOffHighway', path:'/api/ui-alc-off-highway-enable'},
+    {id:'tUlcOffHighway', path:'/api/ui-ulc-off-highway'},
+    {id:'tAutoLaneChange', path:'/api/ui-auto-lane-change-enable'},
     {path:'/api/a-channel-tx', force:true}
   ];
   var btn=document.getElementById('emStopBtn');
@@ -777,6 +1133,8 @@ async function emergencyToggle(){
       try{await fetch(targets[i].path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:false})});}catch(e){}
     }
   }
+  try{await fetch('/api/ui-ulc-speed-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:255})});}catch(e){}
+  try{await fetch('/api/ui-ulc-blind-spot-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:255})});}catch(e){}
   if(btn){btn.disabled=false;btn.textContent='즉시 기능해제';}
 }
 function toggleTheme(){
@@ -794,7 +1152,8 @@ var _nagProfileFallback=[
   {label:'기본',summary:'현재 검증 기준. 700/400ms 타이밍을 유지하고 조건이 맞는 동안 연속 관찰 주입.',s1:500,s2:700,s3:400,mildMin:0.5,mildMax:1.5,s2b:0,s2p:0,s3b:0,s3p:0},
   {label:'A안',summary:'초기 grace를 줄이고 짧은 burst 후 쉬는 구간을 둔다.',s1:150,s2:700,s3:400,mildMin:0.5,mildMax:1.5,s2b:250,s2p:750,s3b:500,s3p:1000},
   {label:'B안',summary:'가장 보수적. state1 주입을 없애고 더 짧게 반응한 뒤 길게 관찰한다.',s1:0,s2:900,s3:600,mildMin:0.5,mildMax:1.5,s2b:150,s2p:1350,s3b:300,s3p:1700},
-  {label:'C안',summary:'1차 delay+torque 후보. state2는 600ms로 앞당기고 mild 상한을 1.7Nm까지 올리며 strong은 400ms/2.10Nm 유지.',s1:500,s2:600,s3:400,mildMin:0.5,mildMax:1.7,s2b:0,s2p:0,s3b:0,s3p:0}
+  {label:'C안',summary:'1차 delay+torque 후보. state2는 600ms로 앞당기고 mild 상한을 1.7Nm까지 올리며 strong은 400ms/2.10Nm 유지.',s1:500,s2:600,s3:400,mildMin:0.5,mildMax:1.7,s2b:0,s2p:0,s3b:0,s3p:0},
+  {label:'D안',summary:'C안 + 직선 저조향각 sign hold 후보. 토크와 timing은 C안과 같고 방향만 1.5초 유지.',s1:500,s2:600,s3:400,mildMin:0.5,mildMax:1.7,s2b:0,s2p:0,s3b:0,s3p:0}
 ];
 function msText(v){return (v===0||v>0)?(v+'ms'):'--';}
 function nmRangeText(min,max){
@@ -807,11 +1166,12 @@ function formatProfileBadge(label){
   if(label==='A안')return '[A모드]';
   if(label==='B안')return '[B모드]';
   if(label==='C안')return '[C모드]';
+  if(label==='D안')return '[D모드]';
   return '['+label+']';
 }
 function updateNagProfileUi(d){
   var p=(d&&d.smartProfile!==undefined)?Number(d.smartProfile):_nagProfile;
-  if(!(p>=0&&p<=3))p=0;
+  if(!(p>=0&&p<=4))p=0;
   _nagProfile=p;
   var fb=_nagProfileFallback[p];
   var radios=document.querySelectorAll('input[name="nagProfile"]');
@@ -874,6 +1234,7 @@ function tickNagStats(){
     var nsCs=document.getElementById('ns_cs');if(nsCs){nsCs.textContent=d.canState||'--';var c={'running':'var(--ok)','bus_off':'var(--err)','recovering':'var(--warn)'};nsCs.style.color=c[d.canState]||'';}
     var nsDas=document.getElementById('ns_das');if(nsDas){nsDas.textContent=d.dasSourceId&&d.dasHandsState!==undefined?(d.dasHandsState+' @'+dasSourceText(d.dasSourceId)):'--';nsDas.title='921='+n(d.frames921)+' 923='+n(d.frames923)+' last='+n(d.lastDasStatusAgeMs)+'ms';}
     var nsTec=document.getElementById('ns_tec');if(nsTec)nsTec.textContent=(d.tecNow||0)+' / '+(d.tecPeak||0);
+    updateMainGuidance(d);
   }).catch(function(){});
 }
 function loadBusOffLog(){
@@ -1004,6 +1365,93 @@ function nagApStateMainTitle(d){
   var gate=apStateAllowsInject(v)?'나그 대응 동작 가능':'나그 대응 대기';
   return '오토파일럿 '+v+' ('+apStateLabelKo(v)+') · '+gate+' · source '+src;
 }
+function updateGuidanceStateHighlight(decision,level){
+  var states=['NONE','OFF','AP_BLOCK','HANDS_ON','DAS_IDLE','NO_880','NO_921','NO_ECHO','LATE_DROP','ECHO'];
+  var active=(states.indexOf(decision)>=0)?decision:'NONE';
+  for(var i=0;i<states.length;i++){
+    var name=states[i];
+    var chip=document.getElementById('gState-'+name);
+    var detailChip=document.getElementById('gDetailState-'+name);
+    if(chip){
+      chip.className='guidance-chip'+(name===active?' active':'');
+      if(name===active&&level&&level!=='ok'&&level!=='dim')chip.className+=' '+level;
+    }
+    if(detailChip){
+      detailChip.className='guidance-chip'+(name===active?' active':'');
+      if(name===active&&level&&level!=='ok'&&level!=='dim')detailChip.className+=' '+level;
+    }
+  }
+}
+function openGuidanceDetailPage(){
+  var page=document.getElementById('guidanceDetailPage');
+  if(page)page.classList.add('open');
+}
+function closeGuidanceDetailPage(ev){
+  if(ev&&ev.target&&ev.currentTarget&&ev.target!==ev.currentTarget)return;
+  var page=document.getElementById('guidanceDetailPage');
+  if(page)page.classList.remove('open');
+}
+function updateMainGuidance(d){
+  var card=document.getElementById('mainGuidanceCard');
+  var p=document.getElementById('mainGuidancePrimary');
+  var s=document.getElementById('mainGuidanceSecondary');
+  if(!card||!p||!s)return;
+
+  var level='dim';
+  var primary='상태 수신 대기 중입니다.';
+  var secondary='주행 데이터를 확인 중입니다.';
+  var decision=String((d&&d.nagLastDecisionText)||'');
+  var ap=n(d&&d.dasApState);
+  var warn=n(d&&d.dasHandsWarnLevel);
+  var phase=n(d&&d.modeBPhase);
+  var age=n(d&&d.lastDasStatusAgeMs);
+  var nagToggle=document.getElementById('tNag');
+  var nagOn=!!(nagToggle&&nagToggle.checked);
+  var activeDecision='NONE';
+
+  if(!nagOn){
+    level='warn';
+    activeDecision='OFF';
+    primary='가상 토크 기능이 꺼져 있습니다.';
+    secondary='필요 시 제어 탭에서 Autosteer Nag Killer를 켜세요.';
+  } else if(!d||d.dasApState===undefined||age===0||age>3000){
+    level='warn';
+    activeDecision='NO_921';
+    primary='상태 수신 대기 중입니다.';
+    secondary='DAS 상태 프레임이 아직 안정적으로 들어오지 않습니다.';
+  } else if(decision==='HANDS_ON'){
+    level='warn';
+    activeDecision='HANDS_ON';
+    primary='현재 핸들을 잡고 있는 중입니다.';
+    secondary='손 감지 중이라 가상 토크 주입을 멈춥니다.';
+  } else if(decision==='ECHO'){
+    level='ok';
+    activeDecision='ECHO';
+    var nm=Math.abs(Number(d.modeBLastNm||d.torqueNm||0));
+    primary='현재 가상 토크 주입 중입니다.';
+    secondary='현재 '+nm.toFixed(2)+'Nm 가상 토크를 주입 중입니다.';
+  } else if(!apStateAllowsInject(ap)||decision==='AP_BLOCK'){
+    level='warn';
+    activeDecision='AP_BLOCK';
+    primary='오토스티어 조건이 아니어서 대기 중입니다.';
+    secondary='AP 상태가 주입 허용 구간(3-6)으로 바뀌면 대응합니다.';
+  } else if(warn>=2||phase===2||phase===4){
+    level='warn';
+    activeDecision=(decision&&decision!=='NONE')?decision:'NO_ECHO';
+    primary='핸들 경고가 감지되어 대응 준비 중입니다.';
+    secondary='조건이 맞으면 가상 토크 주입으로 전환합니다.';
+  } else {
+    level='dim';
+    activeDecision=(decision&&decision!=='NONE')?decision:'NO_ECHO';
+    primary='현재 주입 대기 중입니다.';
+    secondary='경고 발생 시에만 가상 토크 주입을 시작합니다.';
+  }
+
+  card.className='main-guidance '+level;
+  p.textContent=primary;
+  s.textContent=secondary;
+  updateGuidanceStateHighlight(activeDecision,level);
+}
 function statusClass(level){return 'stat-val '+(level==='ok'?'v-ok':level==='warn'?'v-warn':level==='err'?'v-err':'v-dim');}
 function dotStatusClass(level){return level==='ok'?'dot-ok':level==='warn'?'dot-warn':level==='err'?'dot-err':'dot-wait';}
 function aRateLevel(hz){return n(hz)>0?'ok':'err';}
@@ -1081,6 +1529,8 @@ function updateChannelStatus(d){
   setTxt('aUlcStalkConfirmSkip',n(a.ulc_stalk_confirm_skipped),'val');
   setTxt('aAlcOffHighwayMod',n(a.alc_off_highway_modified),'val');
   setTxt('aAlcOffHighwaySkip',n(a.alc_off_highway_skipped),'val');
+  var expCounters=document.getElementById('expInjectCounters');
+  if(expCounters)expCounters.textContent='0x293 AutoLC '+n(a.auto_lane_change_modified)+'/'+n(a.auto_lane_change_skipped)+' · 0x3F8 ULCOff '+n(a.ulc_off_highway_modified)+'/'+n(a.ulc_off_highway_skipped)+' · Speed '+n(a.ulc_speed_config_modified)+'/'+n(a.ulc_speed_config_skipped)+' · Blind '+n(a.ulc_blind_spot_config_modified)+'/'+n(a.ulc_blind_spot_config_skipped);
   setTxt('aEapMod',n(a.eap_modified),'val');
   setTxt('a1016Period',n(a.frames_1016)+' / '+fmtPeriod(a.id_1016_period_ms),'val');
   setTxt('a1021Period',n(a.frames_1021)+' / '+fmtPeriod(a.id_1021_period_ms),'val');
@@ -1137,6 +1587,13 @@ async function poll(){
     var tTsllc=document.getElementById('tTsllc');if(tTsllc)tTsllc.checked=!!d.tsllc_enabled;
     var tUlcStalkConfirm=document.getElementById('tUlcStalkConfirm');if(tUlcStalkConfirm)tUlcStalkConfirm.checked=!!d.ui_ulc_stalk_confirm_enabled;
     var tAlcOffHighway=document.getElementById('tAlcOffHighway');if(tAlcOffHighway)tAlcOffHighway.checked=!!d.ui_alc_off_highway_enable_enabled;
+    var tExpAlcOffHighway=document.getElementById('tExpAlcOffHighway');if(tExpAlcOffHighway)tExpAlcOffHighway.checked=!!d.ui_alc_off_highway_enable_enabled;
+    var tUlcOffHighway=document.getElementById('tUlcOffHighway');if(tUlcOffHighway)tUlcOffHighway.checked=!!d.ui_ulc_off_highway_enabled;
+    var tAutoLaneChange=document.getElementById('tAutoLaneChange');if(tAutoLaneChange)tAutoLaneChange.checked=!!d.ui_auto_lane_change_enable_enabled;
+    setRadioValue('ulcSpeedConfig',d.ui_ulc_speed_config_value===undefined?255:d.ui_ulc_speed_config_value);
+    setRadioValue('ulcBlindSpotConfig',d.ui_ulc_blind_spot_config_value===undefined?255:d.ui_ulc_blind_spot_config_value);
+    var spCur=document.getElementById('expSpeedCurrent');if(spCur)spCur.textContent='현재: '+(d.ui_ulc_speed_config_name||'STOCK')+(d.ui_ulc_speed_config_active?' · 주입':' · 순정 유지');
+    var bsCur=document.getElementById('expBlindCurrent');if(bsCur)bsCur.textContent='현재: '+(d.ui_ulc_blind_spot_config_name||'STOCK')+(d.ui_ulc_blind_spot_config_active?' · 주입':' · 순정 유지');
     var tNag=document.getElementById('tNag');if(tNag)tNag.checked=!!d.nag_killer;
     var tLog=document.getElementById('tLog');if(tLog)tLog.checked=!!d.enable_print;
     if(d.features){
@@ -1147,10 +1604,12 @@ async function poll(){
     if(d.uptime_ms&&baseUptimeTs===0){baseUptimeMs=d.uptime_ms;baseUptimeTs=Date.now();}
     var hwBadge=document.getElementById('hw-badge');
     if(hwBadge&&d.hw_handler){hwBadge.textContent=d.hw_handler;hwBadge.style.display='inline';}
+    var buildBadge=document.getElementById('build-badge');
     var verBadge=document.getElementById('ver-badge');
+    var buildLabel=d.firmware_build_short||shortBuildId(d.firmware_build_id);
+    if(buildBadge&&buildLabel){buildBadge.textContent=buildLabel;buildBadge.style.display='inline-block';}
     if(verBadge&&d.firmware_version){
-      var buildLabel=d.firmware_build_short||shortBuildId(d.firmware_build_id);
-      verBadge.textContent='v'+d.firmware_version+(buildLabel?' · '+buildLabel:'');
+      verBadge.textContent='v'+d.firmware_version;
       verBadge.style.display='block';
     }
     if(d.theme&&d.theme!==document.documentElement.getAttribute('data-theme')){
@@ -1159,6 +1618,8 @@ async function poll(){
       if(btn)btn.textContent=d.theme==='dark'?'\u2600 Light':'\ud83c\udf19 Dark';
     }
     updateChannelStatus(d);
+    renderSignalObserver(d.signal_observer);
+    updateUserMarkerUi(d);
     if(d.logs&&d.logs.length){
       var logEl=document.getElementById('log');
       if(logEl){
@@ -1245,6 +1706,7 @@ async function resetTimeseries(){
   try{var r=await fetch('/api/timeseries/reset',{method:'POST'});
     var d=await r.json();
     st.textContent=d.ok?'✓ 로그 초기화 완료':'초기화 실패';
+    if(d.ok)updateUserMarkerUi({active:false,log_count:0,count:0});
     updateRecStatus();
   }catch(e){st.textContent='서버 오류';}
 }
@@ -1252,6 +1714,25 @@ var recTimer=null;
 function fmtElapsed(ms){
   var s=Math.floor(ms/1000);var h=Math.floor(s/3600);var m=Math.floor((s%3600)/60);s=s%60;
   return (h?h+':':'')+(m<10?'0':'')+m+':'+(s<10?'0':'')+s;
+}
+function updateUserMarkerUi(d){
+  d=d||{};
+  var hasActive=d.user_marker_active!==undefined||d.active!==undefined;
+  var hasCount=d.user_marker_log_count!==undefined||d.log_count!==undefined||d.count!==undefined;
+  var btns=[document.getElementById('userMarkBtn'),document.getElementById('markBtn')];
+  var currentBtn=btns[0]||btns[1];
+  var active=hasActive?!!(d.user_marker_active!==undefined?d.user_marker_active:d.active):!!(currentBtn&&currentBtn.classList&&currentBtn.classList.contains('active'));
+  var count=hasCount?(d.user_marker_log_count!==undefined?d.user_marker_log_count:(d.log_count!==undefined?d.log_count:d.count)):null;
+  for(var i=0;i<btns.length;i++){
+    var btn=btns[i];
+    if(!btn)continue;
+    btn.disabled=false;
+    btn.textContent='USER_MARK';
+    btn.classList.toggle('active',active);
+    btn.title=active?'경고 구간 기록 중. 다시 누르면 AP_WARNING_END가 기록됩니다.':'경고 첫 표시 순간에 누르면 AP_WARNING_START가 기록됩니다.';
+  }
+  var c=document.getElementById('userMarkCount');
+  if(c&&count!==null)c.textContent=n(count)+'회';
 }
 async function updateRecStatus(){
   try{var r=await fetch('/api/timeseries/status');var d=await r.json();
@@ -1270,20 +1751,27 @@ async function toggleTimeseriesRec(){
   try{await fetch('/api/timeseries/rec',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({start:starting})});
     updateRecStatus();
+    if(starting)updateUserMarkerUi({active:false,log_count:0,count:0});
     if(starting){if(!recTimer)recTimer=setInterval(updateRecStatus,1000);}
     else{if(recTimer){clearInterval(recTimer);recTimer=null;}}
   }catch(e){}
 }
 async function markApWarning(){
-  var btn=document.getElementById('markBtn');
+  var btn=document.getElementById('userMarkBtn')||document.getElementById('markBtn');
   var st=document.getElementById('diagStatus');
-  if(btn){btn.disabled=true;btn.textContent='✓ 기록됨';}
+  var wasActive=btn&&btn.classList?btn.classList.contains('active'):false;
+  var countEl=document.getElementById('userMarkCount');
+  var prevCount=countEl?parseInt(countEl.textContent,10)||0:0;
+  var nextCount=prevCount+(wasActive?1:0);
+  updateUserMarkerUi({active:!wasActive,log_count:nextCount,count:nextCount});
+  var btns=[document.getElementById('userMarkBtn'),document.getElementById('markBtn')];
+  for(var i=0;i<btns.length;i++){if(btns[i])btns[i].disabled=true;}
   try{
     var r=await fetch('/api/user-marker?type=ap_warning',{method:'POST'});
     var d=await r.json();
-    if(st)st.textContent=d.ok?('✓ 경고 시점 기록됨 · '+d.timestamp_ms+'ms'):'마커 실패';
-  }catch(e){if(st)st.textContent='마커 서버 오류';}
-  setTimeout(function(){if(btn){btn.disabled=false;btn.textContent='⚠ 경고 기록';}},1200);
+    updateUserMarkerUi(d);
+    if(st)st.textContent=d.ok?('✓ '+d.detail_text+' 기록됨 · '+d.timestamp_ms+'ms · '+d.log_count+'회'):'마커 실패';
+  }catch(e){if(st)st.textContent='마커 서버 오류';updateUserMarkerUi({active:wasActive,log_count:prevCount,count:prevCount});}
 }
 // 페이지 로드 시 REC 상태 한 번 조회
 setTimeout(function(){updateRecStatus();},1500);
@@ -1434,6 +1922,23 @@ function uploadOta(){
 function rebootDevice(){
   if(!confirm('재부팅합니다.'))return;
   fetch('/api/reboot',{method:'POST'}).catch(function(){});
+}
+async function resetNvsAll(){
+  var st=document.getElementById('otaStatus');
+  var btn=document.getElementById('nvsResetBtn');
+  if(!confirm('모든 저장 설정을 삭제하고 재부팅합니다. OTA 확인/롤백 정보도 삭제됩니다. WiFi/AP 비밀번호는 유지됩니다. 계속할까요?'))return;
+  if(!confirm('정말 삭제할까요? 되돌릴 수 없습니다.'))return;
+  if(btn)btn.disabled=true;
+  if(st)st.textContent='NVS 초기화 중...';
+  try{
+    var r=await fetch('/api/nvs-reset',{method:'POST'});
+    var text=await r.text();
+    if(!r.ok)throw new Error(text||'NVS 초기화 실패');
+    if(st)st.textContent='NVS 초기화 완료. 재부팅 중...';
+  }catch(e){
+    if(st)st.textContent='NVS 초기화 실패: '+(e&&e.message?e.message:'요청 실패');
+    if(btn)btn.disabled=false;
+  }
 }
 
 var STATUS_POLL_MS=1000;

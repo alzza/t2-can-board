@@ -1,4 +1,4 @@
-// 5초 간격 시계열 통계 수집 (최근 10분, RAM wrap-around)
+// 5초 간격 시계열 통계 수집 (최근 20분, RAM wrap-around)
 // 통합 로그 [4] 섹션에 포함되며, /api/timeseries.csv는 디버그용 보조 엔드포인트다.
 // 외과적 추가: 기존 구조 변경 없음
 #pragma once
@@ -71,7 +71,7 @@ struct TsSample {
     uint16_t modeBDelayTargetMs;
 };
 
-static constexpr size_t TS_CAP = 120;  // 120 × 5s = 10분 (메모리 절약: 31KB → 10.5KB)
+static constexpr size_t TS_CAP = 240;  // 240 × 5s = 20분 (TsSample 148B 기준 약 34.7 KiB)
 inline TsSample tsBuf[TS_CAP];
 inline volatile size_t tsHead = 0;
 inline volatile size_t tsCount = 0;
@@ -273,6 +273,7 @@ inline void timeseriesReset() {
     tsPrevNoDasEcho = (uint32_t)bChannelDiag.nagFiredNoDas;
     tsPrevUserMark = (uint32_t)userMarkerCount;
     portEXIT_CRITICAL(&tsMux);
+    userMarkerActive = false;
     eventLogReset();
     busOffLog.clear();
 }
@@ -308,19 +309,21 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
         recording?"ON":"OFF", (unsigned)n);
     httpd_resp_sendstr_chunk(req, meta);
     if (tsMetaWriter) tsMetaWriter(req);  // web_server에서 드라이버 토글 등 주입
-    const char* hdr = "t_s,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,nagMode,smartProfile,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,f297,apState,modeBPhase,steerDeg,realTorqueNm,modeBInject,modeBLastNm,age880Ms,ageDasMs,age297Ms,ageEchoMs,modeBStateAgeMs,modeBPhaseAgeMs,modeBFirstEchoDelayMs,modeBDelayTargetMs,d297,dModeBInject\n";
+    const char* hdr = "t_s,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,dasStateName,dasStateGroup,dasWarnLevel,dasWarning,nagMode,smartProfile,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,f297,apState,modeBPhase,steerDeg,realTorqueNm,modeBInject,modeBLastNm,age880Ms,ageDasMs,age297Ms,ageEchoMs,modeBStateAgeMs,modeBPhaseAgeMs,modeBFirstEchoDelayMs,modeBDelayTargetMs,d297,dModeBInject\n";
     httpd_resp_sendstr_chunk(req, hdr);
-    char line[640];
+    char line[768];
     size_t start = (n < TS_CAP) ? 0 : head;  // oldest first
     for (size_t i = 0; i < n; ++i) {
         TsSample s;
         timeseriesCopyAt(start + i, s);
-        snprintf(line, sizeof(line), "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%.1f,%.2f,%u,%.2f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+        snprintf(line, sizeof(line), "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%.1f,%.2f,%u,%.2f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
             (unsigned)(s.t_ms / 1000),
             (unsigned)s.busoff, (unsigned)s.tec, (unsigned)s.rec,
             (unsigned)s.arbLost, (unsigned)s.busErr, (unsigned)s.txFail,
             (unsigned)s.echoCnt, (unsigned)s.f880, (unsigned)s.f921, (unsigned)s.f923,
             (unsigned)s.handsOn, (unsigned)s.dasState,
+            dasHandsOnStateName(s.dasState), dasHandsOnStateGroup(s.dasState),
+            (unsigned)dasHandsOnWarningLevel(s.dasState), dasHandsOnStateIsWarning(s.dasState) ? 1U : 0U,
             (unsigned)s.nagMode, (unsigned)s.smartProfile, (unsigned)s.dasSourceId,
             (unsigned)s.echoDrop, (unsigned)s.skipRuntime,
             (unsigned)s.skipAp, (unsigned)s.skipHandsOn, (unsigned)s.skipDas,

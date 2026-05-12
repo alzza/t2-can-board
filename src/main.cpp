@@ -73,7 +73,7 @@
  *  │   └─ 5초 상태 요약 Serial 출력                                           │
  *  │                                                                          │
  *  │  [timeseriesTask] prio = 1  (5s 주기)                                    │
- *  │   └─ RAM 120샘플 × 5초 = 최근 10분, 통합 로그 [4] 섹션에 포함            │
+ *  │   └─ RAM 240샘플 × 5초 = 최근 20분, 통합 로그 [4] 섹션에 포함            │
  *  └──────────────────────────────────────────────────────────────────────────┘
  *
  * ═══════════════════════════════════════════════════════════════════════════
@@ -250,6 +250,7 @@ void nagKillerTask(void* pvParameters) {
                 bChannelDiag.frameIdReceived = frame.id;
                 bChannelDiag.framesReceivedTotal++;
                 bChannelDiag.lastFrameRxMs = millis();
+                signalObserverObserveFrame(kSignalObserverChannelB, frame, millis());
 
                 // SW 필터: 880(EPAS3P) / 921·923(DAS_status 후보) / 297(SCCM_steer, Mode B용)
                 if ((frame.id == kNagFixedTargetId || frame.id == 921 || frame.id == 923 || frame.id == 297) && frame.dlc >= 4) {
@@ -650,7 +651,7 @@ void setup() {
     logRing.push("[WEB] 모든 런타임 초기화 완료. 웹 서버 시작", millis());
     webServerInit(gOtaRecoveryModeActive ? nullptr : driverB.get());
     if (!gOtaRecoveryModeActive) {
-        timeseriesStart();  // 5초 간격 시계열 수집 (최근 10분)
+        timeseriesStart();  // 5초 간격 시계열 수집 (최근 20분)
         // [v4.4 ALERT] alert 폴링 태스크 시작 (20ms 주기, Core 0, prio 1)
         gAlertDrv = driverB.get();
         xTaskCreatePinnedToCore(canAlertTask, "alert", 2048, nullptr, 1, nullptr, 0);

@@ -109,7 +109,35 @@ Once connected to the **`TeslaCAN`** WiFi AP and navigating to `http://192.168.4
 - **Feature toggles** — enable/disable any feature without reflashing
 - **BUS-OFF event log** — timestamped history, CSV download
 - **Timeseries data** — 5-second interval rolling 30-minute history, CSV download
+- **Signal Observer** — upload generated JSON to watch selected T-CAN signals without transmitting frames
 - **OTA firmware update** — drag-and-drop `.bin` upload with rollback safety
+
+### Signal Observer JSON
+
+The Signal Observer is a receive-only diagnostic tool. It extracts raw values from selected CAN signals, records transitions in a bounded event log, and exports a CSV through the web UI.
+
+Generate uploadable JSON from T-CAN signal names:
+
+```bash
+.venv/bin/python scripts/tcan_signal_observer_json.py SCCM_turnIndicatorStalkStatus UI_autoLaneChangeEnable --output docs/tcan_observer.json
+```
+
+Big-endian Motorola signals are supported. The generator writes `byte_order` from T-CAN metadata, and the firmware decodes both `little` and `big` values:
+
+```bash
+.venv/bin/python scripts/tcan_signal_observer_json.py EPAS3P_torsionBarTorque EPAS3P_handsOnLevel --bus CH --channel B --output docs/epas_observer.json
+```
+
+Observer limits:
+
+- Maximum observer slots: **10 signals**.
+- CAN-A MCP2515 hardware filters: **6 total frame IDs**.
+- CAN-A always reserves `0x293`, `0x3F8`, and `0x3FD`, so generated A or A+B observers normally have room for **3 additional distinct A-side frame IDs**.
+- B-only observers do not consume CAN-A filter slots.
+- The generator fails early if the requested A/A+B signals would exceed the 6-ID filter budget.
+- Generated JSON includes `aFilterIds`, `aFilterUsed`, and `aFilterRemaining` metadata for quick review before upload.
+
+The CAN controller handles physical CAN CRC validation in hardware. Tesla payload checksum/counter handling is separate and is required only for transmitted modified frames, not for receive-only Signal Observer extraction.
 
 ### OTA rollback safety
 
@@ -187,6 +215,8 @@ src/
   main.cpp                # setup() / loop() / nagKillerTask / canAlertTask
 scripts/
   gen_box2.py             # Unicode-aware comment box alignment generator
+  tcan_signal_detail.py   # T-CAN signal detail and bit-layout renderer
+  tcan_signal_observer_json.py # Uploadable Signal Observer JSON generator
 test/
   test_native_nag/        # NagHandler unit tests (31 tests)
   test_native_helpers/    # Bit manipulation helpers

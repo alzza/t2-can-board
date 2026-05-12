@@ -98,6 +98,10 @@ static constexpr char kNvsKeyTsllc[]        = "tsllc";        // TSLLC (스톱�
 static constexpr char kNvsKeyAChTx[]        = "a_ch_tx";      // A채널 1021 수정 송신 마스터
 static constexpr char kNvsKeyUlcStalkConfirm[] = "ulc_stalk"; // UI_ulcStalkConfirm bit1
 static constexpr char kNvsKeyAlcOffHighway[]   = "alc_offhwy";// UI_alcOffHighwayEnable bit56
+static constexpr char kNvsKeyUlcOffHighway[]   = "ulc_offhwy";// UI_ulcOffHighway bit15
+static constexpr char kNvsKeyAutoLaneChange[]  = "auto_lc";   // UI_autoLaneChangeEnable bits24-25
+static constexpr char kNvsKeyUlcSpeedConfig[]  = "ulc_speed"; // UI_ulcSpeedConfig bits50-51
+static constexpr char kNvsKeyUlcBlindConfig[]  = "ulc_blind"; // UI_ulcBlindSpotConfig bits52-53
 static constexpr char kNvsKeyASpiMhz[]      = "a_spi_mhz";    // A MCP2515 SPI MHz: 8 or 10
 static constexpr char kNvsKeyAOneShot[]     = "a_oneshot";    // A MCP2515 one-shot mode
 static constexpr char kNvsKeyATxGuard[]     = "a_tx_guard";   // A TX guard enable
@@ -121,6 +125,10 @@ static_assert(sizeof(kNvsKeyTsllc) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyAChTx) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyUlcStalkConfirm) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyAlcOffHighway) - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyUlcOffHighway) - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyAutoLaneChange) - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyUlcSpeedConfig) - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyUlcBlindConfig) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyASpiMhz) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyAOneShot) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyATxGuard) - 1 <= 15, "NVS key too long");
@@ -175,9 +183,17 @@ static constexpr bool kWebSupportsTsllc = false;
 #if defined(ENHANCED_AUTOPILOT)
 static constexpr bool kWebSupportsUlcStalkConfirm = true;
 static constexpr bool kWebSupportsAlcOffHighway = true;
+static constexpr bool kWebSupportsUlcOffHighway = true;
+static constexpr bool kWebSupportsAutoLaneChange = true;
+static constexpr bool kWebSupportsUlcSpeedConfig = true;
+static constexpr bool kWebSupportsUlcBlindSpotConfig = true;
 #else
 static constexpr bool kWebSupportsUlcStalkConfirm = false;
 static constexpr bool kWebSupportsAlcOffHighway = false;
+static constexpr bool kWebSupportsUlcOffHighway = false;
+static constexpr bool kWebSupportsAutoLaneChange = false;
+static constexpr bool kWebSupportsUlcSpeedConfig = false;
+static constexpr bool kWebSupportsUlcBlindSpotConfig = false;
 #endif
 
 #if defined(NAG_KILLER)
@@ -319,6 +335,24 @@ static uint8_t sanitizeASpiMhz(uint8_t mhz)
     return (mhz == 10) ? 10 : 8;
 }
 
+static uint8_t sanitizeUlcSpeedConfig(uint8_t value)
+{
+    return (value <= 3) ? value : kUlcConfigStock;
+}
+
+static uint8_t sanitizeUlcBlindSpotConfig(uint8_t value)
+{
+    return (value <= 2) ? value : kUlcConfigStock;
+}
+
+static void resetSessionOnlyExperimentRuntime()
+{
+    uiUlcOffHighwayRuntime = kUlcOffHighwayDefaultEnabled;
+    uiAutoLaneChangeEnableRuntime = kAutoLaneChangeEnableDefaultEnabled;
+    uiUlcSpeedConfigRuntime = kUlcSpeedConfigDefault;
+    uiUlcBlindSpotConfigRuntime = kUlcBlindSpotConfigDefault;
+}
+
 static void loadAExperimentSettings()
 {
     if (!nvsInit()) return;
@@ -329,6 +363,7 @@ static void loadAExperimentSettings()
     aChannelTxRuntime = nvsReadBool(kNvsKeyAChTx, true);
     uiUlcStalkConfirmRuntime = nvsReadBool(kNvsKeyUlcStalkConfirm, kUlcStalkConfirmDefaultEnabled);
     uiAlcOffHighwayEnableRuntime = nvsReadBool(kNvsKeyAlcOffHighway, kAlcOffHighwayEnableDefaultEnabled);
+    resetSessionOnlyExperimentRuntime();
     aMcpOneShotRuntime = nvsReadBool(kNvsKeyAOneShot, kAMcpOneShotDefaultEnabled);
     aTxGuardRuntime = nvsReadBool(kNvsKeyATxGuard, kATxGuardDefaultEnabled);
 }
@@ -426,7 +461,7 @@ static bool parseToggleBody(httpd_req_t *req, bool &enabledOut)
 static void enforceChildDeps(Shared<bool> *) {} // (자동 차선변경 제거로 현재 종속 관계 없음)
 
 static esp_err_t featureToggleHandler(httpd_req_t *req, Shared<bool> &target, bool supported,
-                                      const char *nvsKey, const char *logName)
+                                      const char *nvsKey, const char *logName, bool persist = true)
 {
     if (!rateLimitOk())
     {
@@ -446,19 +481,20 @@ static esp_err_t featureToggleHandler(httpd_req_t *req, Shared<bool> &target, bo
         return ESP_FAIL;
 
     if (enabled && ((&target == &enhancedAutopilotRuntime) || (&target == &tsllcRuntime) ||
-                    (&target == &uiUlcStalkConfirmRuntime) || (&target == &uiAlcOffHighwayEnableRuntime)) &&
+                    (&target == &uiUlcStalkConfirmRuntime) || (&target == &uiAlcOffHighwayEnableRuntime) ||
+                    (&target == &uiUlcOffHighwayRuntime) || (&target == &uiAutoLaneChangeEnableRuntime)) &&
         !(bool)aChannelTxRuntime)
     {
-        if (!nvsWriteBool(kNvsKeyAChTx, true))
+        if (persist && !nvsWriteBool(kNvsKeyAChTx, true))
         {
             httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to enable A channel TX");
             return ESP_FAIL;
         }
         aChannelTxRuntime = true;
-        logRing.push("[Web] A_CHANNEL_TX: ON (dependency)", millis());
+        logRing.push(persist ? "[Web] A_CHANNEL_TX: ON (dependency)" : "[Web] A_CHANNEL_TX: ON (session dependency)", millis());
     }
 
-    if (!nvsWriteBool(nvsKey, enabled))
+    if (persist && !nvsWriteBool(nvsKey, enabled))
     {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to persist setting");
         return ESP_FAIL;
@@ -466,12 +502,430 @@ static esp_err_t featureToggleHandler(httpd_req_t *req, Shared<bool> &target, bo
     target = enabled;
     enforceChildDeps(&target); // 부모 OFF 시 자식 자동 종료
     Serial.printf("Web: %s set to %d\n", logName, enabled);
-    char buf[64];
-    snprintf(buf, sizeof(buf), "[Web] %s: %s", logName, enabled ? "ON" : "OFF");
+    char buf[80];
+    snprintf(buf, sizeof(buf), "[Web] %s: %s%s", logName, enabled ? "ON" : "OFF", persist ? "" : " (session)");
     logRing.push(buf, millis());
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+static bool parseU8ValueBody(httpd_req_t *req, uint8_t &valueOut)
+{
+    char body[64];
+    int len = httpd_req_recv(req, body, sizeof(body) - 1);
+    if (len <= 0)
+    {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+        return false;
+    }
+    body[len] = '\0';
+
+    cJSON *json = cJSON_Parse(body);
+    if (!json)
+    {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return false;
+    }
+
+    cJSON *value = cJSON_GetObjectItem(json, "value");
+    if (!cJSON_IsNumber(value))
+    {
+        cJSON_Delete(json);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing value");
+        return false;
+    }
+
+    int raw = value->valueint;
+    valueOut = (raw == 255) ? kUlcConfigStock : static_cast<uint8_t>(raw & 0xFF);
+    cJSON_Delete(json);
+    return true;
+}
+
+static esp_err_t featureValueHandler(httpd_req_t *req, Shared<uint8_t> &target, bool supported,
+                                     const char *nvsKey, const char *logName,
+                                     uint8_t maxValue, const char *(*nameFn)(uint8_t), bool persist = true)
+{
+    if (!rateLimitOk())
+    {
+        httpd_resp_set_status(req, "429 Too Many Requests");
+        httpd_resp_send(req, "Rate limited", HTTPD_RESP_USE_STRLEN);
+        return ESP_FAIL;
+    }
+
+    if (!supported)
+    {
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Feature not available");
+        return ESP_FAIL;
+    }
+
+    uint8_t value = kUlcConfigStock;
+    if (!parseU8ValueBody(req, value))
+        return ESP_FAIL;
+    if (value != kUlcConfigStock && value > maxValue)
+    {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid value");
+        return ESP_FAIL;
+    }
+
+    if (value != kUlcConfigStock && !(bool)aChannelTxRuntime)
+    {
+        if (persist && !nvsWriteBool(kNvsKeyAChTx, true))
+        {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to enable A channel TX");
+            return ESP_FAIL;
+        }
+        aChannelTxRuntime = true;
+        logRing.push(persist ? "[Web] A_CHANNEL_TX: ON (dependency)" : "[Web] A_CHANNEL_TX: ON (session dependency)", millis());
+    }
+
+    if (persist && !nvsWriteU8(nvsKey, value))
+    {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to persist setting");
+        return ESP_FAIL;
+    }
+    target = value;
+    char buf[80];
+    snprintf(buf, sizeof(buf), "[Web] %s: %s%s", logName, nameFn(value), persist ? "" : " (session)");
+    logRing.push(buf, millis());
+
+    char resp[96];
+    snprintf(resp, sizeof(resp), "{\"ok\":true,\"value\":%u,\"name\":\"%s\"}",
+             (unsigned)value, nameFn(value));
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+static bool signalObserverRecvBody(httpd_req_t *req, char *body, size_t bodySize)
+{
+    if (!body || bodySize == 0 || req->content_len <= 0 || req->content_len >= bodySize)
+    {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid body size");
+        return false;
+    }
+    int total = 0;
+    int remaining = req->content_len;
+    while (remaining > 0)
+    {
+        int got = httpd_req_recv(req, body + total, remaining);
+        if (got <= 0)
+        {
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body receive failed");
+            return false;
+        }
+        total += got;
+        remaining -= got;
+    }
+    body[total] = '\0';
+    return true;
+}
+
+static bool signalObserverJsonReadU16(cJSON *obj, const char *key, uint16_t &out)
+{
+    cJSON *item = cJSON_GetObjectItem(obj, key);
+    if (!item) return false;
+    long value = -1;
+    if (cJSON_IsNumber(item))
+    {
+        value = item->valueint;
+    }
+    else if (cJSON_IsString(item) && item->valuestring)
+    {
+        char *end = nullptr;
+        value = strtol(item->valuestring, &end, 0);
+        if (!end || *end != '\0') return false;
+    }
+    else
+    {
+        return false;
+    }
+    if (value < 0 || value > 0x7FF) return false;
+    out = static_cast<uint16_t>(value);
+    return true;
+}
+
+static bool signalObserverJsonReadU32(cJSON *obj, const char *key, uint32_t &out)
+{
+    cJSON *item = cJSON_GetObjectItem(obj, key);
+    if (!item) return false;
+    unsigned long value = 0;
+    if (cJSON_IsNumber(item))
+    {
+        if (item->valuedouble < 0) return false;
+        value = static_cast<unsigned long>(item->valuedouble);
+    }
+    else if (cJSON_IsString(item) && item->valuestring)
+    {
+        char *end = nullptr;
+        value = strtoul(item->valuestring, &end, 0);
+        if (!end || *end != '\0') return false;
+    }
+    else
+    {
+        return false;
+    }
+    out = static_cast<uint32_t>(value);
+    return true;
+}
+
+static uint8_t signalObserverParseChannel(cJSON *obj)
+{
+    cJSON *item = cJSON_GetObjectItem(obj, "channel");
+    if (!item || !cJSON_IsString(item) || !item->valuestring) return kSignalObserverChannelA;
+    const char *s = item->valuestring;
+    if (strcasecmp(s, "B") == 0 || strcasecmp(s, "CH") == 0) return kSignalObserverChannelB;
+    if (strcasecmp(s, "both") == 0 || strcasecmp(s, "A+B") == 0 || strcasecmp(s, "AB") == 0) return kSignalObserverChannelBoth;
+    return kSignalObserverChannelA;
+}
+
+static bool signalObserverAFilterWouldFit(const SignalObserverDef *defs, uint8_t count)
+{
+    uint32_t ids[kSignalObserverMaxAFilterIds] = {659, 1016, 1021, 0, 0, 0};
+    uint8_t idCount = 3;
+    for (uint8_t i = 0; i < count; ++i)
+    {
+        const SignalObserverDef &def = defs[i];
+        if (!def.enabled || (def.channelMask & kSignalObserverChannelA) == 0) continue;
+        if (signalObserverIdAlreadyPresent(ids, idCount, def.frameId)) continue;
+        if (idCount >= kSignalObserverMaxAFilterIds) return false;
+        ids[idCount++] = def.frameId;
+    }
+    return true;
+}
+
+static void signalObserverReconfigureAFilter()
+{
+    if (appDriver && appHandler)
+    {
+        appDriver->setFilters(appHandler->filterIds(), appHandler->filterIdCount());
+    }
+}
+
+static void signalObserverAddJson(cJSON *parent, uint32_t nowMs)
+{
+    cJSON *obs = cJSON_AddObjectToObject(parent, "signal_observer");
+    cJSON_AddBoolToObject(obs, "enabled", (bool)signalObserverRuntime);
+    cJSON_AddNumberToObject(obs, "max_signals", kSignalObserverMaxSignals);
+    cJSON_AddNumberToObject(obs, "max_a_filter_ids", kSignalObserverMaxAFilterIds);
+    size_t eventCount = 0;
+    size_t eventHead = 0;
+    uint32_t eventOverwritten = 0;
+    signalObserverEventSnapshot(eventCount, eventHead, eventOverwritten);
+    cJSON_AddNumberToObject(obs, "event_count", eventCount);
+    cJSON_AddNumberToObject(obs, "event_capacity", kSignalObserverEventCap);
+    cJSON_AddNumberToObject(obs, "event_head", eventHead);
+    cJSON_AddNumberToObject(obs, "event_overwritten", eventOverwritten);
+    uint8_t count = (uint8_t)signalObserverCount;
+    if (count > kSignalObserverMaxSignals) count = kSignalObserverMaxSignals;
+    cJSON_AddNumberToObject(obs, "count", count);
+    cJSON *arr = cJSON_AddArrayToObject(obs, "signals");
+    for (uint8_t i = 0; i < count; ++i)
+    {
+        const SignalObserverDef &def = signalObserverDefs[i];
+        const SignalObserverState &st = signalObserverStates[i];
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddStringToObject(item, "name", def.name);
+        cJSON_AddBoolToObject(item, "enabled", def.enabled);
+        cJSON_AddStringToObject(item, "channel", signalObserverChannelName(def.channelMask));
+        cJSON_AddNumberToObject(item, "frame_id", def.frameId);
+        char frameHex[8];
+        snprintf(frameHex, sizeof(frameHex), "0x%03X", (unsigned)def.frameId);
+        cJSON_AddStringToObject(item, "frame_hex", frameHex);
+        cJSON_AddStringToObject(item, "byte_order", signalObserverByteOrderName(def.byteOrder));
+        cJSON_AddNumberToObject(item, "start_bit", def.startBit);
+        cJSON_AddNumberToObject(item, "length", def.length);
+        cJSON_AddNumberToObject(item, "idle", def.idleRaw);
+        cJSON_AddBoolToObject(item, "seen", st.seen);
+        cJSON_AddBoolToObject(item, "active", st.active);
+        cJSON_AddNumberToObject(item, "raw", st.lastRaw);
+        cJSON_AddNumberToObject(item, "prev_raw", st.prevRaw);
+        cJSON_AddNumberToObject(item, "frame_count", st.frameCount);
+        cJSON_AddNumberToObject(item, "active_frame_count", st.activeFrameCount);
+        cJSON_AddNumberToObject(item, "change_count", st.changeCount);
+        cJSON_AddNumberToObject(item, "burst_count", st.burstCount);
+        cJSON_AddNumberToObject(item, "current_run_frames", st.currentRunFrames);
+        cJSON_AddNumberToObject(item, "last_run_frames", st.lastRunFrames);
+        cJSON_AddNumberToObject(item, "max_run_frames", st.maxRunFrames);
+        cJSON_AddNumberToObject(item, "first_seen_ms", st.firstSeenMs);
+        cJSON_AddNumberToObject(item, "last_seen_ms", st.lastSeenMs);
+        cJSON_AddNumberToObject(item, "last_change_ms", st.lastChangeMs);
+        cJSON_AddNumberToObject(item, "age_ms", st.lastSeenMs ? webSafeAgeMs(nowMs, st.lastSeenMs) : 0);
+        cJSON_AddItemToArray(arr, item);
+    }
+}
+
+static esp_err_t signalObserverConfigHandler(httpd_req_t *req)
+{
+    if (!rateLimitOk())
+    {
+        httpd_resp_set_status(req, "429 Too Many Requests");
+        httpd_resp_send(req, "Rate limited", HTTPD_RESP_USE_STRLEN);
+        return ESP_FAIL;
+    }
+
+    char body[4096];
+    if (!signalObserverRecvBody(req, body, sizeof(body))) return ESP_FAIL;
+    cJSON *root = cJSON_Parse(body);
+    if (!root)
+    {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    cJSON *signals = cJSON_GetObjectItem(root, "signals");
+    if (!cJSON_IsArray(signals)) signals = root;
+    if (!cJSON_IsArray(signals))
+    {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "signals array required");
+        return ESP_FAIL;
+    }
+
+    SignalObserverDef nextDefs[kSignalObserverMaxSignals] = {};
+    uint8_t nextCount = 0;
+    cJSON *entry = nullptr;
+    cJSON_ArrayForEach(entry, signals)
+    {
+        if (nextCount >= kSignalObserverMaxSignals) break;
+        if (!cJSON_IsObject(entry)) continue;
+
+        SignalObserverDef def = {};
+        def.enabled = true;
+        def.byteOrder = kSignalObserverByteOrderLittle;
+        cJSON *enabled = cJSON_GetObjectItem(entry, "enabled");
+        if (cJSON_IsBool(enabled)) def.enabled = cJSON_IsTrue(enabled);
+        def.channelMask = signalObserverParseChannel(entry);
+        if (!signalObserverJsonReadU16(entry, "frame_id", def.frameId) &&
+            !signalObserverJsonReadU16(entry, "id", def.frameId))
+        {
+            cJSON_Delete(root);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid frame_id");
+            return ESP_FAIL;
+        }
+        cJSON *start = cJSON_GetObjectItem(entry, "start_bit");
+        if (!start) start = cJSON_GetObjectItem(entry, "startBit");
+        cJSON *length = cJSON_GetObjectItem(entry, "length");
+        if (!cJSON_IsNumber(start) || !cJSON_IsNumber(length))
+        {
+            cJSON_Delete(root);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "start_bit and length required");
+            return ESP_FAIL;
+        }
+        int startBit = start->valueint;
+        int bitLen = length->valueint;
+        cJSON *byteOrder = cJSON_GetObjectItem(entry, "byte_order");
+        if (!byteOrder) byteOrder = cJSON_GetObjectItem(entry, "byteOrder");
+        if (cJSON_IsString(byteOrder) && byteOrder->valuestring)
+        {
+            if (strcasecmp(byteOrder->valuestring, "little") == 0 || strcasecmp(byteOrder->valuestring, "intel") == 0)
+            {
+                def.byteOrder = kSignalObserverByteOrderLittle;
+            }
+            else if (strcasecmp(byteOrder->valuestring, "big") == 0 || strcasecmp(byteOrder->valuestring, "motorola") == 0)
+            {
+                def.byteOrder = kSignalObserverByteOrderBig;
+            }
+            else
+            {
+                cJSON_Delete(root);
+                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "byte_order must be little or big");
+                return ESP_FAIL;
+            }
+        }
+        if (startBit < 0 || startBit > 63 || bitLen <= 0 || bitLen > 32 ||
+            (def.byteOrder != kSignalObserverByteOrderBig && startBit + bitLen > 64))
+        {
+            cJSON_Delete(root);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid bit layout");
+            return ESP_FAIL;
+        }
+        def.startBit = static_cast<uint8_t>(startBit);
+        def.length = static_cast<uint8_t>(bitLen);
+        uint32_t idleRaw = 0;
+        if (signalObserverJsonReadU32(entry, "idle", idleRaw)) def.idleRaw = idleRaw;
+        cJSON *name = cJSON_GetObjectItem(entry, "name");
+        const char *nameText = (cJSON_IsString(name) && name->valuestring) ? name->valuestring : "signal";
+        strncpy(def.name, nameText, sizeof(def.name) - 1);
+        def.name[sizeof(def.name) - 1] = '\0';
+        nextDefs[nextCount++] = def;
+    }
+    cJSON_Delete(root);
+
+    if (nextCount == 0)
+    {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "empty signals");
+        return ESP_FAIL;
+    }
+    if (!signalObserverAFilterWouldFit(nextDefs, nextCount))
+    {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "too many A-channel IDs for MCP2515 filters");
+        return ESP_FAIL;
+    }
+
+    signalObserverRuntime = false;
+    memset(signalObserverDefs, 0, sizeof(signalObserverDefs));
+    for (uint8_t i = 0; i < nextCount; ++i) signalObserverDefs[i] = nextDefs[i];
+    signalObserverCount = nextCount;
+    signalObserverResetStats();
+    signalObserverResetEvents();
+    signalObserverEventPushSystem(SO_EVT_CONFIG_LOADED, millis());
+    signalObserverRuntime = true;
+    signalObserverReconfigureAFilter();
+    logRing.push("[Web] Signal observer config loaded", millis());
+
+    httpd_resp_set_type(req, "application/json");
+    char resp[64];
+    snprintf(resp, sizeof(resp), "{\"ok\":true,\"count\":%u}", (unsigned)nextCount);
+    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+static esp_err_t signalObserverResetHandler(httpd_req_t *req)
+{
+    if (!rateLimitOk())
+    {
+        httpd_resp_set_status(req, "429 Too Many Requests");
+        httpd_resp_send(req, "Rate limited", HTTPD_RESP_USE_STRLEN);
+        return ESP_FAIL;
+    }
+    signalObserverResetStats();
+    signalObserverResetEvents();
+    signalObserverEventPushSystem(SO_EVT_RESET, millis());
+    logRing.push("[Web] Signal observer counters reset", millis());
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+static esp_err_t signalObserverCaptureHandler(httpd_req_t *req)
+{
+    if (!rateLimitOk())
+    {
+        httpd_resp_set_status(req, "429 Too Many Requests");
+        httpd_resp_send(req, "Rate limited", HTTPD_RESP_USE_STRLEN);
+        return ESP_FAIL;
+    }
+    bool enabled = false;
+    if (!parseToggleBody(req, enabled)) return ESP_FAIL;
+    if (enabled)
+    {
+        uint32_t now = millis();
+        signalObserverResetStats();
+        signalObserverResetEvents();
+        signalObserverEventPushSystem(SO_EVT_CAPTURE_START, now);
+        signalObserverRuntime = true;
+        logRing.push("[Web] Signal observer capture started", now);
+    }
+    else
+    {
+        uint32_t now = millis();
+        signalObserverRuntime = false;
+        signalObserverEventPushSystem(SO_EVT_CAPTURE_STOP, now);
+        logRing.push("[Web] Signal observer capture stopped", now);
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, enabled ? "{\"ok\":true,\"enabled\":true}" : "{\"ok\":true,\"enabled\":false}", HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
@@ -499,6 +953,47 @@ static esp_err_t rebootHandler(httpd_req_t *req)
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"ok\":true,\"restarting\":true}", HTTPD_RESP_USE_STRLEN);
     xTaskCreatePinnedToCore(restartTask, "reboot", 2048, NULL, 1, NULL, 0);
+    return ESP_OK;
+}
+
+static esp_err_t nvsResetHandler(httpd_req_t *req)
+{
+    if (!rateLimitOk())
+    {
+        httpd_resp_set_status(req, "429 Too Many Requests");
+        httpd_resp_send(req, "Rate limited", HTTPD_RESP_USE_STRLEN);
+        return ESP_FAIL;
+    }
+
+    if (!nvsInit())
+    {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "NVS init failed");
+        return ESP_FAIL;
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(kNvsNamespace, NVS_READWRITE, &handle);
+    if (err == ESP_OK)
+    {
+        err = nvs_erase_all(handle);
+        if (err == ESP_OK) err = nvs_commit(handle);
+        nvs_close(handle);
+    }
+
+    if (err != ESP_OK)
+    {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "NVS reset failed (%ld)", static_cast<long>(err));
+        Serial.println(msg);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, msg);
+        return ESP_FAIL;
+    }
+
+    Serial.println("[NVS] canmod namespace erased by web request");
+    logRing.push("[Web] NVS 전체 초기화 요청 — 재부팅", millis());
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"ok\":true,\"erased\":true,\"restarting\":true}", HTTPD_RESP_USE_STRLEN);
+    xTaskCreatePinnedToCore(restartTask, "nvs_reset", 2048, NULL, 1, NULL, 0);
     return ESP_OK;
 }
 
@@ -551,6 +1046,14 @@ static esp_err_t statusHandler(httpd_req_t *req)
         kWebSupportsUlcStalkConfirm ? (aChannelTx && (bool)uiUlcStalkConfirmRuntime) : false;
     bool alcOffHighwayEnabled =
         kWebSupportsAlcOffHighway ? (aChannelTx && (bool)uiAlcOffHighwayEnableRuntime) : false;
+    bool ulcOffHighwayEnabled =
+        kWebSupportsUlcOffHighway ? (aChannelTx && (bool)uiUlcOffHighwayRuntime) : false;
+    bool autoLaneChangeEnabled =
+        kWebSupportsAutoLaneChange ? (aChannelTx && (bool)uiAutoLaneChangeEnableRuntime) : false;
+    uint8_t ulcSpeedConfig = kWebSupportsUlcSpeedConfig ? (uint8_t)uiUlcSpeedConfigRuntime : kUlcConfigStock;
+    uint8_t ulcBlindSpotConfig = kWebSupportsUlcBlindSpotConfig ? (uint8_t)uiUlcBlindSpotConfigRuntime : kUlcConfigStock;
+    bool ulcSpeedConfigActive = aChannelTx && ulcSpeedConfig <= 3;
+    bool ulcBlindSpotConfigActive = aChannelTx && ulcBlindSpotConfig <= 2;
     cJSON *root = cJSON_CreateObject();
     if (!root) {
         webHealthRecordDuration(gWebStatusLastDurMs, gWebStatusMaxDurMs, handlerStartMs);
@@ -566,6 +1069,14 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "tsllc_enabled", tsllcEnabled);
     cJSON_AddBoolToObject(root, "ui_ulc_stalk_confirm_enabled", ulcStalkConfirmEnabled);
     cJSON_AddBoolToObject(root, "ui_alc_off_highway_enable_enabled", alcOffHighwayEnabled);
+    cJSON_AddBoolToObject(root, "ui_ulc_off_highway_enabled", ulcOffHighwayEnabled);
+    cJSON_AddBoolToObject(root, "ui_auto_lane_change_enable_enabled", autoLaneChangeEnabled);
+    cJSON_AddNumberToObject(root, "ui_ulc_speed_config_value", ulcSpeedConfig);
+    cJSON_AddStringToObject(root, "ui_ulc_speed_config_name", uiUlcSpeedConfigName(ulcSpeedConfig));
+    cJSON_AddBoolToObject(root, "ui_ulc_speed_config_active", ulcSpeedConfigActive);
+    cJSON_AddNumberToObject(root, "ui_ulc_blind_spot_config_value", ulcBlindSpotConfig);
+    cJSON_AddStringToObject(root, "ui_ulc_blind_spot_config_name", uiUlcBlindSpotConfigName(ulcBlindSpotConfig));
+    cJSON_AddBoolToObject(root, "ui_ulc_blind_spot_config_active", ulcBlindSpotConfigActive);
     cJSON_AddBoolToObject(root, "enable_print", enablePrint);
 
     cJSON_AddStringToObject(root, "theme", themeRuntime);
@@ -586,6 +1097,12 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddStringToObject(root, "hw_handler", "HW4");
 #else
     cJSON_AddStringToObject(root, "hw_handler", "HW3");
+    cJSON_AddNumberToObject(root, "user_marker_count", (uint32_t)userMarkerCount);
+    cJSON_AddNumberToObject(root, "user_marker_log_count", tsDelta((uint32_t)userMarkerCount, (uint32_t)tsBaseUserMark));
+    cJSON_AddNumberToObject(root, "user_marker_last_ms", (uint32_t)userMarkerLastMs);
+    cJSON_AddNumberToObject(root, "user_marker_last_detail", (uint32_t)userMarkerLastDetail);
+    cJSON_AddStringToObject(root, "user_marker_last_detail_text", userMarkerDetailName((uint32_t)userMarkerLastDetail));
+    cJSON_AddBoolToObject(root, "user_marker_active", (bool)userMarkerActive);
 #endif
     cJSON_AddNumberToObject(root, "log_head", logRing.currentHead());
     {
@@ -667,6 +1184,14 @@ static esp_err_t statusHandler(httpd_req_t *req)
                     ulcStalkConfirmEnabled, kUlcStalkConfirmBuildEnabled);
     addFeatureState(features, "ui_alc_off_highway_enable", kWebSupportsAlcOffHighway,
                     alcOffHighwayEnabled, kAlcOffHighwayEnableBuildEnabled);
+    addFeatureState(features, "ui_ulc_off_highway", kWebSupportsUlcOffHighway,
+                    ulcOffHighwayEnabled, kUlcOffHighwayBuildEnabled);
+    addFeatureState(features, "ui_auto_lane_change_enable", kWebSupportsAutoLaneChange,
+                    autoLaneChangeEnabled, kAutoLaneChangeEnableBuildEnabled);
+    addFeatureState(features, "ui_ulc_speed_config", kWebSupportsUlcSpeedConfig,
+                    ulcSpeedConfigActive, kWebSupportsUlcSpeedConfig);
+    addFeatureState(features, "ui_ulc_blind_spot_config", kWebSupportsUlcBlindSpotConfig,
+                    ulcBlindSpotConfigActive, kWebSupportsUlcBlindSpotConfig);
     addFeatureState(features, "a_spi_8mhz", true, (uint32_t)aMcpRequestedSpiFreqHz <= 8000000UL, true);
     addFeatureState(features, "a_mcp_oneshot", true, (bool)aMcpOneShotRuntime, true);
     addFeatureState(features, "a_tx_guard", true, (bool)aTxGuardRuntime, true);
@@ -691,12 +1216,14 @@ static esp_err_t statusHandler(httpd_req_t *req)
     
     // A/B 채널 ID별 주기 계산 (ms, 1초마다 갱신)
     static uint32_t idRateLastMs = 0;
+    static uint32_t lastFrames293 = 0;
     static uint32_t lastFrames1016 = 0;
     static uint32_t lastFrames1021 = 0;
     static uint32_t lastFrames880 = 0;
     static uint32_t lastFrames921 = 0;
     static uint32_t lastFrames923 = 0;
     static uint32_t lastFrames297 = 0;
+    static uint32_t period293Ms = 0;
     static uint32_t period1016Ms = 0;
     static uint32_t period1021Ms = 0;
     static uint32_t period880Ms = 0;
@@ -708,6 +1235,7 @@ static esp_err_t statusHandler(httpd_req_t *req)
         uint32_t now = millis();
         uint32_t elapsed = now - idRateLastMs;
         if (elapsed >= 1000) {
+            const uint32_t cur293 = (uint32_t)aChannelDiag.frames293;
             const uint32_t cur1016 = (uint32_t)aChannelDiag.frames1016;
             const uint32_t cur1021 = (uint32_t)aChannelDiag.frames1021;
             const uint32_t cur880 = (uint32_t)bChannelDiag.frames880;
@@ -715,6 +1243,7 @@ static esp_err_t statusHandler(httpd_req_t *req)
             const uint32_t cur923 = (uint32_t)bChannelDiag.frames923;
             const uint32_t cur297 = (uint32_t)bChannelDiag.frames297;
 
+            const uint32_t d293 = cur293 - lastFrames293;
             const uint32_t d1016 = cur1016 - lastFrames1016;
             const uint32_t d1021 = cur1021 - lastFrames1021;
             const uint32_t d880  = cur880  - lastFrames880;
@@ -722,6 +1251,7 @@ static esp_err_t statusHandler(httpd_req_t *req)
             const uint32_t d923  = cur923  - lastFrames923;
             const uint32_t d297  = cur297  - lastFrames297;
 
+            period293Ms = (d293 > 0) ? (elapsed / d293) : 0;
             period1016Ms = (d1016 > 0) ? (elapsed / d1016) : 0;
             period1021Ms = (d1021 > 0) ? (elapsed / d1021) : 0;
             period880Ms  = (d880  > 0) ? (elapsed / d880)  : 0;
@@ -729,6 +1259,7 @@ static esp_err_t statusHandler(httpd_req_t *req)
             period923Ms  = (d923  > 0) ? (elapsed / d923)  : 0;
             period297Ms  = (d297  > 0) ? (elapsed / d297)  : 0;
 
+            lastFrames293 = cur293;
             lastFrames1016 = cur1016;
             lastFrames1021 = cur1021;
             lastFrames880 = cur880;
@@ -744,15 +1275,25 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON *ach = cJSON_AddObjectToObject(channels, "a_channel");
     cJSON_AddNumberToObject(ach, "frames_received", (uint32_t)aChannelDiag.framesReceivedTotal);
     cJSON_AddNumberToObject(ach, "frame_hz", (double)(float)aChannelDiag.frameHz);
+    cJSON_AddNumberToObject(ach, "frames_293", (uint32_t)aChannelDiag.frames293);
+    cJSON_AddNumberToObject(ach, "id_293_period_ms", (uint32_t)period293Ms);
     cJSON_AddNumberToObject(ach, "frames_1016", (uint32_t)aChannelDiag.frames1016);
     cJSON_AddNumberToObject(ach, "id_1016_period_ms", (uint32_t)period1016Ms);
     cJSON_AddNumberToObject(ach, "frames_1021", (uint32_t)aChannelDiag.frames1021);
     cJSON_AddNumberToObject(ach, "id_1021_period_ms", (uint32_t)period1021Ms);
     cJSON_AddNumberToObject(ach, "eap_modified", (uint32_t)aChannelDiag.eapModifiedCount);
+    cJSON_AddNumberToObject(ach, "auto_lane_change_modified", (uint32_t)aChannelDiag.autoLaneChangeModifiedCount);
+    cJSON_AddNumberToObject(ach, "auto_lane_change_skipped", (uint32_t)aChannelDiag.autoLaneChangeSkipCount);
     cJSON_AddNumberToObject(ach, "ulc_stalk_confirm_modified", (uint32_t)aChannelDiag.ulcStalkConfirmModifiedCount);
     cJSON_AddNumberToObject(ach, "ulc_stalk_confirm_skipped", (uint32_t)aChannelDiag.ulcStalkConfirmSkipCount);
+    cJSON_AddNumberToObject(ach, "ulc_off_highway_modified", (uint32_t)aChannelDiag.ulcOffHighwayModifiedCount);
+    cJSON_AddNumberToObject(ach, "ulc_off_highway_skipped", (uint32_t)aChannelDiag.ulcOffHighwaySkipCount);
     cJSON_AddNumberToObject(ach, "alc_off_highway_modified", (uint32_t)aChannelDiag.alcOffHighwayModifiedCount);
     cJSON_AddNumberToObject(ach, "alc_off_highway_skipped", (uint32_t)aChannelDiag.alcOffHighwaySkipCount);
+    cJSON_AddNumberToObject(ach, "ulc_speed_config_modified", (uint32_t)aChannelDiag.ulcSpeedConfigModifiedCount);
+    cJSON_AddNumberToObject(ach, "ulc_speed_config_skipped", (uint32_t)aChannelDiag.ulcSpeedConfigSkipCount);
+    cJSON_AddNumberToObject(ach, "ulc_blind_spot_config_modified", (uint32_t)aChannelDiag.ulcBlindSpotConfigModifiedCount);
+    cJSON_AddNumberToObject(ach, "ulc_blind_spot_config_skipped", (uint32_t)aChannelDiag.ulcBlindSpotConfigSkipCount);
     cJSON_AddNumberToObject(ach, "last_frame_id", (uint32_t)aChannelDiag.lastFrameIdReceived);
     cJSON_AddNumberToObject(ach, "last_update_ms", (uint32_t)aChannelDiag.lastStatusUpdateMs);
     cJSON_AddNumberToObject(ach, "last_loop_ms", (uint32_t)aChannelDiag.lastLoopMs);
@@ -764,6 +1305,14 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddBoolToObject(ach, "channel_tx_enabled", (bool)aChannelTxRuntime);
     cJSON_AddBoolToObject(ach, "ui_ulc_stalk_confirm_enabled", ulcStalkConfirmEnabled);
     cJSON_AddBoolToObject(ach, "ui_alc_off_highway_enable_enabled", alcOffHighwayEnabled);
+    cJSON_AddBoolToObject(ach, "ui_ulc_off_highway_enabled", ulcOffHighwayEnabled);
+    cJSON_AddBoolToObject(ach, "ui_auto_lane_change_enable_enabled", autoLaneChangeEnabled);
+    cJSON_AddNumberToObject(ach, "ui_ulc_speed_config_value", ulcSpeedConfig);
+    cJSON_AddStringToObject(ach, "ui_ulc_speed_config_name", uiUlcSpeedConfigName(ulcSpeedConfig));
+    cJSON_AddBoolToObject(ach, "ui_ulc_speed_config_active", ulcSpeedConfigActive);
+    cJSON_AddNumberToObject(ach, "ui_ulc_blind_spot_config_value", ulcBlindSpotConfig);
+    cJSON_AddStringToObject(ach, "ui_ulc_blind_spot_config_name", uiUlcBlindSpotConfigName(ulcBlindSpotConfig));
+    cJSON_AddBoolToObject(ach, "ui_ulc_blind_spot_config_active", ulcBlindSpotConfigActive);
     cJSON_AddBoolToObject(ach, "tx_guard_enabled", (bool)aTxGuardRuntime);
     // MCP2515 에러 플래그 (EFLG 레지스터, 5초 폴링)
     cJSON_AddNumberToObject(ach, "mcp_eflg", (uint32_t)aChannelDiag.mcpEflg);
@@ -825,6 +1374,10 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(bch, "id_923_period_ms", (uint32_t)period923Ms);
     cJSON_AddNumberToObject(bch, "id_297_period_ms", (uint32_t)period297Ms);
     cJSON_AddNumberToObject(bch, "das_hands_state", (uint32_t)bChannelDiag.dasHandsOnStateRx);
+    cJSON_AddStringToObject(bch, "das_hands_state_name", dasHandsOnStateName((uint8_t)bChannelDiag.dasHandsOnStateRx));
+    cJSON_AddStringToObject(bch, "das_hands_state_group", dasHandsOnStateGroup((uint8_t)bChannelDiag.dasHandsOnStateRx));
+    cJSON_AddNumberToObject(bch, "das_hands_warn_level", (uint32_t)dasHandsOnWarningLevel((uint8_t)bChannelDiag.dasHandsOnStateRx));
+    cJSON_AddBoolToObject(bch, "das_hands_warning", dasHandsOnStateIsWarning((uint8_t)bChannelDiag.dasHandsOnStateRx));
     cJSON_AddNumberToObject(bch, "das_source_id", (uint32_t)bChannelDiag.dasStatusSourceId);
     cJSON_AddNumberToObject(bch, "last_das_status_rx_ms", (uint32_t)bChannelDiag.lastDasStatusRxMs);
     cJSON_AddNumberToObject(bch, "nag_mode", (uint32_t)kNagModeB);
@@ -880,6 +1433,8 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddBoolToObject(bch, "task_alive", bTaskAlive);
     cJSON_AddNumberToObject(bch, "frame_age_ms", bFrameAgeMs);
     cJSON_AddNumberToObject(bch, "loop_age_ms", bLoopAgeMs);
+
+    signalObserverAddJson(root, statusNowMs);
 
     const uint32_t aFramesReceived = (uint32_t)aChannelDiag.framesReceivedTotal;
     const uint32_t bFramesReceived = (uint32_t)bChannelDiag.framesReceivedTotal;
@@ -980,6 +1535,32 @@ static esp_err_t uiAlcOffHighwayHandler(httpd_req_t *req)
 {
     return featureToggleHandler(req, uiAlcOffHighwayEnableRuntime, kWebSupportsAlcOffHighway,
                                 kNvsKeyAlcOffHighway, "UI_alcOffHighwayEnable");
+}
+
+static esp_err_t uiUlcOffHighwayHandler(httpd_req_t *req)
+{
+    return featureToggleHandler(req, uiUlcOffHighwayRuntime, kWebSupportsUlcOffHighway,
+                                kNvsKeyUlcOffHighway, "UI_ulcOffHighway", false);
+}
+
+static esp_err_t uiAutoLaneChangeEnableHandler(httpd_req_t *req)
+{
+    return featureToggleHandler(req, uiAutoLaneChangeEnableRuntime, kWebSupportsAutoLaneChange,
+                                kNvsKeyAutoLaneChange, "UI_autoLaneChangeEnable", false);
+}
+
+static esp_err_t uiUlcSpeedConfigHandler(httpd_req_t *req)
+{
+    return featureValueHandler(req, uiUlcSpeedConfigRuntime, kWebSupportsUlcSpeedConfig,
+                               kNvsKeyUlcSpeedConfig, "UI_ulcSpeedConfig", 3,
+                               uiUlcSpeedConfigName, false);
+}
+
+static esp_err_t uiUlcBlindSpotConfigHandler(httpd_req_t *req)
+{
+    return featureValueHandler(req, uiUlcBlindSpotConfigRuntime, kWebSupportsUlcBlindSpotConfig,
+                               kNvsKeyUlcBlindConfig, "UI_ulcBlindSpotConfig", 2,
+                               uiUlcBlindSpotConfigName, false);
 }
 
 static esp_err_t aChannelTxHandler(httpd_req_t *req)
@@ -1137,6 +1718,10 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "torqueNm", (double)(float)bChannelDiag.realTorqueNm);
     cJSON_AddNumberToObject(root, "busoffCount", (uint32_t)bChannelDiag.busoffCount);
     cJSON_AddNumberToObject(root, "dasHandsState", (uint32_t)bChannelDiag.dasHandsOnStateRx);
+    cJSON_AddStringToObject(root, "dasHandsStateName", dasHandsOnStateName((uint8_t)bChannelDiag.dasHandsOnStateRx));
+    cJSON_AddStringToObject(root, "dasHandsStateGroup", dasHandsOnStateGroup((uint8_t)bChannelDiag.dasHandsOnStateRx));
+    cJSON_AddNumberToObject(root, "dasHandsWarnLevel", (uint32_t)dasHandsOnWarningLevel((uint8_t)bChannelDiag.dasHandsOnStateRx));
+    cJSON_AddBoolToObject(root, "dasHandsWarning", dasHandsOnStateIsWarning((uint8_t)bChannelDiag.dasHandsOnStateRx));
     cJSON_AddNumberToObject(root, "dasSourceId", (uint32_t)bChannelDiag.dasStatusSourceId);
     cJSON_AddNumberToObject(root, "frames921", (uint32_t)bChannelDiag.frames921);
     cJSON_AddNumberToObject(root, "frames923", (uint32_t)bChannelDiag.frames923);
@@ -1202,7 +1787,7 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
     return sendRet;
 }
 
-// ─── POST /api/nag-profile?p=0|1|2|3  ───────────────────────────────────────
+// ─── POST /api/nag-profile?p=0|1|2|3|4  ─────────────────────────────────────
 static esp_err_t nagProfileHandler(httpd_req_t *req)
 {
     if (!rateLimitOk()) {
@@ -1410,6 +1995,105 @@ static void formatLogTimestamp(uint32_t ts_ms, char *out, size_t out_n) {
         tm_v.tm_hour, tm_v.tm_min, tm_v.tm_sec, ms);
 }
 
+static void csvEscapeCell(const char *in, char *out, size_t out_n) {
+    if (!out || out_n == 0) return;
+    if (out_n < 3) {
+        out[0] = '\0';
+        return;
+    }
+    size_t j = 0;
+    out[j++] = '"';
+    if (in) {
+        for (size_t i = 0; in[i] && j + 2 < out_n; ++i) {
+            if (in[i] == '"') {
+                if (j + 2 >= out_n) break;
+                out[j++] = '"';
+                out[j++] = '"';
+            } else {
+                out[j++] = in[i];
+            }
+        }
+    }
+    if (j < out_n - 1) out[j++] = '"';
+    out[j] = '\0';
+}
+
+static void signalObserverWriteEventCsvHeader(httpd_req_t *req) {
+    httpd_resp_sendstr_chunk(req,
+    "wall_time,timestamp_ms,event,signal_index,signal,ch,id,byte_order,start_bit,length,prev_raw,raw,active,frame_count,active_frame_count,change_count,burst_count,current_run,last_run,max_run\r\n");
+}
+
+static void signalObserverWriteEventCsvRow(httpd_req_t *req, const SignalObserverEvent &ev,
+                                           char *line, size_t lineLen, char *tsBuf, size_t tsLen) {
+    formatLogTimestamp(ev.tMs, tsBuf, tsLen);
+    const char *name = "";
+    uint8_t count = (uint8_t)signalObserverCount;
+    if (count > kSignalObserverMaxSignals) count = kSignalObserverMaxSignals;
+    if (ev.signalIndex < count) name = signalObserverDefs[ev.signalIndex].name;
+    char nameCsv[96];
+    csvEscapeCell(name, nameCsv, sizeof(nameCsv));
+    snprintf(line, lineLen,
+        "%s,%u,%s,%u,%s,%s,0x%03X,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+        tsBuf,
+        (unsigned)ev.tMs,
+        signalObserverEventTypeName(ev.type),
+        (unsigned)ev.signalIndex,
+        nameCsv,
+        signalObserverChannelName(ev.channelMask),
+        (unsigned)ev.frameId,
+        signalObserverByteOrderName(ev.byteOrder),
+        (unsigned)ev.startBit,
+        (unsigned)ev.length,
+        (unsigned)ev.prevRaw,
+        (unsigned)ev.raw,
+        (unsigned)ev.active,
+        (unsigned)ev.frameCount,
+        (unsigned)ev.activeFrameCount,
+        (unsigned)ev.changeCount,
+        (unsigned)ev.burstCount,
+        (unsigned)ev.currentRunFrames,
+        (unsigned)ev.lastRunFrames,
+        (unsigned)ev.maxRunFrames);
+    httpd_resp_sendstr_chunk(req, line);
+}
+
+static esp_err_t signalObserverLogDlHandler(httpd_req_t *req) {
+    httpd_resp_set_type(req, "text/csv; charset=utf-8");
+    char fname[88];
+    if (wallEpochMsAtBoot != 0) {
+        time_t sec = (time_t)((wallEpochMsAtBoot + (int64_t)millis()) / 1000);
+        struct tm tm_v;
+        localtime_r(&sec, &tm_v);
+        snprintf(fname, sizeof(fname),
+            "attachment; filename=\"CAN_SNIPPER_%04d%02d%02d_%02d%02d%02d.csv\"",
+            tm_v.tm_year + 1900, tm_v.tm_mon + 1, tm_v.tm_mday,
+            tm_v.tm_hour, tm_v.tm_min, tm_v.tm_sec);
+    } else {
+        snprintf(fname, sizeof(fname),
+            "attachment; filename=\"CAN_SNIPPER_uptime%u.csv\"", (unsigned)millis());
+    }
+    httpd_resp_set_hdr(req, "Content-Disposition", fname);
+
+    size_t n = 0;
+    size_t head = 0;
+    uint32_t overwritten = 0;
+    signalObserverEventSnapshot(n, head, overwritten);
+    char line[512];
+    char tsBuf[40];
+    snprintf(line, sizeof(line), "# uptime_ms=%u count=%u capacity=%u overwritten=%u\r\n",
+        (unsigned)millis(), (unsigned)n, (unsigned)kSignalObserverEventCap, (unsigned)overwritten);
+    httpd_resp_sendstr_chunk(req, line);
+    signalObserverWriteEventCsvHeader(req);
+    size_t start = (n < kSignalObserverEventCap) ? 0 : head;
+    for (size_t i = 0; i < n; ++i) {
+        SignalObserverEvent ev;
+        signalObserverEventCopyAt(start + i, ev);
+        signalObserverWriteEventCsvRow(req, ev, line, sizeof(line), tsBuf, sizeof(tsBuf));
+    }
+    httpd_resp_sendstr_chunk(req, nullptr);
+    return ESP_OK;
+}
+
 static void formatDurationHms(uint32_t durationMs, char *out, size_t out_n) {
     uint32_t seconds = durationMs / 1000UL;
     uint32_t h = seconds / 3600UL;
@@ -1435,23 +2119,38 @@ static void shortBuildId(const char *buildId, char *out, size_t out_n) {
 }
 
 // POST /api/user-marker?type=ap_warning
-// 운전자가 차량 화면 경고를 본 순간을 사후 분석 로그에 찍는 수동 마커.
+// 운전자가 차량 화면 경고 구간의 시작/종료 순간을 사후 분석 로그에 찍는 수동 마커.
 static esp_err_t userMarkerHandler(httpd_req_t *req) {
     uint32_t now = millis();
-    uint32_t detail = kUserMarkerApWarning;
-    // 이벤트 링이 alert 폭주로 밀려도 timeseries의 dUserMark가 10분 동안 기준점을 보존한다.
-    userMarkerCount = (uint32_t)userMarkerCount + 1;
+    bool activeBefore = (bool)userMarkerActive;
+    uint32_t detail = activeBefore ? kUserMarkerApWarningEnd : kUserMarkerApWarningStart;
+    char queryBuf[64] = {};
+    if (httpd_req_get_url_query_str(req, queryBuf, sizeof(queryBuf)) == ESP_OK) {
+        char typeBuf[24] = {};
+        if (httpd_query_key_value(queryBuf, "type", typeBuf, sizeof(typeBuf)) == ESP_OK) {
+            if (strcmp(typeBuf, "ap_warning_start") == 0 || strcmp(typeBuf, "start") == 0) detail = kUserMarkerApWarningStart;
+            else if (strcmp(typeBuf, "ap_warning_end") == 0 || strcmp(typeBuf, "end") == 0) detail = kUserMarkerApWarningEnd;
+        }
+    }
+    bool activeAfter = detail == kUserMarkerApWarningStart;
+    // 이벤트 링이 alert 폭주로 밀려도 timeseries의 dUserMark가 20분 동안 완료 구간 기준점을 보존한다.
+    if (detail == kUserMarkerApWarningEnd && activeBefore) {
+        userMarkerCount = (uint32_t)userMarkerCount + 1;
+    }
     userMarkerLastMs = now;
     userMarkerLastDetail = detail;
+    userMarkerActive = activeAfter;
 
     uint16_t tec = (uint16_t)(uint32_t)bChannelDiag.twaiTxErrNow;
     uint16_t rec = (uint16_t)(uint32_t)bChannelDiag.twaiRxErrNow;
     eventLogPush(EV_USER_MARK, tec, rec, detail);
     const NagSmartProfileSettings &profile = nagSmartProfileSettings((uint8_t)bChannelDiag.smartProfile);
 
-    char msg[256];
+    const char *detailName = userMarkerDetailName(detail);
+    char msg[352];
     snprintf(msg, sizeof(msg),
-        "[USER-MARK] AP_WARNING Profile=%s AP=%u Phase=%u 880=%u 921=%u 923=%u 297=%u HO=%u DAS=0x%02X Angle=%.1fdeg Real=%.2fNm MB=%.2fNm E=%u D=%u Last=%s TEC=%u/REC=%u",
+        "[USER-MARK] %s Profile=%s AP=%u Phase=%u 880=%u 921=%u 923=%u 297=%u HO=%u DAS=%s(0x%02X L%u warn=%u) Angle=%.1fdeg Real=%.2fNm MB=%.2fNm E=%u D=%u Last=%s TEC=%u/REC=%u",
+        detailName,
         profile.label,
         (unsigned)(uint8_t)bChannelDiag.dasAutopilotStateRx,
         (unsigned)(uint8_t)bChannelDiag.modeBPhase,
@@ -1460,7 +2159,10 @@ static esp_err_t userMarkerHandler(httpd_req_t *req) {
         (unsigned)bChannelDiag.frames923,
         (unsigned)bChannelDiag.frames297,
         (unsigned)(uint8_t)bChannelDiag.realHo,
+        dasHandsOnStateName((uint8_t)bChannelDiag.dasHandsOnStateRx),
         (unsigned)(uint8_t)bChannelDiag.dasHandsOnStateRx,
+        (unsigned)dasHandsOnWarningLevel((uint8_t)bChannelDiag.dasHandsOnStateRx),
+        dasHandsOnStateIsWarning((uint8_t)bChannelDiag.dasHandsOnStateRx) ? 1U : 0U,
         (double)(float)bChannelDiag.steeringAngleDeg,
         (double)(float)bChannelDiag.realTorqueNm,
         (double)(float)bChannelDiag.modeBLastTorqueNm,
@@ -1472,9 +2174,11 @@ static esp_err_t userMarkerHandler(httpd_req_t *req) {
     logRing.push(msg, now);
 
     httpd_resp_set_type(req, "application/json");
-    char body[96];
-    snprintf(body, sizeof(body), "{\"ok\":true,\"timestamp_ms\":%u,\"count\":%u}",
-        (unsigned)now, (unsigned)(uint32_t)userMarkerCount);
+    char body[192];
+    snprintf(body, sizeof(body), "{\"ok\":true,\"timestamp_ms\":%u,\"count\":%u,\"log_count\":%u,\"active\":%s,\"detail\":%u,\"detail_text\":\"%s\"}",
+        (unsigned)now, (unsigned)(uint32_t)userMarkerCount,
+        (unsigned)tsDelta((uint32_t)userMarkerCount, (uint32_t)tsBaseUserMark),
+        activeAfter ? "true" : "false", (unsigned)detail, detailName);
     httpd_resp_sendstr(req, body);
     return ESP_OK;
 }
@@ -1499,7 +2203,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
             "attachment; filename=\"canmod_uptime%u.txt\"", (unsigned)millis());
     }
     httpd_resp_set_hdr(req, "Content-Disposition", fname);
-    char line[640];
+    char line[768];
     char tsBuf[40];
 
     // 메타 정보 (Generated at = wall-clock, Boot at = wall-clock baseline)
@@ -1563,15 +2267,34 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
 
     // 섹션 3: 채널 상태 스냅샷
     httpd_resp_sendstr_chunk(req, "\r\n=== [3] 채널 상태 스냅샷 ===\r\n");
-    snprintf(line, sizeof(line), "A채널: RX=%u 1016=%u 1021=%u EAP=%u ULC=%u/스킵=%u OffHW=%u/스킵=%u\r\n",
+    snprintf(line, sizeof(line), "A채널: RX=%u 293=%u 1016=%u 1021=%u EAP=%u AutoLC=%u/스킵=%u ULC=%u/스킵=%u UlcOffHW=%u/스킵=%u AlcOffHW=%u/스킵=%u Speed=%u/스킵=%u Blind=%u/스킵=%u\r\n",
         (unsigned)aChannelDiag.framesReceivedTotal,
+        (unsigned)aChannelDiag.frames293,
         (unsigned)aChannelDiag.frames1016,
         (unsigned)aChannelDiag.frames1021,
         (unsigned)aChannelDiag.eapModifiedCount,
+        (unsigned)aChannelDiag.autoLaneChangeModifiedCount,
+        (unsigned)aChannelDiag.autoLaneChangeSkipCount,
         (unsigned)aChannelDiag.ulcStalkConfirmModifiedCount,
         (unsigned)aChannelDiag.ulcStalkConfirmSkipCount,
+        (unsigned)aChannelDiag.ulcOffHighwayModifiedCount,
+        (unsigned)aChannelDiag.ulcOffHighwaySkipCount,
         (unsigned)aChannelDiag.alcOffHighwayModifiedCount,
-        (unsigned)aChannelDiag.alcOffHighwaySkipCount);
+        (unsigned)aChannelDiag.alcOffHighwaySkipCount,
+        (unsigned)aChannelDiag.ulcSpeedConfigModifiedCount,
+        (unsigned)aChannelDiag.ulcSpeedConfigSkipCount,
+        (unsigned)aChannelDiag.ulcBlindSpotConfigModifiedCount,
+        (unsigned)aChannelDiag.ulcBlindSpotConfigSkipCount);
+    httpd_resp_sendstr_chunk(req, line);
+    snprintf(line, sizeof(line),
+        "A실험설정: AutoLC=%s ULCOffHW=%s ALCOffHW=%s ULCspeed=%s(%u) ULCblind=%s(%u)\r\n",
+        (bool)uiAutoLaneChangeEnableRuntime ? "ON" : "stock",
+        (bool)uiUlcOffHighwayRuntime ? "ON" : "stock",
+        (bool)uiAlcOffHighwayEnableRuntime ? "ON" : "stock",
+        uiUlcSpeedConfigName((uint8_t)uiUlcSpeedConfigRuntime),
+        (unsigned)(uint8_t)uiUlcSpeedConfigRuntime,
+        uiUlcBlindSpotConfigName((uint8_t)uiUlcBlindSpotConfigRuntime),
+        (unsigned)(uint8_t)uiUlcBlindSpotConfigRuntime);
     httpd_resp_sendstr_chunk(req, line);
     // A채널 진단 카운터 (TEC/REC/MERRF/RX-OVR/EFLG/TX OK·Fail)
     uint32_t aGuardUntil = (uint32_t)aChannelDiag.aTxGuardUntilMs;
@@ -1610,7 +2333,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
             (unsigned)aChannelDiag.mcpEflgEventCount);
         httpd_resp_sendstr_chunk(req, line);
     snprintf(line, sizeof(line),
-        "B채널: RX=%u Filt=%u Echo=%u TxFail=%u TEC=%u REC=%u TECpeak=%u 880=%u 921=%u 923=%u 297=%u DAS=%u@%u Profile=%s TWAI=%s InitErr=%d/%d\r\n",
+        "B채널: RX=%u Filt=%u Echo=%u TxFail=%u TEC=%u REC=%u TECpeak=%u 880=%u 921=%u 923=%u 297=%u DAS=%u(%s/L%u/warn=%u)@%u Profile=%s TWAI=%s InitErr=%d/%d\r\n",
         (unsigned)bChannelDiag.framesReceivedTotal,
         (unsigned)bChannelDiag.framesFilteredInTotal,
         (unsigned)bChannelDiag.echoCount,
@@ -1623,6 +2346,9 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         (unsigned)bChannelDiag.frames923,
         (unsigned)bChannelDiag.frames297,
         (unsigned)bChannelDiag.dasHandsOnStateRx,
+        dasHandsOnStateName((uint8_t)bChannelDiag.dasHandsOnStateRx),
+        (unsigned)dasHandsOnWarningLevel((uint8_t)bChannelDiag.dasHandsOnStateRx),
+        dasHandsOnStateIsWarning((uint8_t)bChannelDiag.dasHandsOnStateRx) ? 1U : 0U,
         (unsigned)bChannelDiag.dasStatusSourceId,
         nagSmartProfileSettings((uint8_t)bChannelDiag.smartProfile).label,
         twS,
@@ -1651,7 +2377,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         uint32_t age297 = (uint32_t)bChannelDiag.last297RxMs ? (now - (uint32_t)bChannelDiag.last297RxMs) : 0;
         uint32_t ageEcho = (uint32_t)bChannelDiag.lastEchoTxMs ? (now - (uint32_t)bChannelDiag.lastEchoTxMs) : 0;
         snprintf(line, sizeof(line),
-            "B나그판정: 880=%u(age=%ums) 921=%u(age=%ums) 923=%u(age=%ums) 297=%u(age=%ums) Echo=%u(age=%ums) | Profile=%s AP=%u Phase=%u HO=%u Torque=%.2fNm DAS=0x%02X@%u Last=%s\r\n",
+            "B나그판정: 880=%u(age=%ums) 921=%u(age=%ums) 923=%u(age=%ums) 297=%u(age=%ums) Echo=%u(age=%ums) | Profile=%s AP=%u Phase=%u HO=%u Torque=%.2fNm DAS=%s(0x%02X/L%u/warn=%u)@%u Last=%s\r\n",
             (unsigned)bChannelDiag.frames880, (unsigned)age880,
             (unsigned)bChannelDiag.frames921, (unsigned)age921,
             (unsigned)bChannelDiag.frames923, (unsigned)age923,
@@ -1662,7 +2388,10 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
             (unsigned)(uint8_t)bChannelDiag.modeBPhase,
             (unsigned)(uint8_t)bChannelDiag.realHo,
             (double)(float)bChannelDiag.realTorqueNm,
+            dasHandsOnStateName((uint8_t)bChannelDiag.dasHandsOnStateRx),
             (unsigned)(uint8_t)bChannelDiag.dasHandsOnStateRx,
+            (unsigned)dasHandsOnWarningLevel((uint8_t)bChannelDiag.dasHandsOnStateRx),
+            dasHandsOnStateIsWarning((uint8_t)bChannelDiag.dasHandsOnStateRx) ? 1U : 0U,
             (unsigned)bChannelDiag.dasStatusSourceId,
             nagDecisionName((uint8_t)bChannelDiag.nagLastDecision));
         httpd_resp_sendstr_chunk(req, line);
@@ -1684,15 +2413,65 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         (unsigned)bChannelDiag.lastRecoveryDurationMs,
         (unsigned)bChannelDiag.maxRecoveryDurationMs);
     httpd_resp_sendstr_chunk(req, line);
+    httpd_resp_sendstr_chunk(req, "관찰기: name,ch,id,byte_order,raw,frames,active,changes,bursts,current_run,last_run,max_run,age_ms\r\n");
+    {
+        uint32_t now = millis();
+        uint8_t count = (uint8_t)signalObserverCount;
+        if (count > kSignalObserverMaxSignals) count = kSignalObserverMaxSignals;
+        for (uint8_t i = 0; i < count; ++i) {
+            const SignalObserverDef &def = signalObserverDefs[i];
+            const SignalObserverState &st = signalObserverStates[i];
+            snprintf(line, sizeof(line),
+                "관찰기,%s,%s,0x%03X,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+                def.name,
+                signalObserverChannelName(def.channelMask),
+                (unsigned)def.frameId,
+                signalObserverByteOrderName(def.byteOrder),
+                (unsigned)st.lastRaw,
+                (unsigned)st.frameCount,
+                (unsigned)st.activeFrameCount,
+                (unsigned)st.changeCount,
+                (unsigned)st.burstCount,
+                (unsigned)st.currentRunFrames,
+                (unsigned)st.lastRunFrames,
+                (unsigned)st.maxRunFrames,
+                (unsigned)(st.lastSeenMs ? webSafeAgeMs(now, st.lastSeenMs) : 0));
+            httpd_resp_sendstr_chunk(req, line);
+        }
+    }
+    {
+        size_t eventN = 0;
+        size_t eventHead = 0;
+        uint32_t eventOverwritten = 0;
+        signalObserverEventSnapshot(eventN, eventHead, eventOverwritten);
+        snprintf(line, sizeof(line), "관찰기 이벤트: count=%u cap=%u overwritten=%u\r\n",
+            (unsigned)eventN, (unsigned)kSignalObserverEventCap, (unsigned)eventOverwritten);
+        httpd_resp_sendstr_chunk(req, line);
+        signalObserverWriteEventCsvHeader(req);
+        if (eventN == 0) {
+            httpd_resp_sendstr_chunk(req, "(관찰기 이벤트 없음)\r\n");
+        } else {
+            size_t start = (eventN < kSignalObserverEventCap) ? 0 : eventHead;
+            for (size_t i = 0; i < eventN; ++i) {
+                SignalObserverEvent ev;
+                signalObserverEventCopyAt(start + i, ev);
+                signalObserverWriteEventCsvRow(req, ev, line, sizeof(line), tsBuf, sizeof(tsBuf));
+            }
+        }
+    }
     {
         uint32_t now = millis();
         uint32_t markerCount = (uint32_t)userMarkerCount;
         uint32_t markerLast = (uint32_t)userMarkerLastMs;
         uint32_t markerAge = markerLast ? (now - markerLast) : 0;
         snprintf(line, sizeof(line),
-            "사용자마커: count=%u last_age=%ums detail=%u\r\n",
-            (unsigned)markerCount, (unsigned)markerAge,
-            (unsigned)(uint32_t)userMarkerLastDetail);
+            "사용자마커: count=%u log_count=%u active=%u last_age=%ums detail=%u(%s)\r\n",
+            (unsigned)markerCount,
+            (unsigned)tsDelta(markerCount, (uint32_t)tsBaseUserMark),
+            (bool)userMarkerActive ? 1U : 0U,
+            (unsigned)markerAge,
+            (unsigned)(uint32_t)userMarkerLastDetail,
+            userMarkerDetailName((uint32_t)userMarkerLastDetail));
         httpd_resp_sendstr_chunk(req, line);
     }
     {
@@ -1720,8 +2499,8 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         httpd_resp_sendstr_chunk(req, line);
     }
 
-    // 섹션 4: 10분 시계열 로그 (5초 × 120 샘플)
-    httpd_resp_sendstr_chunk(req, "\r\n=== [4] 10분 시계열 로그 ===\r\n");
+    // 섹션 4: 20분 시계열 로그 (5초 × 240 샘플)
+    httpd_resp_sendstr_chunk(req, "\r\n=== [4] 20분 시계열 로그 ===\r\n");
     size_t tsN = 0;
     size_t tsSnapHead = 0;
     uint32_t tsSnapResetMs = 0;
@@ -1734,7 +2513,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         tsSnapRecording ? "ON" : "OFF", (unsigned)tsN);
     httpd_resp_sendstr_chunk(req, line);
     httpd_resp_sendstr_chunk(req,
-        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,nagMode,smartProfile,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,f297,apState,modeBPhase,steerDeg,realTorqueNm,modeBInject,modeBLastNm,age880Ms,ageDasMs,age297Ms,ageEchoMs,modeBStateAgeMs,modeBPhaseAgeMs,modeBFirstEchoDelayMs,modeBDelayTargetMs,d297,dModeBInject\r\n");
+        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,dasStateName,dasStateGroup,dasWarnLevel,dasWarning,nagMode,smartProfile,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,f297,apState,modeBPhase,steerDeg,realTorqueNm,modeBInject,modeBLastNm,age880Ms,ageDasMs,age297Ms,ageEchoMs,modeBStateAgeMs,modeBPhaseAgeMs,modeBFirstEchoDelayMs,modeBDelayTargetMs,d297,dModeBInject\r\n");
     {
         size_t start = (tsN < TS_CAP) ? 0 : tsSnapHead;
         if (tsN == 0) {
@@ -1744,12 +2523,14 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                 TsSample s;
                 timeseriesCopyAt(start + i, s);
                 formatLogTimestamp(s.t_ms, tsBuf, sizeof(tsBuf));
-                snprintf(line, sizeof(line), "%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%.1f,%.2f,%u,%.2f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+                snprintf(line, sizeof(line), "%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%.1f,%.2f,%u,%.2f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
                     tsBuf, (unsigned)s.t_ms,
                     (unsigned)s.busoff, (unsigned)s.tec, (unsigned)s.rec,
                     (unsigned)s.arbLost, (unsigned)s.busErr, (unsigned)s.txFail,
                     (unsigned)s.echoCnt, (unsigned)s.f880, (unsigned)s.f921, (unsigned)s.f923,
                     (unsigned)s.handsOn, (unsigned)s.dasState,
+                    dasHandsOnStateName(s.dasState), dasHandsOnStateGroup(s.dasState),
+                    (unsigned)dasHandsOnWarningLevel(s.dasState), dasHandsOnStateIsWarning(s.dasState) ? 1U : 0U,
                     (unsigned)s.nagMode, (unsigned)s.smartProfile, (unsigned)s.dasSourceId,
                     (unsigned)s.echoDrop, (unsigned)s.skipRuntime,
                     (unsigned)s.skipAp, (unsigned)s.skipHandsOn, (unsigned)s.skipDas,
@@ -1776,8 +2557,8 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
     httpd_resp_sendstr_chunk(req, "\r\n=== [5] 밀리초 이벤트 로그 ===\r\n");
     httpd_resp_sendstr_chunk(req,
         "# type: 0=BUSOFF 1=REC_OK 2=REC_FAIL 3=REC_SOFT 4=ERR_PASS 5=ARB_LOST 6=BUS_ERR 7=TX_FAIL 8=RX_FULL 9=TX_BACKOFF 10=USER_MARK 11=NAG_MODE 12=MODEB_STATE 13=MODEB_PHASE 14=MODEB_FIRST_ECHO\r\n");
-    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING | NAG_MODE detail: smartProfile 0=default 1=A 2=B 3=C | MODEB_STATE detail: ap<<16|oldHo<<8|newHo | MODEB_PHASE detail: phase<<24|ap<<16|ho<<8|decision | FIRST_ECHO detail: delay_ms\r\n");
-    httpd_resp_sendstr_chunk(req, "wall_time,timestamp_ms,type,typeName,tec,rec,detail\r\n");
+    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING_START 2=AP_WARNING_END | NAG_MODE detail: smartProfile 0=default 1=A 2=B 3=C 4=D | MODEB_STATE detail: ap<<16|oldHo<<8|newHo | MODEB_PHASE detail: phase<<24|ap<<16|ho<<8|decision | FIRST_ECHO detail: delay_ms | detailText is decoded for analysis\r\n");
+    httpd_resp_sendstr_chunk(req, "wall_time,timestamp_ms,type,typeName,tec,rec,detail,detailText\r\n");
     {
         size_t evtN = 0;
         size_t evtSnapHead = 0;
@@ -1790,10 +2571,12 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                 CanEvent e;
                 eventLogCopyAt(start + i, e);
                 formatLogTimestamp(e.t_ms, tsBuf, sizeof(tsBuf));
-                snprintf(line, sizeof(line), "%s,%u,%u,%s,%u,%u,%u\r\n",
+                char detailText[180];
+                snprintf(line, sizeof(line), "%s,%u,%u,%s,%u,%u,%u,%s\r\n",
                     tsBuf, (unsigned)e.t_ms, (unsigned)e.type,
                     eventTypeName(e.type),
-                    (unsigned)e.tec, (unsigned)e.rec, (unsigned)e.detail);
+                    (unsigned)e.tec, (unsigned)e.rec, (unsigned)e.detail,
+                    eventDetailText(e.type, e.detail, detailText, sizeof(detailText)));
                 httpd_resp_sendstr_chunk(req, line);
             }
         }
@@ -1987,6 +2770,10 @@ static void applyEmergencyDisableAllFeatures()
     tsllcRuntime = false;
     uiUlcStalkConfirmRuntime = false;
     uiAlcOffHighwayEnableRuntime = false;
+    uiUlcOffHighwayRuntime = false;
+    uiAutoLaneChangeEnableRuntime = false;
+    uiUlcSpeedConfigRuntime = kUlcConfigStock;
+    uiUlcBlindSpotConfigRuntime = kUlcConfigStock;
     aChannelTxRuntime = false;
 
     nvsWriteBool(kNvsKeyIsaSpeedChime, false);
@@ -1996,6 +2783,10 @@ static void applyEmergencyDisableAllFeatures()
     nvsWriteBool(kNvsKeyTsllc, false);
     nvsWriteBool(kNvsKeyUlcStalkConfirm, false);
     nvsWriteBool(kNvsKeyAlcOffHighway, false);
+    nvsWriteBool(kNvsKeyUlcOffHighway, false);
+    nvsWriteBool(kNvsKeyAutoLaneChange, false);
+    nvsWriteU8(kNvsKeyUlcSpeedConfig, kUlcConfigStock);
+    nvsWriteU8(kNvsKeyUlcBlindConfig, kUlcConfigStock);
     nvsWriteBool(kNvsKeyAChTx, false);
 
 }
@@ -2009,6 +2800,7 @@ static void applyEmergencyRestoreAllFeatures()
     tsllcRuntime = nvsReadBool("bk_tsllc", false);
     uiUlcStalkConfirmRuntime = nvsReadBool("bk_ui_ulc", false);
     uiAlcOffHighwayEnableRuntime = nvsReadBool("bk_alc_off", false);
+    resetSessionOnlyExperimentRuntime();
     aChannelTxRuntime = nvsReadBool("bk_a_ch_tx", false);
 
     nvsWriteBool(kNvsKeyIsaSpeedChime, isaSpeedChimeSuppressRuntime);
@@ -2539,10 +3331,14 @@ static void webServerInit(TWAIDriver* drv = nullptr)
         Serial.printf("NVS: ENHANCED_AUTOPILOT = %d\n",
                       (bool)enhancedAutopilotRuntime);
         Serial.printf("NVS: NAG_KILLER = %d\n", (bool)nagKillerRuntime);
-        Serial.printf("NVS: A_TX = %d, UI_ulcStalkConfirm = %d, UI_alcOffHighwayEnable = %d, A_SPI = %lu Hz, A_ONESHOT = %d, A_TX_GUARD = %d\n",
+        Serial.printf("NVS: A_TX = %d, UI_ulcStalkConfirm = %d, UI_alcOffHighwayEnable = %d, UI_ulcOffHighway = %d, UI_autoLaneChangeEnable = %d, UI_ulcSpeedConfig = %s, UI_ulcBlindSpotConfig = %s, A_SPI = %lu Hz, A_ONESHOT = %d, A_TX_GUARD = %d\n",
               (int)(bool)aChannelTxRuntime,
                   (int)(bool)uiUlcStalkConfirmRuntime,
                   (int)(bool)uiAlcOffHighwayEnableRuntime,
+                  (int)(bool)uiUlcOffHighwayRuntime,
+                  (int)(bool)uiAutoLaneChangeEnableRuntime,
+                  uiUlcSpeedConfigName((uint8_t)uiUlcSpeedConfigRuntime),
+                  uiUlcBlindSpotConfigName((uint8_t)uiUlcBlindSpotConfigRuntime),
                   (unsigned long)(uint32_t)aMcpSpiFreqHz,
                   (int)(bool)aMcpOneShotRuntime,
                   (int)(bool)aTxGuardRuntime);
@@ -2585,7 +3381,7 @@ static void webServerInit(TWAIDriver* drv = nullptr)
     // HTTP server on Core 0
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.core_id = 0;
-    config.max_uri_handlers = 57;
+    config.max_uri_handlers = 65;
     config.lru_purge_enable = true;
     config.stack_size = 16384;
 
@@ -2614,6 +3410,14 @@ static void webServerInit(TWAIDriver* drv = nullptr)
         .uri = "/api/ui-ulc-stalk-confirm", .method = HTTP_POST, .handler = uiUlcStalkConfirmHandler, .user_ctx = NULL};
     httpd_uri_t uriAlcOffHighway = {
         .uri = "/api/ui-alc-off-highway-enable", .method = HTTP_POST, .handler = uiAlcOffHighwayHandler, .user_ctx = NULL};
+    httpd_uri_t uriUlcOffHighway = {
+        .uri = "/api/ui-ulc-off-highway", .method = HTTP_POST, .handler = uiUlcOffHighwayHandler, .user_ctx = NULL};
+    httpd_uri_t uriAutoLaneChangeEnable = {
+        .uri = "/api/ui-auto-lane-change-enable", .method = HTTP_POST, .handler = uiAutoLaneChangeEnableHandler, .user_ctx = NULL};
+    httpd_uri_t uriUlcSpeedConfig = {
+        .uri = "/api/ui-ulc-speed-config", .method = HTTP_POST, .handler = uiUlcSpeedConfigHandler, .user_ctx = NULL};
+    httpd_uri_t uriUlcBlindSpotConfig = {
+        .uri = "/api/ui-ulc-blind-spot-config", .method = HTTP_POST, .handler = uiUlcBlindSpotConfigHandler, .user_ctx = NULL};
     httpd_uri_t uriAChannelTx = {
         .uri = "/api/a-channel-tx", .method = HTTP_POST, .handler = aChannelTxHandler, .user_ctx = NULL};
     httpd_uri_t uriASpi8Mhz = {
@@ -2622,6 +3426,14 @@ static void webServerInit(TWAIDriver* drv = nullptr)
         .uri = "/api/a-oneshot", .method = HTTP_POST, .handler = aOneShotHandler, .user_ctx = NULL};
     httpd_uri_t uriATxGuard = {
         .uri = "/api/a-tx-guard", .method = HTTP_POST, .handler = aTxGuardHandler, .user_ctx = NULL};
+    httpd_uri_t uriSignalObserverConfig = {
+        .uri = "/api/signal-observer/config", .method = HTTP_POST, .handler = signalObserverConfigHandler, .user_ctx = NULL};
+    httpd_uri_t uriSignalObserverReset = {
+        .uri = "/api/signal-observer/reset", .method = HTTP_POST, .handler = signalObserverResetHandler, .user_ctx = NULL};
+    httpd_uri_t uriSignalObserverCapture = {
+        .uri = "/api/signal-observer/capture", .method = HTTP_POST, .handler = signalObserverCaptureHandler, .user_ctx = NULL};
+    httpd_uri_t uriSignalObserverLogDl = {
+        .uri = "/api/signal-observer-log-dl", .method = HTTP_GET, .handler = signalObserverLogDlHandler, .user_ctx = NULL};
 
     httpd_uri_t uriEmergencyDisable = {
         .uri = "/api/emergency-disable", .method = HTTP_POST, .handler = emergencyDisableHandler, .user_ctx = NULL};
@@ -2636,6 +3448,8 @@ static void webServerInit(TWAIDriver* drv = nullptr)
         .uri = "/api/ota", .method = HTTP_POST, .handler = otaHandler, .user_ctx = NULL};
     httpd_uri_t uriReboot = {
         .uri = "/api/reboot", .method = HTTP_POST, .handler = rebootHandler, .user_ctx = NULL};
+    httpd_uri_t uriNvsReset = {
+        .uri = "/api/nvs-reset", .method = HTTP_POST, .handler = nvsResetHandler, .user_ctx = NULL};
     httpd_uri_t uriGenerate204 = {
         .uri = "/generate_204", .method = HTTP_GET, .handler = captiveRedirectHandler, .user_ctx = NULL};
     httpd_uri_t uriHotspot = {
@@ -2700,10 +3514,18 @@ static void webServerInit(TWAIDriver* drv = nullptr)
     httpd_register_uri_handler(webServer, &uriTsllc);
     httpd_register_uri_handler(webServer, &uriUlcStalkConfirm);
     httpd_register_uri_handler(webServer, &uriAlcOffHighway);
+    httpd_register_uri_handler(webServer, &uriUlcOffHighway);
+    httpd_register_uri_handler(webServer, &uriAutoLaneChangeEnable);
+    httpd_register_uri_handler(webServer, &uriUlcSpeedConfig);
+    httpd_register_uri_handler(webServer, &uriUlcBlindSpotConfig);
     httpd_register_uri_handler(webServer, &uriAChannelTx);
     httpd_register_uri_handler(webServer, &uriASpi8Mhz);
     httpd_register_uri_handler(webServer, &uriAOneShot);
     httpd_register_uri_handler(webServer, &uriATxGuard);
+    httpd_register_uri_handler(webServer, &uriSignalObserverConfig);
+    httpd_register_uri_handler(webServer, &uriSignalObserverReset);
+    httpd_register_uri_handler(webServer, &uriSignalObserverCapture);
+    httpd_register_uri_handler(webServer, &uriSignalObserverLogDl);
     httpd_register_uri_handler(webServer, &uriEmergencyDisable);
     httpd_register_uri_handler(webServer, &uriEmergencyRestore);
     httpd_register_uri_handler(webServer, &uriEnablePrint);
@@ -2711,6 +3533,7 @@ static void webServerInit(TWAIDriver* drv = nullptr)
     httpd_register_uri_handler(webServer, &uriSetTheme);
     httpd_register_uri_handler(webServer, &uriOta);
     httpd_register_uri_handler(webServer, &uriReboot);
+    httpd_register_uri_handler(webServer, &uriNvsReset);
     httpd_register_uri_handler(webServer, &uriGenerate204);
     httpd_register_uri_handler(webServer, &uriHotspot);
     httpd_register_uri_handler(webServer, &uriNagConfigGet);

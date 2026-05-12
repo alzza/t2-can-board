@@ -50,6 +50,30 @@ static CanFrame makeDasFrame(uint8_t handsOnState, uint32_t id = 921, uint8_t ap
     return frame;
 }
 
+static CanFrame makeSteeringFrame(float angleDeg)
+{
+    CanFrame frame = {.id = 297, .dlc = 8};
+    int raw = static_cast<int>((angleDeg + 819.2f) * 10.0f + 0.5f);
+    if (raw < 0) raw = 0;
+    if (raw > 0x3FFF) raw = 0x3FFF;
+    frame.data[2] = static_cast<uint8_t>(raw & 0xFF);
+    frame.data[3] = static_cast<uint8_t>((raw >> 8) & 0x3F);
+    return frame;
+}
+
+static uint16_t injectedTorqueRaw(const CanFrame &frame)
+{
+    return static_cast<uint16_t>(((frame.data[2] & 0x0F) << 8) | frame.data[3]);
+}
+
+static int8_t injectedTorqueDir(const CanFrame &frame)
+{
+    uint16_t raw = injectedTorqueRaw(frame);
+    if (raw < 2048) return -1;
+    if (raw > 2048) return 1;
+    return 0;
+}
+
 static void primeDasRequest(uint8_t handsOnState = 2, uint32_t id = 921, uint8_t apState = 3)
 {
     CanFrame dasFrame = makeDasFrame(handsOnState, id, apState);
@@ -61,6 +85,18 @@ static void primeDasRequest(uint8_t handsOnState = 2, uint32_t id = 921, uint8_t
         handler._mbState2EnterMs = millis() - nagSmartProfileSettings(nagConfig.smartProfile).state2DelayMs - 1;
         mock.reset();
     }
+}
+
+static void primeStrongRequest(uint8_t handsOnState = 3, uint32_t id = 921, uint8_t apState = 3)
+{
+    CanFrame dasFrame = makeDasFrame(handsOnState, id, apState);
+    handler.handleMessage(dasFrame, mock);
+    CanFrame warmupFrame = makeEpasFrame(0, 0.33f, 0x00);
+    handler.handleMessage(warmupFrame, mock);
+    const NagSmartProfileSettings &profile = nagSmartProfileSettings(nagConfig.smartProfile);
+    handler._mbStrongEnterMs = millis() - profile.strongDelayMs - 1;
+    handler._mbStrongActiveMs = millis() - 600;
+    mock.reset();
 }
 
 void setUp()
@@ -91,6 +127,40 @@ void test_nag_filter_ids_value()
     TEST_ASSERT_EQUAL_UINT32(921, ids[1]);
     TEST_ASSERT_EQUAL_UINT32(923, ids[2]);
     TEST_ASSERT_EQUAL_UINT32(297, ids[3]);
+}
+
+void test_das_hands_on_state_names_cover_warning_enum()
+{
+    TEST_ASSERT_EQUAL_STRING("NOT_REQD", dasHandsOnStateName(0));
+    TEST_ASSERT_EQUAL_STRING("REQD_DETECTED", dasHandsOnStateName(1));
+    TEST_ASSERT_EQUAL_STRING("REQD_NOT_DETECTED", dasHandsOnStateName(2));
+    TEST_ASSERT_EQUAL_STRING("REQD_VISUAL", dasHandsOnStateName(3));
+    TEST_ASSERT_EQUAL_STRING("REQD_CHIME_1", dasHandsOnStateName(4));
+    TEST_ASSERT_EQUAL_STRING("REQD_CHIME_2", dasHandsOnStateName(5));
+    TEST_ASSERT_EQUAL_STRING("REQD_SLOWING", dasHandsOnStateName(6));
+    TEST_ASSERT_EQUAL_STRING("REQD_STRUCK_OUT", dasHandsOnStateName(7));
+    TEST_ASSERT_EQUAL_STRING("SUSPENDED", dasHandsOnStateName(8));
+    TEST_ASSERT_EQUAL_STRING("REQD_ESCALATED_CHIME_1", dasHandsOnStateName(9));
+    TEST_ASSERT_EQUAL_STRING("REQD_ESCALATED_CHIME_2", dasHandsOnStateName(10));
+    TEST_ASSERT_EQUAL_STRING("SNA", dasHandsOnStateName(15));
+    TEST_ASSERT_EQUAL_STRING("NOT_SEEN", dasHandsOnStateName(0xFF));
+}
+
+void test_das_hands_on_warning_levels_match_escalation()
+{
+    TEST_ASSERT_EQUAL_UINT8(0, dasHandsOnWarningLevel(0));
+    TEST_ASSERT_EQUAL_UINT8(1, dasHandsOnWarningLevel(1));
+    TEST_ASSERT_EQUAL_UINT8(1, dasHandsOnWarningLevel(2));
+    TEST_ASSERT_EQUAL_UINT8(2, dasHandsOnWarningLevel(3));
+    TEST_ASSERT_EQUAL_UINT8(3, dasHandsOnWarningLevel(4));
+    TEST_ASSERT_EQUAL_UINT8(3, dasHandsOnWarningLevel(5));
+    TEST_ASSERT_EQUAL_UINT8(4, dasHandsOnWarningLevel(9));
+    TEST_ASSERT_EQUAL_UINT8(4, dasHandsOnWarningLevel(10));
+    TEST_ASSERT_EQUAL_UINT8(5, dasHandsOnWarningLevel(6));
+    TEST_ASSERT_EQUAL_UINT8(5, dasHandsOnWarningLevel(7));
+    TEST_ASSERT_FALSE(dasHandsOnStateIsWarning(2));
+    TEST_ASSERT_TRUE(dasHandsOnStateIsWarning(3));
+    TEST_ASSERT_TRUE(dasHandsOnStateIsWarning(10));
 }
 
 // ============================================================
@@ -334,9 +404,21 @@ void test_nag_profile_c_settings_match_delay_torque_candidate()
     TEST_ASSERT_EQUAL_UINT16(170, profile.state2MildMaxRawDelta);
 }
 
+void test_nag_profile_d_settings_match_c_with_sign_hold_candidate()
+{
+    const NagSmartProfileSettings &profile = nagSmartProfileSettings(kNagSmartProfileD);
+    TEST_ASSERT_EQUAL_UINT8(kNagSmartProfileD, profile.id);
+    TEST_ASSERT_EQUAL_UINT16(500, profile.state1GraceMs);
+    TEST_ASSERT_EQUAL_UINT16(600, profile.state2DelayMs);
+    TEST_ASSERT_EQUAL_UINT16(400, profile.strongDelayMs);
+    TEST_ASSERT_EQUAL_UINT16(50, profile.state2MildMinRawDelta);
+    TEST_ASSERT_EQUAL_UINT16(170, profile.state2MildMaxRawDelta);
+}
+
 void test_nag_profile_clamp_accepts_c_and_rejects_out_of_range()
 {
     TEST_ASSERT_EQUAL_UINT8(kNagSmartProfileC, nagSmartProfileClamp(kNagSmartProfileC));
+    TEST_ASSERT_EQUAL_UINT8(kNagSmartProfileD, nagSmartProfileClamp(kNagSmartProfileD));
     TEST_ASSERT_EQUAL_UINT8(kNagSmartProfileDefault, nagSmartProfileClamp(99));
 }
 
@@ -355,6 +437,76 @@ void test_nag_profile_c_output_raw_stays_in_state2_mild_range()
         TEST_ASSERT_TRUE(tRaw >= 2098);
         TEST_ASSERT_TRUE(tRaw <= 2218);
     }
+}
+
+void test_nag_profile_c_switches_direction_immediately()
+{
+    nagConfig.smartProfile = kNagSmartProfileC;
+    primeDasRequest();
+
+    CanFrame positiveSteer = makeSteeringFrame(2.0f);
+    handler.handleMessage(positiveSteer, mock);
+    CanFrame first = makeEpasFrame(0, 0.33f, 0x01);
+    handler.handleMessage(first, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_INT8(-1, injectedTorqueDir(mock.sent[0]));
+
+    mock.reset();
+    CanFrame negativeSteer = makeSteeringFrame(-2.0f);
+    handler.handleMessage(negativeSteer, mock);
+    CanFrame second = makeEpasFrame(0, 0.33f, 0x02);
+    handler.handleMessage(second, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_INT8(1, injectedTorqueDir(mock.sent[0]));
+}
+
+void test_nag_profile_d_holds_state2_direction_until_hold_expires()
+{
+    nagConfig.smartProfile = kNagSmartProfileD;
+    primeDasRequest();
+
+    CanFrame positiveSteer = makeSteeringFrame(2.0f);
+    handler.handleMessage(positiveSteer, mock);
+    CanFrame first = makeEpasFrame(0, 0.33f, 0x01);
+    handler.handleMessage(first, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_INT8(-1, injectedTorqueDir(mock.sent[0]));
+
+    mock.reset();
+    CanFrame negativeSteer = makeSteeringFrame(-2.0f);
+    handler.handleMessage(negativeSteer, mock);
+    CanFrame held = makeEpasFrame(0, 0.33f, 0x02);
+    handler.handleMessage(held, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_INT8(-1, injectedTorqueDir(mock.sent[0]));
+
+    handler._mbDirHoldUntilMs = 0;
+    mock.reset();
+    CanFrame switched = makeEpasFrame(0, 0.33f, 0x03);
+    handler.handleMessage(switched, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_INT8(1, injectedTorqueDir(mock.sent[0]));
+}
+
+void test_nag_profile_d_holds_strong_direction_when_steering_crosses_zero()
+{
+    nagConfig.smartProfile = kNagSmartProfileD;
+    primeStrongRequest();
+
+    CanFrame positiveSteer = makeSteeringFrame(2.0f);
+    handler.handleMessage(positiveSteer, mock);
+    CanFrame first = makeEpasFrame(0, 0.33f, 0x04);
+    handler.handleMessage(first, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_INT8(-1, injectedTorqueDir(mock.sent[0]));
+
+    mock.reset();
+    CanFrame negativeSteer = makeSteeringFrame(-2.0f);
+    handler.handleMessage(negativeSteer, mock);
+    CanFrame held = makeEpasFrame(0, 0.33f, 0x05);
+    handler.handleMessage(held, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_INT8(-1, injectedTorqueDir(mock.sent[0]));
 }
 
 void test_nag_output_handson_never_exceeds_1()
@@ -485,6 +637,8 @@ int main()
     // Filter
     RUN_TEST(test_nag_filter_ids_count);
     RUN_TEST(test_nag_filter_ids_value);
+    RUN_TEST(test_das_hands_on_state_names_cover_warning_enum);
+    RUN_TEST(test_das_hands_on_warning_levels_match_escalation);
 
     // Basic echo behavior
     RUN_TEST(test_nag_echoes_when_handson_0);
@@ -516,8 +670,12 @@ int main()
     RUN_TEST(test_nag_output_torque_never_exceeds_safe_range);
     RUN_TEST(test_nag_output_raw_stays_in_state2_mild_range);
     RUN_TEST(test_nag_profile_c_settings_match_delay_torque_candidate);
+    RUN_TEST(test_nag_profile_d_settings_match_c_with_sign_hold_candidate);
     RUN_TEST(test_nag_profile_clamp_accepts_c_and_rejects_out_of_range);
     RUN_TEST(test_nag_profile_c_output_raw_stays_in_state2_mild_range);
+    RUN_TEST(test_nag_profile_c_switches_direction_immediately);
+    RUN_TEST(test_nag_profile_d_holds_state2_direction_until_hold_expires);
+    RUN_TEST(test_nag_profile_d_holds_strong_direction_when_steering_crosses_zero);
     RUN_TEST(test_nag_output_handson_never_exceeds_1);
 
     // Counters

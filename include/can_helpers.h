@@ -1,6 +1,8 @@
 // CAN 프레임 헬퍼 함수 및 빌드 플래그별 기본값/런타임 변수 정의
 #pragma once
 
+#include <cstddef>
+#include <cstring>
 #include "can_frame_types.h"
 #include "shared_types.h"
 
@@ -51,12 +53,24 @@ inline constexpr bool kUlcStalkConfirmDefaultEnabled = false;      // 기본값 
 inline constexpr bool kUlcStalkConfirmBuildEnabled = true;
 inline constexpr bool kAlcOffHighwayEnableDefaultEnabled = false;  // 기본값 OFF (웹 UI에서 활성화)
 inline constexpr bool kAlcOffHighwayEnableBuildEnabled = true;
+inline constexpr bool kUlcOffHighwayDefaultEnabled = false;
+inline constexpr bool kUlcOffHighwayBuildEnabled = true;
+inline constexpr bool kAutoLaneChangeEnableDefaultEnabled = false;
+inline constexpr bool kAutoLaneChangeEnableBuildEnabled = true;
 #else
 inline constexpr bool kUlcStalkConfirmDefaultEnabled = false;
 inline constexpr bool kUlcStalkConfirmBuildEnabled = false;
 inline constexpr bool kAlcOffHighwayEnableDefaultEnabled = false;
 inline constexpr bool kAlcOffHighwayEnableBuildEnabled = false;
+inline constexpr bool kUlcOffHighwayDefaultEnabled = false;
+inline constexpr bool kUlcOffHighwayBuildEnabled = false;
+inline constexpr bool kAutoLaneChangeEnableDefaultEnabled = false;
+inline constexpr bool kAutoLaneChangeEnableBuildEnabled = false;
 #endif
+
+inline constexpr uint8_t kUlcConfigStock = 0xFF;
+inline constexpr uint8_t kUlcSpeedConfigDefault = kUlcConfigStock;
+inline constexpr uint8_t kUlcBlindSpotConfigDefault = kUlcConfigStock;
 
 #if defined(NAG_KILLER)
 inline constexpr bool kNagKillerDefaultEnabled = true;
@@ -97,11 +111,325 @@ inline Shared<bool> nagKillerRuntime{kNagKillerDefaultEnabled};
 inline Shared<bool> tsllcRuntime{kTsllcDefaultEnabled};         // TSLLC 런타임 토글 (스톱사인/초록불 제어)
 inline Shared<bool> uiUlcStalkConfirmRuntime{kUlcStalkConfirmDefaultEnabled};              // UI_ulcStalkConfirm bit1 -> 0
 inline Shared<bool> uiAlcOffHighwayEnableRuntime{kAlcOffHighwayEnableDefaultEnabled};      // UI_alcOffHighwayEnable bit56 -> 1
+inline Shared<bool> uiUlcOffHighwayRuntime{kUlcOffHighwayDefaultEnabled};                  // UI_ulcOffHighway bit15 -> 1
+inline Shared<bool> uiAutoLaneChangeEnableRuntime{kAutoLaneChangeEnableDefaultEnabled};    // UI_autoLaneChangeEnable bits24-25 -> ON(1)
+inline Shared<uint8_t> uiUlcSpeedConfigRuntime{kUlcSpeedConfigDefault};                    // UI_ulcSpeedConfig bits50-51, 0xFF=순정 유지
+inline Shared<uint8_t> uiUlcBlindSpotConfigRuntime{kUlcBlindSpotConfigDefault};            // UI_ulcBlindSpotConfig bits52-53, 0xFF=순정 유지
 inline Shared<bool> aChannelTxRuntime{true};     // A채널 1021 수정 송신 마스터 토글
 inline Shared<uint32_t> aMcpSpiFreqHz{kAMcpDefaultSpiFreqHz};
 inline Shared<uint32_t> aMcpRequestedSpiFreqHz{kAMcpDefaultSpiFreqHz};
 inline Shared<bool> aMcpOneShotRuntime{kAMcpOneShotDefaultEnabled};
 inline Shared<bool> aTxGuardRuntime{kATxGuardDefaultEnabled};
+
+inline const char* uiUlcSpeedConfigName(uint8_t raw) {
+    switch (raw) {
+    case 0: return "DISABLED";
+    case 1: return "MILD";
+    case 2: return "AVERAGE";
+    case 3: return "MAD_MAX";
+    default: return "STOCK";
+    }
+}
+
+inline const char* uiUlcBlindSpotConfigName(uint8_t raw) {
+    switch (raw) {
+    case 0: return "STANDARD";
+    case 1: return "AGGRESSIVE";
+    case 2: return "MAD_MAX";
+    default: return "STOCK";
+    }
+}
+
+inline constexpr uint8_t kSignalObserverMaxSignals = 10;
+inline constexpr uint8_t kSignalObserverMaxAFilterIds = 6;
+inline constexpr uint8_t kSignalObserverChannelA = 0x01;
+inline constexpr uint8_t kSignalObserverChannelB = 0x02;
+inline constexpr uint8_t kSignalObserverChannelBoth = kSignalObserverChannelA | kSignalObserverChannelB;
+inline constexpr uint8_t kSignalObserverByteOrderLittle = 0;
+inline constexpr uint8_t kSignalObserverByteOrderBig = 1;
+inline constexpr uint8_t kSignalObserverNameLen = 40;
+inline constexpr size_t kSignalObserverEventCap = 256;
+
+struct SignalObserverDef {
+    bool enabled;
+    uint8_t channelMask;
+    uint8_t byteOrder;
+    uint16_t frameId;
+    uint8_t startBit;
+    uint8_t length;
+    uint32_t idleRaw;
+    char name[kSignalObserverNameLen];
+};
+
+struct SignalObserverState {
+    bool seen;
+    bool active;
+    uint32_t frameCount;
+    uint32_t activeFrameCount;
+    uint32_t changeCount;
+    uint32_t burstCount;
+    uint32_t currentRunFrames;
+    uint32_t lastRunFrames;
+    uint32_t maxRunFrames;
+    uint32_t firstSeenMs;
+    uint32_t lastSeenMs;
+    uint32_t lastChangeMs;
+    uint32_t lastRaw;
+    uint32_t prevRaw;
+};
+
+enum SignalObserverEventType : uint8_t {
+    SO_EVT_CAPTURE_START = 0,
+    SO_EVT_CAPTURE_STOP = 1,
+    SO_EVT_RESET = 2,
+    SO_EVT_CONFIG_LOADED = 3,
+    SO_EVT_FIRST_SEEN = 4,
+    SO_EVT_RAW_CHANGE = 5,
+    SO_EVT_ACTIVE_START = 6,
+    SO_EVT_ACTIVE_END = 7,
+};
+
+struct SignalObserverEvent {
+    uint32_t tMs;
+    uint8_t type;
+    uint8_t signalIndex;
+    uint8_t channelMask;
+    uint8_t byteOrder;
+    uint8_t active;
+    uint16_t frameId;
+    uint8_t startBit;
+    uint8_t length;
+    uint32_t prevRaw;
+    uint32_t raw;
+    uint32_t frameCount;
+    uint32_t activeFrameCount;
+    uint32_t changeCount;
+    uint32_t burstCount;
+    uint32_t currentRunFrames;
+    uint32_t lastRunFrames;
+    uint32_t maxRunFrames;
+};
+
+inline Shared<bool> signalObserverRuntime{true};
+inline Shared<uint8_t> signalObserverCount{4};
+inline SignalObserverDef signalObserverDefs[kSignalObserverMaxSignals] = {
+    {true, kSignalObserverChannelB, kSignalObserverByteOrderLittle, 586, 21, 3, 0, "DAS_autosteerHealthState"},
+    {true, kSignalObserverChannelB, kSignalObserverByteOrderLittle, 586, 58, 2, 0, "DAS_ulcType"},
+    {true, kSignalObserverChannelA, kSignalObserverByteOrderLittle, 1001, 28, 1, 0, "DAS_ulcConfirmationRequestActive"},
+    {true, kSignalObserverChannelBoth, kSignalObserverByteOrderLittle, 585, 16, 4, 0, "SCCM_turnIndicatorStalkStatus"},
+};
+inline SignalObserverState signalObserverStates[kSignalObserverMaxSignals] = {};
+inline SignalObserverEvent signalObserverEvents[kSignalObserverEventCap] = {};
+inline volatile size_t signalObserverEventHead = 0;
+inline volatile size_t signalObserverEventCount = 0;
+inline volatile uint32_t signalObserverEventOverwritten = 0;
+
+inline const char* signalObserverEventTypeName(uint8_t type) {
+    switch (type) {
+    case SO_EVT_CAPTURE_START: return "CAPTURE_START";
+    case SO_EVT_CAPTURE_STOP: return "CAPTURE_STOP";
+    case SO_EVT_RESET: return "RESET";
+    case SO_EVT_CONFIG_LOADED: return "CONFIG_LOADED";
+    case SO_EVT_FIRST_SEEN: return "FIRST_SEEN";
+    case SO_EVT_RAW_CHANGE: return "RAW_CHANGE";
+    case SO_EVT_ACTIVE_START: return "ACTIVE_START";
+    case SO_EVT_ACTIVE_END: return "ACTIVE_END";
+    default: return "UNKNOWN";
+    }
+}
+
+inline void signalObserverResetEvents() {
+    std::memset(signalObserverEvents, 0, sizeof(signalObserverEvents));
+    signalObserverEventHead = 0;
+    signalObserverEventCount = 0;
+    signalObserverEventOverwritten = 0;
+}
+
+inline void signalObserverEventPush(uint8_t type, uint8_t signalIndex, const SignalObserverDef &def,
+                                    const SignalObserverState &st, uint32_t nowMs,
+                                    uint32_t prevRaw, uint32_t raw, bool active) {
+    SignalObserverEvent &ev = signalObserverEvents[signalObserverEventHead];
+    ev.tMs = nowMs;
+    ev.type = type;
+    ev.signalIndex = signalIndex;
+    ev.channelMask = def.channelMask;
+    ev.byteOrder = def.byteOrder;
+    ev.active = active ? 1 : 0;
+    ev.frameId = def.frameId;
+    ev.startBit = def.startBit;
+    ev.length = def.length;
+    ev.prevRaw = prevRaw;
+    ev.raw = raw;
+    ev.frameCount = st.frameCount;
+    ev.activeFrameCount = st.activeFrameCount;
+    ev.changeCount = st.changeCount;
+    ev.burstCount = st.burstCount;
+    ev.currentRunFrames = st.currentRunFrames;
+    ev.lastRunFrames = st.lastRunFrames;
+    ev.maxRunFrames = st.maxRunFrames;
+
+    signalObserverEventHead = (signalObserverEventHead + 1) % kSignalObserverEventCap;
+    if (signalObserverEventCount < kSignalObserverEventCap) {
+        ++signalObserverEventCount;
+    } else {
+        ++signalObserverEventOverwritten;
+    }
+}
+
+inline void signalObserverEventPushSystem(uint8_t type, uint32_t nowMs) {
+    SignalObserverDef def = {};
+    SignalObserverState st = {};
+    signalObserverEventPush(type, 0xFF, def, st, nowMs, 0, 0, false);
+}
+
+inline void signalObserverEventSnapshot(size_t &count, size_t &head, uint32_t &overwritten) {
+    count = signalObserverEventCount;
+    head = signalObserverEventHead;
+    overwritten = signalObserverEventOverwritten;
+}
+
+inline void signalObserverEventCopyAt(size_t idx, SignalObserverEvent &out) {
+    out = signalObserverEvents[idx % kSignalObserverEventCap];
+}
+
+inline bool signalObserverFrameIdIsBaseA(uint16_t frameId) {
+    return frameId == 659 || frameId == 1016 || frameId == 1021;
+}
+
+inline void signalObserverResetStats() {
+    std::memset(signalObserverStates, 0, sizeof(signalObserverStates));
+}
+
+inline const char* signalObserverChannelName(uint8_t channelMask) {
+    switch (channelMask & kSignalObserverChannelBoth) {
+    case kSignalObserverChannelA: return "A";
+    case kSignalObserverChannelB: return "B";
+    case kSignalObserverChannelBoth: return "A+B";
+    default: return "OFF";
+    }
+}
+
+inline const char* signalObserverByteOrderName(uint8_t byteOrder) {
+    return byteOrder == kSignalObserverByteOrderBig ? "big" : "little";
+}
+
+inline uint8_t signalObserverNextBigEndianBit(uint8_t bitPosition) {
+    return (bitPosition % 8U == 0U) ? static_cast<uint8_t>(bitPosition + 15U) : static_cast<uint8_t>(bitPosition - 1U);
+}
+
+inline bool signalObserverExtractRaw(const CanFrame &frame, const SignalObserverDef &def, uint32_t &rawOut) {
+    if (!def.enabled || def.length == 0 || def.length > 32) return false;
+    if (def.startBit > 63) return false;
+
+    uint8_t dlc = frame.dlc > 8 ? 8 : frame.dlc;
+    if (def.byteOrder == kSignalObserverByteOrderBig) {
+        uint32_t raw = 0;
+        uint8_t bitPosition = def.startBit;
+        for (uint8_t bitIndex = 0; bitIndex < def.length; ++bitIndex) {
+            if (bitPosition >= (uint8_t)(dlc * 8U)) return false;
+            raw = (raw << 1U) | ((frame.data[bitPosition / 8U] >> (bitPosition % 8U)) & 0x01U);
+            if (bitIndex + 1U < def.length) bitPosition = signalObserverNextBigEndianBit(bitPosition);
+        }
+        rawOut = raw;
+        return true;
+    }
+
+    if ((uint16_t)def.startBit + (uint16_t)def.length > 64) return false;
+    uint8_t neededBytes = static_cast<uint8_t>(((uint16_t)def.startBit + (uint16_t)def.length + 7U) / 8U);
+    if (dlc < neededBytes) return false;
+
+    uint64_t payload = 0;
+    for (uint8_t byteIndex = 0; byteIndex < dlc; ++byteIndex) {
+        payload |= (static_cast<uint64_t>(frame.data[byteIndex]) << (8U * byteIndex));
+    }
+    uint64_t mask = (def.length >= 32) ? 0xFFFFFFFFULL : ((1ULL << def.length) - 1ULL);
+    rawOut = static_cast<uint32_t>((payload >> def.startBit) & mask);
+    return true;
+}
+
+inline void signalObserverObserveFrame(uint8_t channelMask, const CanFrame &frame, uint32_t nowMs) {
+    if (!(bool)signalObserverRuntime) return;
+    uint8_t count = (uint8_t)signalObserverCount;
+    if (count > kSignalObserverMaxSignals) count = kSignalObserverMaxSignals;
+
+    for (uint8_t i = 0; i < count; ++i) {
+        const SignalObserverDef &def = signalObserverDefs[i];
+        if (!def.enabled || (def.channelMask & channelMask) == 0 || def.frameId != frame.id) continue;
+
+        uint32_t raw = 0;
+        if (!signalObserverExtractRaw(frame, def, raw)) continue;
+
+        SignalObserverState &st = signalObserverStates[i];
+        bool wasSeen = st.seen;
+        bool wasActive = st.active;
+        uint32_t prevRaw = st.lastRaw;
+        bool rawChanged = st.seen && raw != st.lastRaw;
+        if (!st.seen) {
+            st.seen = true;
+            st.firstSeenMs = nowMs;
+        } else if (rawChanged) {
+            st.prevRaw = st.lastRaw;
+            st.changeCount++;
+            st.lastChangeMs = nowMs;
+        }
+
+        bool active = raw != def.idleRaw;
+        st.frameCount++;
+        if (active) {
+            st.activeFrameCount++;
+            if (!st.active) {
+                st.burstCount++;
+                st.currentRunFrames = 1;
+            } else {
+                st.currentRunFrames++;
+            }
+            if (st.currentRunFrames > st.maxRunFrames) st.maxRunFrames = st.currentRunFrames;
+        } else if (st.active) {
+            st.lastRunFrames = st.currentRunFrames;
+            if (st.currentRunFrames > st.maxRunFrames) st.maxRunFrames = st.currentRunFrames;
+            st.currentRunFrames = 0;
+        }
+        st.active = active;
+        st.lastRaw = raw;
+        st.lastSeenMs = nowMs;
+
+        if (!wasSeen) {
+            signalObserverEventPush(SO_EVT_FIRST_SEEN, i, def, st, nowMs, prevRaw, raw, active);
+        } else if (rawChanged) {
+            signalObserverEventPush(SO_EVT_RAW_CHANGE, i, def, st, nowMs, prevRaw, raw, active);
+        }
+        if (!wasActive && active) {
+            signalObserverEventPush(SO_EVT_ACTIVE_START, i, def, st, nowMs, prevRaw, raw, active);
+        } else if (wasActive && !active) {
+            signalObserverEventPush(SO_EVT_ACTIVE_END, i, def, st, nowMs, prevRaw, raw, active);
+        }
+    }
+}
+
+inline bool signalObserverIdAlreadyPresent(const uint32_t *ids, uint8_t count, uint32_t frameId) {
+    for (uint8_t i = 0; i < count; ++i) {
+        if (ids[i] == frameId) return true;
+    }
+    return false;
+}
+
+inline uint8_t signalObserverFillAFilterIds(uint32_t *ids, uint8_t maxCount) {
+    if (!ids || maxCount < 3) return 0;
+    uint8_t count = 0;
+    ids[count++] = 659;
+    ids[count++] = 1016;
+    ids[count++] = 1021;
+
+    uint8_t observerCount = (uint8_t)signalObserverCount;
+    if (observerCount > kSignalObserverMaxSignals) observerCount = kSignalObserverMaxSignals;
+    for (uint8_t i = 0; i < observerCount && count < maxCount; ++i) {
+        const SignalObserverDef &def = signalObserverDefs[i];
+        if (!def.enabled || (def.channelMask & kSignalObserverChannelA) == 0) continue;
+        if (signalObserverIdAlreadyPresent(ids, count, def.frameId)) continue;
+        ids[count++] = def.frameId;
+    }
+    return count;
+}
 
 
 inline constexpr uint8_t kATxGuardReasonNone = 0;
@@ -116,10 +444,21 @@ inline constexpr uint32_t kAMcpBusOffRestartFallbackMs = 10000;
 
 // 사용자가 차량 화면의 AP/Nag 경고를 직접 본 순간을 찍는 수동 마커.
 // eventLog에는 ms 단위 이벤트로, timeseries에는 5초 구간 델타로 함께 남긴다.
-inline constexpr uint32_t kUserMarkerApWarning = 1;
+inline constexpr uint32_t kUserMarkerApWarningStart = 1;
+inline constexpr uint32_t kUserMarkerApWarningEnd = 2;
+inline constexpr uint32_t kUserMarkerApWarning = kUserMarkerApWarningStart;
 inline Shared<uint32_t> userMarkerCount{0};
 inline Shared<uint32_t> userMarkerLastMs{0};
 inline Shared<uint32_t> userMarkerLastDetail{0};
+inline Shared<bool> userMarkerActive{false};
+
+inline const char* userMarkerDetailName(uint32_t detail) {
+    switch (detail) {
+    case kUserMarkerApWarningStart: return "AP_WARNING_START";
+    case kUserMarkerApWarningEnd: return "AP_WARNING_END";
+    default: return "UNKNOWN";
+    }
+}
 
 inline constexpr uint16_t kNagFixedTargetId = 880;  // 4/10 정상 기준: B채널 Nag 대상 ID 고정
 
@@ -151,6 +490,63 @@ inline const char* nagDecisionName(uint8_t code) {
 
 inline bool nagDasStateRequiresEcho(uint8_t state) {
     return state == 2 || (state >= 3 && state <= 7) || state == 9 || state == 10;
+}
+
+inline const char* dasHandsOnStateName(uint8_t state) {
+    switch (state) {
+    case 0: return "NOT_REQD";
+    case 1: return "REQD_DETECTED";
+    case 2: return "REQD_NOT_DETECTED";
+    case 3: return "REQD_VISUAL";
+    case 4: return "REQD_CHIME_1";
+    case 5: return "REQD_CHIME_2";
+    case 6: return "REQD_SLOWING";
+    case 7: return "REQD_STRUCK_OUT";
+    case 8: return "SUSPENDED";
+    case 9: return "REQD_ESCALATED_CHIME_1";
+    case 10: return "REQD_ESCALATED_CHIME_2";
+    case 15: return "SNA";
+    case 0xFF: return "NOT_SEEN";
+    default: return "UNKNOWN";
+    }
+}
+
+inline const char* dasHandsOnStateGroup(uint8_t state) {
+    switch (state) {
+    case 0: return "none";
+    case 1: return "required_detected";
+    case 2: return "required_not_detected";
+    case 3: return "visual";
+    case 4:
+    case 5: return "chime";
+    case 6:
+    case 7: return "penalty";
+    case 8: return "suspended";
+    case 9:
+    case 10: return "escalated_chime";
+    case 15: return "sna";
+    case 0xFF: return "not_seen";
+    default: return "unknown";
+    }
+}
+
+inline uint8_t dasHandsOnWarningLevel(uint8_t state) {
+    switch (state) {
+    case 1:
+    case 2: return 1;
+    case 3: return 2;
+    case 4:
+    case 5: return 3;
+    case 9:
+    case 10: return 4;
+    case 6:
+    case 7: return 5;
+    default: return 0;
+    }
+}
+
+inline bool dasHandsOnStateIsWarning(uint8_t state) {
+    return dasHandsOnWarningLevel(state) >= 2;
 }
 
 // 5초 시계열/상태 로그용 구간 판정.
@@ -233,7 +629,7 @@ struct BChannelDiagnostics {
     Shared<uint32_t> echoDroppedLate{0};         // 수신→에코 6ms 초과로 드롭된 에코 수 (ECU TX 충돌 방지)
     // ── Mode B (스마트 상태머신) 진단 필드 ──────────────────────────────────
     Shared<uint8_t>  nagMode{1};                     // 호환용 모드 값 (현재는 스마트 토크 고정)
-    Shared<uint8_t>  smartProfile{0};                // 스마트 토크 실험 프로파일 (0=기본, 1=A안, 2=B안, 3=C안)
+    Shared<uint8_t>  smartProfile{0};                // 스마트 토크 실험 프로파일 (0=기본, 1=A안, 2=B안, 3=C안, 4=D안)
     Shared<uint8_t>  dasAutopilotStateRx{0};         // DAS_status DAS_autopilotState (0|4@1+)
     Shared<float>    steeringAngleDeg{0.0f};         // ID 297 SCCM_steeringAngle (deg)
     Shared<uint32_t> frames297{0};                   // ID 297 수신 프레임 수
@@ -262,13 +658,22 @@ inline BChannelDiagnostics bChannelDiag;
 struct AChannelDiagnostics {
     Shared<uint32_t> framesReceivedTotal{0};     // 총 수신 프레임 수
     Shared<float>    frameHz{0.0f};              // A채널 수신 프레임레이트 (Hz)
+    Shared<uint32_t> frames293{0};               // UI_chassisControl 프레임 수
     Shared<uint32_t> frames1016{0};              // UI_driverAssistControl 프레임 수
     Shared<uint32_t> frames1021{0};              // EAP 프레임 수
     Shared<uint32_t> eapModifiedCount{0};        // 규제 완화 적용 횟수
+    Shared<uint32_t> autoLaneChangeModifiedCount{0};      // UI_autoLaneChangeEnable 적용 횟수
+    Shared<uint32_t> autoLaneChangeSkipCount{0};          // 이미 ON이라 송신하지 않은 횟수
     Shared<uint32_t> ulcStalkConfirmModifiedCount{0};      // UI_ulcStalkConfirm 적용 횟수
     Shared<uint32_t> ulcStalkConfirmSkipCount{0};          // 이미 bit1=0이라 송신하지 않은 횟수
+    Shared<uint32_t> ulcOffHighwayModifiedCount{0};        // UI_ulcOffHighway 적용 횟수
+    Shared<uint32_t> ulcOffHighwaySkipCount{0};            // 이미 bit15=1이라 송신하지 않은 횟수
     Shared<uint32_t> alcOffHighwayModifiedCount{0};        // UI_alcOffHighwayEnable 적용 횟수
     Shared<uint32_t> alcOffHighwaySkipCount{0};            // 이미 bit56=1이라 송신하지 않은 횟수
+    Shared<uint32_t> ulcSpeedConfigModifiedCount{0};       // UI_ulcSpeedConfig 적용 횟수
+    Shared<uint32_t> ulcSpeedConfigSkipCount{0};           // 이미 목표 raw라 송신하지 않은 횟수
+    Shared<uint32_t> ulcBlindSpotConfigModifiedCount{0};   // UI_ulcBlindSpotConfig 적용 횟수
+    Shared<uint32_t> ulcBlindSpotConfigSkipCount{0};       // 이미 목표 raw라 송신하지 않은 횟수
     Shared<uint32_t> tsllcModifiedCount{0};       // TSLLC 주입 횟수 (스톱/초록불 비트 세팅)
     Shared<uint32_t> lastFrameIdReceived{0};     // 마지막 수신 프레임 ID
     Shared<uint32_t> lastStatusUpdateMs{0};      // 마지막 상태 업데이트 시각
@@ -404,6 +809,17 @@ inline uint8_t computeTeslaChecksum(const CanFrame &frame, uint8_t checksumByteI
     return static_cast<uint8_t>(sum & 0xFF);
 }
 
+// Counter 52|4, checksum 56|8 형식의 8바이트 Tesla 프레임 송신 전 마무리
+inline void finalizeTeslaCounter52Checksum56(CanFrame &frame)
+{
+    if (frame.dlc < 8)
+        return;
+
+    const uint8_t counter = static_cast<uint8_t>(((frame.data[6] >> 4) + 1U) & 0x0FU);
+    frame.data[6] = static_cast<uint8_t>((frame.data[6] & 0x0FU) | (counter << 4));
+    frame.data[7] = computeTeslaChecksum(frame, 7);
+}
+
 // CAN 프레임의 특정 비트 설정/해제
 // bit: 0~63 (byte0-bit0 ~ byte7-bit7), 리틀엔디안 바이트 순서
 // value: true=1로 설정, false=0으로 클리어
@@ -443,6 +859,7 @@ inline constexpr uint8_t kNagSmartProfileDefault = 0;
 inline constexpr uint8_t kNagSmartProfileA       = 1;
 inline constexpr uint8_t kNagSmartProfileB       = 2;
 inline constexpr uint8_t kNagSmartProfileC       = 3;
+inline constexpr uint8_t kNagSmartProfileD       = 4;
 
 struct NagSmartProfileSettings {
     uint8_t id;
@@ -533,8 +950,24 @@ inline constexpr NagSmartProfileSettings kNagSmartProfileCSettings = {
     0,
 };
 
+inline constexpr NagSmartProfileSettings kNagSmartProfileDSettings = {
+    kNagSmartProfileD,
+    "D안",
+    "C안 + 직선 저조향각 sign hold 후보. 토크와 timing은 C안과 같고 방향만 1.5초 유지.",
+    kNagModeBState1GraceMs,
+    600,
+    kNagModeBStrongDelayMs,
+    kNagModeBStrongRampMs,
+    kNagModeBState2MildMinRawDelta,
+    170,
+    0,
+    0,
+    0,
+    0,
+};
+
 inline uint8_t nagSmartProfileClamp(uint8_t profile) {
-    return (profile <= kNagSmartProfileC) ? profile : kNagSmartProfileDefault;
+    return (profile <= kNagSmartProfileD) ? profile : kNagSmartProfileDefault;
 }
 
 inline const NagSmartProfileSettings& nagSmartProfileSettings(uint8_t profile) {
@@ -542,6 +975,7 @@ inline const NagSmartProfileSettings& nagSmartProfileSettings(uint8_t profile) {
     case kNagSmartProfileA: return kNagSmartProfileASettings;
     case kNagSmartProfileB: return kNagSmartProfileBSettings;
     case kNagSmartProfileC: return kNagSmartProfileCSettings;
+    case kNagSmartProfileD: return kNagSmartProfileDSettings;
     default: return kNagSmartProfileDefaultSettings;
     }
 }
