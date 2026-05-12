@@ -302,6 +302,32 @@ pio run -e lilygo_t2can
 2. 코드를 수정할 때는 'karpathy-guidelines'를 참조하여 기존 코드를 최대한 보존하며 필요한 부분만 수정한다.
 3. 사용자가 명시적으로 `A채널 동작완벽함!` 또는 `B채널 동작완벽함`이라고 선언하기 전까지, 진단/가이드/테스트 우선순위는 A채널(주행/정차 통신 테스트)을 1순위로 유지한다.
 
+### T-CAN 신호 상세 자동 참조 규칙
+
+CAN signal 이름, frame ID, start bit, length, endian, scale, offset, enum, bit layout이 필요한 코드 작성·검토·문서화 작업에서는 추측하지 말고 먼저 `scripts/tcan_signal_detail.py`를 사용한다. T-CAN Explorer의 공개 JSON을 기준으로 frame metadata, source presence, `Visual bit map`, `Bit layout table`, `Bit positions`, DBC-style `SG_` line, raw extraction pseudocode를 확인한 뒤 구현한다.
+
+기본 사용 예시다.
+
+```bash
+.venv/bin/python scripts/tcan_signal_detail.py DAS_autopilotState DAS_autopilotHandsOnState --platform ModelY --bus VEH,CH --format markdown --output docs/tcan_signal_reference_ModelY_VEH_CH.md
+```
+
+코드 생성이나 검증에 구조화된 값이 필요하면 JSON 출력으로 확인한다.
+
+```bash
+.venv/bin/python scripts/tcan_signal_detail.py EPAS3P_torsionBarTorque EPAS3P_handsOnLevel SCCM_steeringAngle --platform ModelY --bus VEH,CH --format json
+```
+
+비트 레이아웃을 눈으로 비교해야 하면 HTML 출력도 함께 생성한다.
+
+```bash
+.venv/bin/python scripts/tcan_signal_detail.py DAS_autopilotState DAS_autopilotHandsOnState EPAS3P_torsionBarTorque EPAS3P_handsOnLevel SCCM_steeringAngle --platform ModelY --bus VEH,CH --format html --output docs/tcan_signal_reference_ModelY_VEH_CH.html
+```
+
+- 기본값은 `--platform ModelY --bus VEH,CH`다.
+- bus/view 조건이 다르면 같은 signal 이름도 frame ID가 달라질 수 있으므로 `matchedFrameSources`, `matchedSignalSources`, T-CAN URL을 함께 기록한다.
+- 펌웨어 코드에 반영할 때는 출력의 `Byte order`, `Visual bit map`, `Bit layout table`, `Raw extraction pseudocode`, `Physical formula`를 우선 근거로 삼는다.
+
 ### 세션 로그 기록 규칙
 
 작업이 끝나면 다음 세션이 같은 추론을 반복하지 않도록 `docs/sessions/chat_log_YYYY-MM-DD.md`에 기록한다.
