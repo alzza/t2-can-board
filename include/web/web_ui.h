@@ -715,6 +715,13 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   <div class="row"><span class="label">TX 마스터</span><span class="val" id="aTxMaster">--</span></div>
   <div class="row">
     <div class="labelWrap">
+      <span class="label">A 채널 TX 마스터</span>
+      <span class="meta">OFF면 A채널 수정 프레임(1021/1016/293/3E9) 송신을 중단합니다.</span>
+    </div>
+    <label class="sw"><input type="checkbox" id="tAChannelTx" onchange="togSwitch('/api/a-channel-tx',this)"><span class="sl"></span></label>
+  </div>
+  <div class="row">
+    <div class="labelWrap">
 
       <span class="label">MCP2515 SPI 8MHz</span>
       <span class="meta" id="metaASpi8">ON=8MHz, OFF=10MHz · 재부팅 후 적용</span>
@@ -753,6 +760,13 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   <div class="row"><span class="label">ID 923 (DAS 후보)</span><span class="val" id="b923Info">0 / --</span></div>
   <div class="row"><span class="label">ID 297 (SCCM)</span><span class="val" id="b297Info">0 / --</span></div>
   <div class="row"><span class="label">토크 모드</span><span class="val" id="bMode">--</span></div>
+  <div class="row">
+    <div class="labelWrap">
+      <span class="label">B 채널 TX 마스터</span>
+      <span class="meta">Nag Killer 송신 마스터입니다. OFF면 B채널 echo 주입이 중단됩니다.</span>
+    </div>
+    <label class="sw"><input type="checkbox" id="tBNagMaster" onchange="togSwitch('/api/nag-killer',this)"><span class="sl"></span></label>
+  </div>
   <div class="row"><span class="label">에코 전송 (누적)</span><span class="val" id="bEcho">0</span></div>
   <div class="row"><span class="label">BUS-OFF 발생</span><span class="val" id="bBusOff">0</span></div>
   <div class="row"><span class="label">복구 (시도/성공/실패)</span><span class="val" id="bRecStat">0 / 0 / 0</span></div>
@@ -857,6 +871,11 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   <div class="ota-status-grid">
     <div class="stat"><div class="stat-lbl">현재 파티션</div><div class="stat-val v-dim" id="otaPanelCurrent">--</div></div>
     <div class="stat"><div class="stat-lbl">이전 파티션</div><div class="stat-val v-dim" id="otaPanelFallback">--</div></div>
+    <div class="stat"><div class="stat-lbl">현재 펌웨어</div><div class="stat-val v-dim" id="otaPanelCurrentFw">--</div></div>
+    <div class="stat"><div class="stat-lbl">이전 펌웨어</div><div class="stat-val v-dim" id="otaPanelFallbackFw">--</div></div>
+    <div class="stat"><div class="stat-lbl">현재 빌드 시각</div><div class="stat-val v-dim" id="otaPanelCurrentBuilt">--</div></div>
+    <div class="stat"><div class="stat-lbl">이전 빌드 시각</div><div class="stat-val v-dim" id="otaPanelFallbackBuilt">--</div></div>
+    <div class="stat"><div class="stat-lbl">업로드 시각</div><div class="stat-val v-dim" id="otaPanelUploadAt">--</div></div>
     <div class="stat"><div class="stat-lbl">확인 상태</div><div class="stat-val v-dim" id="otaPanelState">--</div></div>
     <div class="stat"><div class="stat-lbl">복구 모드</div><div class="stat-val v-dim" id="otaPanelRecovery">--</div></div>
   </div>
@@ -878,9 +897,23 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   <div class="row">
     <div class="labelWrap">
       <span class="label">UI_autoLaneChangeEnable</span>
-      <span class="meta">ID 0x293 bit24-25. ON이면 자동 차선변경 허용값(1)을 유지합니다.</span>
+      <span class="meta">ID 0x293 bit24-25. ON이면 자동 차선변경 비활성값(0)을 유지합니다.</span>
     </div>
     <label class="sw"><input type="checkbox" id="tAutoLaneChange" onchange="togSwitch('/api/ui-auto-lane-change-enable',this)"><span class="sl"></span></label>
+  </div>
+  <div class="row">
+    <div class="labelWrap">
+      <span class="label">UI_autoTurnSignalMode</span>
+      <span class="meta">ID 0x3FD bit52. ON이면 방향지시등 자동 취소 모드(1)를 약 50ms 펄스로 보냅니다.</span>
+    </div>
+    <label class="sw"><input type="checkbox" id="tAutoTurnSignalMode" onchange="togSwitch('/api/ui-auto-turn-signal-mode',this)"><span class="sl"></span></label>
+  </div>
+  <div class="row">
+    <div class="labelWrap">
+      <span class="label">DAS_ulcConfirmationRequestActive</span>
+      <span class="meta">ID 0x3E9 bit28. ON이면 ULC 확인 요청 활성값(1)을 세션 중 유지합니다.</span>
+    </div>
+    <label class="sw"><input type="checkbox" id="tDasUlcConfirm" onchange="togSwitch('/api/das-ulc-confirmation-request',this)"><span class="sl"></span></label>
   </div>
   <div class="row">
     <div class="labelWrap">
@@ -930,7 +963,13 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   <div class="row">
     <div class="labelWrap">
       <span class="label">실험 주입 카운터</span>
-      <span class="meta" id="expInjectCounters">0x293/0x3F8 수신 대기 중</span>
+      <span class="meta" id="expInjectCounters">0x293/0x3F8/0x3E9 수신 대기 중</span>
+    </div>
+  </div>
+  <div class="row">
+    <div class="labelWrap">
+      <span class="label">실험 판정</span>
+      <span class="meta" id="expJudgeLine">수신/주입 상태 대기 중</span>
     </div>
   </div>
 </div>
@@ -939,7 +978,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
     <h2>신호 관찰기</h2>
     <button class="btn-action observer-file-btn" type="button" onclick="openSignalObserverFile()">파일 선택</button>
   </div>
-  <div class="hint">프레임을 보내지 않고 수신값만 집계합니다. A채널은 MCP2515 필터 제한 때문에 기본 3개 ID(0x293/0x3F8/0x3FD)를 포함해 최대 6개 ID까지만 관찰합니다.</div>
+  <div class="hint">프레임을 보내지 않고 수신값만 집계합니다. 관찰 채널은 A 또는 B 단독만 허용합니다. A채널은 기본 4개 ID(0x293/0x3F8/0x3FD/0x3E9)를 포함해 최대 6개 ID까지만 관찰합니다.</div>
   <input class="file observer-file-input" type="file" id="signalObserverFile" accept=".json,application/json" onchange="uploadSignalObserverConfig(this)">
   <div class="observer-actions">
     <button class="btn-action" onclick="resetSignalObserver()">카운터 리셋</button>
@@ -961,6 +1000,7 @@ var logSince=0,errCount=0;
 var baseUptimeMs=0,baseUptimeTs=0,detailPollingStarted=false;
 var _activeView='main';
 var _otaUploadInProgress=false;
+var _otaReloadTimer=null;
 function showView(name){
   var views={main:1,control:1,diag:1,ota:1,experiment:1};
   if(!views[name])name='main';
@@ -1007,7 +1047,7 @@ async function setExperimentValue(path,value){
 }
 function htmlEscape(s){return String(s===undefined?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 var _signalObserverPrev={};
-function signalObserverKey(s,i){return i+'|'+(s.name||'')+'|'+(s.channel||'')+'|'+n(s.frame_id)+'|'+n(s.start_bit)+'|'+n(s.length);}
+function signalObserverKey(s,i){return i+'|'+(s.name||'')+'|'+(s.channel||'')+'|'+n(s.frame_id)+'|'+n(s.start_bit)+'|'+n(s.length)+'|'+n(s.mux_start_bit)+'|'+n(s.mux_length)+'|'+n(s.mux_value);}
 function signalObserverRateText(s,key,now){
   var cur={t:now,frame:n(s.frame_count),active:n(s.active_frame_count),change:n(s.change_count)};
   var prev=_signalObserverPrev[key];
@@ -1045,6 +1085,7 @@ function renderSignalObserver(obs){
   for(var i=0;i<obs.signals.length;i++){
     var s=obs.signals[i]||{};
     var bit=n(s.start_bit)+'+'+n(s.length);
+    if(n(s.mux_length)>0)bit+=' m'+n(s.mux_value);
     var run=n(s.current_run_frames)+' / '+n(s.last_run_frames)+' / '+n(s.max_run_frames);
     var age=s.seen?n(s.age_ms)+'ms':'--';
     var key=signalObserverKey(s,i);
@@ -1066,7 +1107,7 @@ function renderSignalObserver(obs){
   }
   body.innerHTML=rows.join('');
   var eventText=obs.event_capacity?(' · 이벤트 '+n(obs.event_count||0)+'/'+n(obs.event_capacity)):'';
-  if(status)status.textContent=(captureEnabled?'캡처 중':'캡처 정지')+' · 관찰 '+n(obs.count||obs.signals.length)+'개'+eventText+' · A필터 최대 '+n(obs.max_a_filter_ids||6)+' ID(기본 3 포함) · Δ/s=Frames/Active/Change · Run=현재/직전/최대 프레임';
+  if(status)status.textContent=(captureEnabled?'캡처 중':'캡처 정지')+' · 관찰 '+n(obs.count||obs.signals.length)+'개'+eventText+' · Ch=A/B 단독 · A필터 최대 '+n(obs.max_a_filter_ids||6)+' ID(기본 4 포함) · Δ/s=Frames/Active/Change · Run=현재/직전/최대 프레임';
 }
 async function setSignalObserverCapture(enabled){
   var status=document.getElementById('signalObserverStatus');
@@ -1122,6 +1163,7 @@ async function emergencyToggle(){
     {id:'tExpAlcOffHighway', path:'/api/ui-alc-off-highway-enable'},
     {id:'tUlcOffHighway', path:'/api/ui-ulc-off-highway'},
     {id:'tAutoLaneChange', path:'/api/ui-auto-lane-change-enable'},
+    {id:'tAutoTurnSignalMode', path:'/api/ui-auto-turn-signal-mode'},
     {path:'/api/a-channel-tx', force:true}
   ];
   var btn=document.getElementById('emStopBtn');
@@ -1530,7 +1572,29 @@ function updateChannelStatus(d){
   setTxt('aAlcOffHighwayMod',n(a.alc_off_highway_modified),'val');
   setTxt('aAlcOffHighwaySkip',n(a.alc_off_highway_skipped),'val');
   var expCounters=document.getElementById('expInjectCounters');
-  if(expCounters)expCounters.textContent='0x293 AutoLC '+n(a.auto_lane_change_modified)+'/'+n(a.auto_lane_change_skipped)+' · 0x3F8 ULCOff '+n(a.ulc_off_highway_modified)+'/'+n(a.ulc_off_highway_skipped)+' · Speed '+n(a.ulc_speed_config_modified)+'/'+n(a.ulc_speed_config_skipped)+' · Blind '+n(a.ulc_blind_spot_config_modified)+'/'+n(a.ulc_blind_spot_config_skipped);
+  if(expCounters)expCounters.textContent='0x293 AutoLC '+n(a.auto_lane_change_modified)+'/'+n(a.auto_lane_change_skipped)+' · 0x3FD AutoTurn '+n(a.auto_turn_signal_mode_modified)+'/'+n(a.auto_turn_signal_mode_skipped)+' · 0x3E9 DASConfirm '+n(a.das_ulc_confirmation_modified)+'/'+n(a.das_ulc_confirmation_skipped)+' · 0x3F8 ULCOff '+n(a.ulc_off_highway_modified)+'/'+n(a.ulc_off_highway_skipped)+' · Speed '+n(a.ulc_speed_config_modified)+'/'+n(a.ulc_speed_config_skipped)+' · Blind '+n(a.ulc_blind_spot_config_modified)+'/'+n(a.ulc_blind_spot_config_skipped);
+  var expJudge=document.getElementById('expJudgeLine');
+  if(expJudge){
+    function j(name,frames,on,mod,skip){
+      if(!on)return n(mod)>0?name+' OFF·누적주입 '+n(mod):name+' OFF';
+      if(!a.channel_tx_enabled)return name+' A-TX OFF';
+      if(n(frames)===0)return name+' CAN 미수신';
+      if(n(mod)>0)return name+' 주입됨 '+n(mod);
+      if(n(skip)>0)return name+' 이미 목표값 '+n(skip);
+      return name+' 수신 대기';
+    }
+    var speedOn=d.ui_ulc_speed_config_active;
+    var blindOn=d.ui_ulc_blind_spot_config_active;
+    var parts=[
+      j('AutoLC',a.frames_293,d.ui_auto_lane_change_enable_enabled,a.auto_lane_change_modified,a.auto_lane_change_skipped),
+      j('AutoTurn',a.frames_1021,d.ui_auto_turn_signal_mode_enabled,a.auto_turn_signal_mode_modified,a.auto_turn_signal_mode_skipped),
+      j('DASConfirm',a.frames_1001,d.das_ulc_confirmation_request_enabled,a.das_ulc_confirmation_modified,a.das_ulc_confirmation_skipped),
+      j('ULCOff',a.frames_1016,d.ui_ulc_off_highway_enabled,a.ulc_off_highway_modified,a.ulc_off_highway_skipped),
+      j('Speed',a.frames_1016,speedOn,a.ulc_speed_config_modified,a.ulc_speed_config_skipped),
+      j('Blind',a.frames_1016,blindOn,a.ulc_blind_spot_config_modified,a.ulc_blind_spot_config_skipped)
+    ];
+    expJudge.textContent=parts.join(' · ');
+  }
   setTxt('aEapMod',n(a.eap_modified),'val');
   setTxt('a1016Period',n(a.frames_1016)+' / '+fmtPeriod(a.id_1016_period_ms),'val');
   setTxt('a1021Period',n(a.frames_1021)+' / '+fmtPeriod(a.id_1021_period_ms),'val');
@@ -1590,11 +1654,15 @@ async function poll(){
     var tExpAlcOffHighway=document.getElementById('tExpAlcOffHighway');if(tExpAlcOffHighway)tExpAlcOffHighway.checked=!!d.ui_alc_off_highway_enable_enabled;
     var tUlcOffHighway=document.getElementById('tUlcOffHighway');if(tUlcOffHighway)tUlcOffHighway.checked=!!d.ui_ulc_off_highway_enabled;
     var tAutoLaneChange=document.getElementById('tAutoLaneChange');if(tAutoLaneChange)tAutoLaneChange.checked=!!d.ui_auto_lane_change_enable_enabled;
+    var tAutoTurnSignalMode=document.getElementById('tAutoTurnSignalMode');if(tAutoTurnSignalMode)tAutoTurnSignalMode.checked=!!d.ui_auto_turn_signal_mode_enabled;
+    var tDasUlcConfirm=document.getElementById('tDasUlcConfirm');if(tDasUlcConfirm)tDasUlcConfirm.checked=!!d.das_ulc_confirmation_request_enabled;
+    var tAChannelTx=document.getElementById('tAChannelTx');if(tAChannelTx)tAChannelTx.checked=!!d.a_channel_tx;
     setRadioValue('ulcSpeedConfig',d.ui_ulc_speed_config_value===undefined?255:d.ui_ulc_speed_config_value);
     setRadioValue('ulcBlindSpotConfig',d.ui_ulc_blind_spot_config_value===undefined?255:d.ui_ulc_blind_spot_config_value);
     var spCur=document.getElementById('expSpeedCurrent');if(spCur)spCur.textContent='현재: '+(d.ui_ulc_speed_config_name||'STOCK')+(d.ui_ulc_speed_config_active?' · 주입':' · 순정 유지');
     var bsCur=document.getElementById('expBlindCurrent');if(bsCur)bsCur.textContent='현재: '+(d.ui_ulc_blind_spot_config_name||'STOCK')+(d.ui_ulc_blind_spot_config_active?' · 주입':' · 순정 유지');
     var tNag=document.getElementById('tNag');if(tNag)tNag.checked=!!d.nag_killer;
+    var tBNagMaster=document.getElementById('tBNagMaster');if(tBNagMaster)tBNagMaster.checked=!!d.nag_killer;
     var tLog=document.getElementById('tLog');if(tLog)tLog.checked=!!d.enable_print;
     if(d.features){
       var tASpi8=document.getElementById('tASpi8');if(tASpi8)tASpi8.checked=!!(d.features.a_spi_8mhz&&d.features.a_spi_8mhz.enabled);
@@ -1839,20 +1907,49 @@ function fmtCountdown(ms){
   var s=Math.ceil(ms/1000);var m=Math.floor(s/60);s=s%60;
   return m+':'+(s<10?'0':'')+s;
 }
+function otaShortDateTime(text){
+  var s=String(text||'').trim();
+  if(!s)return '--';
+  var iso=s.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+  if(iso)return iso[1].slice(2)+'-'+iso[2]+'-'+iso[3]+' '+iso[4]+':'+iso[5]+':'+iso[6];
+  var months={Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
+  var c=s.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})/);
+  if(c)return c[3].slice(2)+'-'+months[c[1]]+'-'+('0'+c[2]).slice(-2)+' '+c[4]+':'+c[5]+':'+c[6];
+  return s.length>19?s.slice(0,19):s;
+}
+function otaBuildDateOnly(bid,builtAt){
+  var m=String(bid||'').match(/FW\d+-(\d{2})(\d{2})(\d{2})\d{4}/);
+  if(m)return m[1]+'-'+m[2]+'-'+m[3];
+  var dt=otaShortDateTime(builtAt);
+  return dt==='--'?'':dt.slice(0,8);
+}
+function otaFwBrief(ver,bid,builtAt){
+  var v=ver||'--',d=otaBuildDateOnly(bid,builtAt);
+  return d?v+' · '+d:v;
+}
+function otaSetText(id,text,cls){
+  var el=document.getElementById(id);
+  if(el){el.textContent=text||'--';el.className='stat-val '+(cls||'v-dim');}
+}
 function updateOtaConfirmBanner(d){
   var state=d.ota_pending_state||0;
   var stateText=state===2?'확인 대기':state===4?'복구 확인':state===5?'복구 모드':'정상';
   var stateLevel=state===0?'v-ok':state===2?'v-warn':state===4?'v-warn':'v-err';
-  var cur=document.getElementById('otaPanelCurrent');if(cur)cur.textContent=d.ota_current_label||'--';
-  var fb=document.getElementById('otaPanelFallback');if(fb)fb.textContent=d.ota_fallback_label||'--';
+  otaSetText('otaPanelCurrent',d.ota_current_label||'--','v-dim');
+  otaSetText('otaPanelFallback',d.ota_fallback_label||'--','v-dim');
+  otaSetText('otaPanelCurrentFw',otaFwBrief(d.ota_current_version||d.firmware_version,d.ota_current_build_id||d.firmware_build_id,d.ota_current_build_at||d.firmware_build_at),'v-acc');
+  otaSetText('otaPanelFallbackFw',otaFwBrief(d.ota_fallback_version,d.ota_fallback_build_id,d.ota_fallback_build_at),d.ota_fallback_version?'v-warn':'v-dim');
+  otaSetText('otaPanelCurrentBuilt',otaShortDateTime(d.ota_current_build_at||d.firmware_build_at),'v-dim');
+  otaSetText('otaPanelFallbackBuilt',otaShortDateTime(d.ota_fallback_build_at),'v-dim');
+  otaSetText('otaPanelUploadAt',d.ota_upload_at||'--',d.ota_upload_at?'v-warn':'v-dim');
   var st=document.getElementById('otaPanelState');if(st){st.textContent=stateText;st.className='stat-val '+stateLevel;}
   var rec=document.getElementById('otaPanelRecovery');if(rec){rec.textContent=d.ota_recovery_mode?'ON':'OFF';rec.className='stat-val '+(d.ota_recovery_mode?'v-err':'v-ok');}
   var cb=document.getElementById('otaConfirmBanner');
   var rb=document.getElementById('otaRollbackConfirmBanner');
   if(state===2&&cb){
     cb.style.display='block';if(rb)rb.style.display='none';
-    var cl=document.getElementById('otaCurLabel');if(cl)cl.textContent=d.ota_current_label||'--';
-    var fl=document.getElementById('otaFbLabel');if(fl)fl.textContent=d.ota_fallback_label||'--';
+    var cl=document.getElementById('otaCurLabel');if(cl)cl.textContent=(d.ota_current_label||'--')+' · '+otaFwBrief(d.ota_current_version||d.firmware_version,d.ota_current_build_id||d.firmware_build_id,d.ota_current_build_at||d.firmware_build_at);
+    var fl=document.getElementById('otaFbLabel');if(fl)fl.textContent=(d.ota_fallback_label||'--')+' · '+otaFwBrief(d.ota_fallback_version,d.ota_fallback_build_id,d.ota_fallback_build_at);
     _otaConfirmDeadline=Date.now()+(d.ota_confirm_remaining_ms||0);
     if(!_otaConfirmTimer)_otaConfirmTimer=setInterval(function(){
       var el=document.getElementById('otaConfirmCountdown');
@@ -1891,6 +1988,21 @@ function otaEnterRecoveryFw(){
   if(!confirm('OTA 복구모드로 전환합니다. CAN 기능이 비활성화됩니다.'))return;
   fetch('/api/ota-enter-recovery',{method:'POST'}).catch(function(){});
 }
+function scheduleOtaReload(st){
+  if(_otaReloadTimer)return;
+  var started=Date.now();
+  function waitReady(){
+    fetch('/api/status?ota_reload='+Date.now(),{cache:'no-store'}).then(function(r){
+      if(!r.ok)throw new Error('status');
+      if(st)st.textContent='재연결됨. 새 페이지 로드 중...';
+      location.replace('/?ota_reload='+Date.now());
+    }).catch(function(){
+      if(st)st.textContent='업로드 완료. 보드 재부팅 중... 재연결 대기 '+Math.floor((Date.now()-started)/1000)+'초';
+      _otaReloadTimer=setTimeout(waitReady,2000);
+    });
+  }
+  _otaReloadTimer=setTimeout(waitReady,9000);
+}
 function uploadOta(){
   var file=document.getElementById('otaFile').files[0];
   var st=document.getElementById('otaStatus');
@@ -1906,17 +2018,18 @@ function uploadOta(){
   xhr.timeout=300000;
   xhr.open('POST','/api/ota');
   xhr.setRequestHeader('Content-Type','application/octet-stream');
+  xhr.setRequestHeader('X-Upload-Epoch-Ms',String(Date.now()));
   xhr.upload.onprogress=function(e){
     if(e.lengthComputable&&prog)prog.value=Math.round(e.loaded/e.total*100);
   };
   xhr.onload=function(){
-    if(xhr.status>=200&&xhr.status<300){if(st)st.textContent='업로드 완료. 재부팅 중...';if(prog)prog.value=100;}
+    if(xhr.status>=200&&xhr.status<300){if(st)st.textContent='업로드 완료. 보드 재부팅 중...';if(prog)prog.value=100;scheduleOtaReload(st);}
     else{if(st)st.textContent='업로드 실패: '+xhr.responseText;if(btn)btn.disabled=false;}
   };
   xhr.onerror=function(){if(st)st.textContent='업로드 실패';if(btn)btn.disabled=false;};
   xhr.ontimeout=function(){if(st)st.textContent='업로드 실패: 시간 초과';if(btn)btn.disabled=false;};
   xhr.onabort=function(){if(st)st.textContent='업로드 취소됨';if(btn)btn.disabled=false;};
-  xhr.onloadend=function(){_otaUploadInProgress=false;if(btn&&!(xhr.status>=200&&xhr.status<300))btn.disabled=false;};
+  xhr.onloadend=function(){if(!(xhr.status>=200&&xhr.status<300)){_otaUploadInProgress=false;if(btn)btn.disabled=false;}};
   xhr.send(file);
 }
 function rebootDevice(){

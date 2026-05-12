@@ -135,11 +135,37 @@ static_assert(sizeof(kNvsKeyATxGuard) - 1 <= 15, "NVS key too long");
 static constexpr char kNvsKeyOtaPending[]    = "ota_pending";    // 0=normal 1=written 2=booting
 static constexpr char kNvsKeyOtaFallback[]   = "ota_fallback";   // previous partition label
 static constexpr char kNvsKeyOtaExpectPart[] = "ota_expect_pt";  // expected new partition label
+static constexpr char kNvsKeyOtaUploadAt[]   = "ota_up_at";      // browser/device upload timestamp
+static constexpr char kNvsKeyOtaFbVersion[]  = "ota_fb_ver";
+static constexpr char kNvsKeyOtaFbBuildId[]  = "ota_fb_bid";
+static constexpr char kNvsKeyOtaFbBuiltAt[]  = "ota_fb_bat";
+static constexpr char kNvsKeyOtaFbEnv[]      = "ota_fb_env";
+static constexpr char kNvsKeyOtaFbGitSha[]   = "ota_fb_sha";
+static constexpr char kNvsKeyOtaFbSource[]   = "ota_fb_src";
+static constexpr char kNvsKeyOtaNewVersion[] = "ota_new_ver";
+static constexpr char kNvsKeyOtaNewBuildId[] = "ota_new_bid";
+static constexpr char kNvsKeyOtaNewBuiltAt[] = "ota_new_bat";
+static constexpr char kNvsKeyOtaNewEnv[]     = "ota_new_env";
+static constexpr char kNvsKeyOtaNewGitSha[]  = "ota_new_sha";
+static constexpr char kNvsKeyOtaNewSource[]  = "ota_new_src";
 static constexpr char kNvsKeyBoCool[]        = "bo_cool";        // BUS-OFF 쿨다운 (ms)
 static_assert(sizeof(kNvsKeyBoCool)        - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyOtaPending)    - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyOtaFallback)   - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyOtaExpectPart) - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyOtaUploadAt)   - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyOtaFbVersion)  - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyOtaFbBuildId)  - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyOtaFbBuiltAt)  - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyOtaFbEnv)      - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyOtaFbGitSha)   - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyOtaFbSource)   - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyOtaNewVersion) - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyOtaNewBuildId) - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyOtaNewBuiltAt) - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyOtaNewEnv)     - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyOtaNewGitSha)  - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyOtaNewSource)  - 1 <= 15, "NVS key too long");
 
 // OTA 상태 머신 타이밍 상수
 static constexpr uint32_t kOtaConfirmWindowMs  = 60000;   // 신 FW 확인 창 (1분)
@@ -185,6 +211,8 @@ static constexpr bool kWebSupportsUlcStalkConfirm = true;
 static constexpr bool kWebSupportsAlcOffHighway = true;
 static constexpr bool kWebSupportsUlcOffHighway = true;
 static constexpr bool kWebSupportsAutoLaneChange = true;
+static constexpr bool kWebSupportsAutoTurnSignalMode = true;
+static constexpr bool kWebSupportsDasUlcConfirmationRequest = true;
 static constexpr bool kWebSupportsUlcSpeedConfig = true;
 static constexpr bool kWebSupportsUlcBlindSpotConfig = true;
 #else
@@ -192,6 +220,8 @@ static constexpr bool kWebSupportsUlcStalkConfirm = false;
 static constexpr bool kWebSupportsAlcOffHighway = false;
 static constexpr bool kWebSupportsUlcOffHighway = false;
 static constexpr bool kWebSupportsAutoLaneChange = false;
+static constexpr bool kWebSupportsAutoTurnSignalMode = false;
+static constexpr bool kWebSupportsDasUlcConfirmationRequest = false;
 static constexpr bool kWebSupportsUlcSpeedConfig = false;
 static constexpr bool kWebSupportsUlcBlindSpotConfig = false;
 #endif
@@ -213,6 +243,92 @@ static bool nvsInit()
         err = nvs_flash_init();
     }
     return err == ESP_OK;
+}
+
+static void nvsGetStrFromHandle(nvs_handle_t handle, const char *key, char *outBuf, size_t outLen)
+{
+    if (!outBuf || outLen == 0) return;
+    outBuf[0] = '\0';
+    size_t needed = outLen;
+    if (nvs_get_str(handle, key, outBuf, &needed) != ESP_OK) outBuf[0] = '\0';
+    outBuf[outLen - 1] = '\0';
+}
+
+static esp_err_t otaWriteFirmwareMeta(nvs_handle_t handle,
+                                      const char *versionKey,
+                                      const char *buildIdKey,
+                                      const char *builtAtKey,
+                                      const char *envKey,
+                                      const char *gitShaKey,
+                                      const char *sourceKey)
+{
+    esp_err_t err = nvs_set_str(handle, versionKey, FIRMWARE_VERSION);
+    if (err == ESP_OK) err = nvs_set_str(handle, buildIdKey, FIRMWARE_BUILD_ID);
+    if (err == ESP_OK) err = nvs_set_str(handle, builtAtKey, FIRMWARE_BUILD_AT);
+    if (err == ESP_OK) err = nvs_set_str(handle, envKey, FIRMWARE_BUILD_ENV);
+    if (err == ESP_OK) err = nvs_set_str(handle, gitShaKey, FIRMWARE_GIT_SHA);
+    if (err == ESP_OK) err = nvs_set_str(handle, sourceKey, FIRMWARE_SOURCE_HASH);
+    return err;
+}
+
+static esp_err_t otaWriteFallbackFirmwareMeta(nvs_handle_t handle)
+{
+    return otaWriteFirmwareMeta(handle, kNvsKeyOtaFbVersion, kNvsKeyOtaFbBuildId,
+                                kNvsKeyOtaFbBuiltAt, kNvsKeyOtaFbEnv,
+                                kNvsKeyOtaFbGitSha, kNvsKeyOtaFbSource);
+}
+
+static esp_err_t otaWriteNewFirmwareMeta(nvs_handle_t handle)
+{
+    return otaWriteFirmwareMeta(handle, kNvsKeyOtaNewVersion, kNvsKeyOtaNewBuildId,
+                                kNvsKeyOtaNewBuiltAt, kNvsKeyOtaNewEnv,
+                                kNvsKeyOtaNewGitSha, kNvsKeyOtaNewSource);
+}
+
+static esp_err_t otaCopyNvsString(nvs_handle_t handle, const char *srcKey, const char *dstKey)
+{
+    char value[96] = {};
+    size_t needed = sizeof(value);
+    esp_err_t err = nvs_get_str(handle, srcKey, value, &needed);
+    if (err == ESP_ERR_NVS_NOT_FOUND) value[0] = '\0';
+    else if (err != ESP_OK) return err;
+    value[sizeof(value) - 1] = '\0';
+    return nvs_set_str(handle, dstKey, value);
+}
+
+static esp_err_t otaCopyNewMetaToFallback(nvs_handle_t handle)
+{
+    esp_err_t err = otaCopyNvsString(handle, kNvsKeyOtaNewVersion, kNvsKeyOtaFbVersion);
+    if (err == ESP_OK) err = otaCopyNvsString(handle, kNvsKeyOtaNewBuildId, kNvsKeyOtaFbBuildId);
+    if (err == ESP_OK) err = otaCopyNvsString(handle, kNvsKeyOtaNewBuiltAt, kNvsKeyOtaFbBuiltAt);
+    if (err == ESP_OK) err = otaCopyNvsString(handle, kNvsKeyOtaNewEnv, kNvsKeyOtaFbEnv);
+    if (err == ESP_OK) err = otaCopyNvsString(handle, kNvsKeyOtaNewGitSha, kNvsKeyOtaFbGitSha);
+    if (err == ESP_OK) err = otaCopyNvsString(handle, kNvsKeyOtaNewSource, kNvsKeyOtaFbSource);
+    return err;
+}
+
+static void otaCopyText(char *dst, size_t dstLen, const char *src)
+{
+    if (!dst || dstLen == 0) return;
+    snprintf(dst, dstLen, "%s", src ? src : "");
+}
+
+static void otaFillMetaFromPartitionLabel(const char *label,
+                                          char *version, size_t versionLen,
+                                          char *buildId, size_t buildIdLen,
+                                          char *builtAt, size_t builtAtLen)
+{
+    if (!label || !label[0]) return;
+    const esp_partition_t *part = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, label);
+    if (!part) return;
+    esp_app_desc_t desc = {};
+    if (esp_ota_get_partition_description(part, &desc) != ESP_OK) return;
+    if (version && versionLen > 0 && !version[0]) otaCopyText(version, versionLen, desc.version);
+    if (buildId && buildIdLen > 0 && !buildId[0]) otaCopyText(buildId, buildIdLen, desc.project_name);
+    if (builtAt && builtAtLen > 0 && !builtAt[0]) {
+        snprintf(builtAt, builtAtLen, "%s %s", desc.date, desc.time);
+    }
 }
 
 static bool nvsReadBool(const char *key, bool fallback)
@@ -349,6 +465,8 @@ static void resetSessionOnlyExperimentRuntime()
 {
     uiUlcOffHighwayRuntime = kUlcOffHighwayDefaultEnabled;
     uiAutoLaneChangeEnableRuntime = kAutoLaneChangeEnableDefaultEnabled;
+    uiAutoTurnSignalModeCancel();
+    dasUlcConfirmationRequestRuntime = kDasUlcConfirmationRequestDefaultEnabled;
     uiUlcSpeedConfigRuntime = kUlcSpeedConfigDefault;
     uiUlcBlindSpotConfigRuntime = kUlcBlindSpotConfigDefault;
 }
@@ -366,6 +484,77 @@ static void loadAExperimentSettings()
     resetSessionOnlyExperimentRuntime();
     aMcpOneShotRuntime = nvsReadBool(kNvsKeyAOneShot, kAMcpOneShotDefaultEnabled);
     aTxGuardRuntime = nvsReadBool(kNvsKeyATxGuard, kATxGuardDefaultEnabled);
+}
+
+static void applyOtaSafeFeatureRuntimeDefaults()
+{
+    isaSpeedChimeSuppressRuntime = false;
+    emergencyVehicleDetectionRuntime = false;
+    enhancedAutopilotRuntime = false;
+    nagKillerRuntime = false;
+    tsllcRuntime = false;
+    uiUlcStalkConfirmRuntime = false;
+    uiAlcOffHighwayEnableRuntime = false;
+    resetSessionOnlyExperimentRuntime();
+    aChannelTxRuntime = false;
+    uint8_t defaultMhz = (kAMcpDefaultSpiFreqHz >= 10000000UL) ? 10 : 8;
+    aMcpSpiFreqHz = (uint32_t)defaultMhz * 1000000UL;
+    aMcpRequestedSpiFreqHz = (uint32_t)defaultMhz * 1000000UL;
+    aMcpOneShotRuntime = kAMcpOneShotDefaultEnabled;
+    aTxGuardRuntime = kATxGuardDefaultEnabled;
+}
+
+static esp_err_t writeOtaSafeFeatureSettings(nvs_handle_t handle)
+{
+    applyOtaSafeFeatureRuntimeDefaults();
+
+    uint8_t defaultMhz = (kAMcpDefaultSpiFreqHz >= 10000000UL) ? 10 : 8;
+    esp_err_t err = nvs_set_u8(handle, kNvsKeyIsaSpeedChime, 0);
+    if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyEmergencyVehicleDetection, 0);
+    if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyEnhancedAutopilot, 0);
+    if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyNagKiller, 0);
+    if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyTsllc, 0);
+    if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyAChTx, 0);
+    if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyUlcStalkConfirm, 0);
+    if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyAlcOffHighway, 0);
+    if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyUlcOffHighway, 0);
+    if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyAutoLaneChange, 0);
+    if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyUlcSpeedConfig, kUlcConfigStock);
+    if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyUlcBlindConfig, kUlcConfigStock);
+    if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyASpiMhz, defaultMhz);
+    if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyAOneShot, kAMcpOneShotDefaultEnabled ? 1 : 0);
+    if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyATxGuard, kATxGuardDefaultEnabled ? 1 : 0);
+    if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyNagProfile, kNagSmartProfileDefault);
+    return err;
+}
+
+static bool prepareOtaUploadCanQuiet()
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(kNvsNamespace, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        applyOtaSafeFeatureRuntimeDefaults();
+        Serial.printf("[OTA] 업로드 전 CAN TX OFF: NVS open 실패 (%ld)\n", static_cast<long>(err));
+        return false;
+    }
+
+    err = writeOtaSafeFeatureSettings(handle);
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    if (err != ESP_OK) {
+        Serial.printf("[OTA] 업로드 전 CAN TX OFF 저장 실패 (%ld)\n", static_cast<long>(err));
+        return false;
+    }
+
+    esp_err_t clearErr = twai_clear_transmit_queue();
+    if (clearErr != ESP_OK && clearErr != ESP_ERR_INVALID_STATE) {
+        Serial.printf("[OTA] B채널 TX queue clear 실패 (%ld)\n", static_cast<long>(clearErr));
+    }
+
+    logRing.push("[OTA] 업로드 시작: CAN TX OFF/stock 저장", millis());
+    Serial.println("[OTA] 업로드 시작: CAN TX OFF/stock 저장");
+    delay(5);
+    return true;
 }
 
 // NagConfig NVS 저장/로드 헬퍼
@@ -482,7 +671,9 @@ static esp_err_t featureToggleHandler(httpd_req_t *req, Shared<bool> &target, bo
 
     if (enabled && ((&target == &enhancedAutopilotRuntime) || (&target == &tsllcRuntime) ||
                     (&target == &uiUlcStalkConfirmRuntime) || (&target == &uiAlcOffHighwayEnableRuntime) ||
-                    (&target == &uiUlcOffHighwayRuntime) || (&target == &uiAutoLaneChangeEnableRuntime)) &&
+                    (&target == &uiUlcOffHighwayRuntime) || (&target == &uiAutoLaneChangeEnableRuntime) ||
+                    (&target == &uiAutoTurnSignalModeRuntime) ||
+                    (&target == &dasUlcConfirmationRequestRuntime)) &&
         !(bool)aChannelTxRuntime)
     {
         if (persist && !nvsWriteBool(kNvsKeyAChTx, true))
@@ -670,20 +861,30 @@ static bool signalObserverJsonReadU32(cJSON *obj, const char *key, uint32_t &out
     return true;
 }
 
-static uint8_t signalObserverParseChannel(cJSON *obj)
+static bool signalObserverParseChannel(cJSON *obj, uint8_t &channelOut)
 {
+    channelOut = kSignalObserverChannelA;
     cJSON *item = cJSON_GetObjectItem(obj, "channel");
-    if (!item || !cJSON_IsString(item) || !item->valuestring) return kSignalObserverChannelA;
+    if (!item) return true;
+    if (!cJSON_IsString(item) || !item->valuestring) return false;
     const char *s = item->valuestring;
-    if (strcasecmp(s, "B") == 0 || strcasecmp(s, "CH") == 0) return kSignalObserverChannelB;
-    if (strcasecmp(s, "both") == 0 || strcasecmp(s, "A+B") == 0 || strcasecmp(s, "AB") == 0) return kSignalObserverChannelBoth;
-    return kSignalObserverChannelA;
+    if (strcasecmp(s, "A") == 0 || strcasecmp(s, "VEH") == 0)
+    {
+        channelOut = kSignalObserverChannelA;
+        return true;
+    }
+    if (strcasecmp(s, "B") == 0 || strcasecmp(s, "CH") == 0)
+    {
+        channelOut = kSignalObserverChannelB;
+        return true;
+    }
+    return false;
 }
 
 static bool signalObserverAFilterWouldFit(const SignalObserverDef *defs, uint8_t count)
 {
-    uint32_t ids[kSignalObserverMaxAFilterIds] = {659, 1016, 1021, 0, 0, 0};
-    uint8_t idCount = 3;
+    uint32_t ids[kSignalObserverMaxAFilterIds] = {659, 1016, 1021, 1001, 0, 0};
+    uint8_t idCount = 4;
     for (uint8_t i = 0; i < count; ++i)
     {
         const SignalObserverDef &def = defs[i];
@@ -752,6 +953,12 @@ static void signalObserverAddJson(cJSON *parent, uint32_t nowMs)
         cJSON_AddNumberToObject(item, "last_seen_ms", st.lastSeenMs);
         cJSON_AddNumberToObject(item, "last_change_ms", st.lastChangeMs);
         cJSON_AddNumberToObject(item, "age_ms", st.lastSeenMs ? webSafeAgeMs(nowMs, st.lastSeenMs) : 0);
+        if (def.muxLength > 0)
+        {
+            cJSON_AddNumberToObject(item, "mux_start_bit", def.muxStartBit);
+            cJSON_AddNumberToObject(item, "mux_length", def.muxLength);
+            cJSON_AddNumberToObject(item, "mux_value", def.muxValue);
+        }
         cJSON_AddItemToArray(arr, item);
     }
 }
@@ -795,7 +1002,12 @@ static esp_err_t signalObserverConfigHandler(httpd_req_t *req)
         def.byteOrder = kSignalObserverByteOrderLittle;
         cJSON *enabled = cJSON_GetObjectItem(entry, "enabled");
         if (cJSON_IsBool(enabled)) def.enabled = cJSON_IsTrue(enabled);
-        def.channelMask = signalObserverParseChannel(entry);
+        if (!signalObserverParseChannel(entry, def.channelMask))
+        {
+            cJSON_Delete(root);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "channel must be A or B");
+            return ESP_FAIL;
+        }
         if (!signalObserverJsonReadU16(entry, "frame_id", def.frameId) &&
             !signalObserverJsonReadU16(entry, "id", def.frameId))
         {
@@ -848,6 +1060,44 @@ static esp_err_t signalObserverConfigHandler(httpd_req_t *req)
         const char *nameText = (cJSON_IsString(name) && name->valuestring) ? name->valuestring : "signal";
         strncpy(def.name, nameText, sizeof(def.name) - 1);
         def.name[sizeof(def.name) - 1] = '\0';
+        uint32_t muxValue = 0;
+        bool hasMux = signalObserverJsonReadU32(entry, "mux_value", muxValue) ||
+                      signalObserverJsonReadU32(entry, "muxValue", muxValue);
+        cJSON *mux = cJSON_GetObjectItem(entry, "mux");
+        if (!hasMux && cJSON_IsNumber(mux))
+        {
+            muxValue = (uint32_t)mux->valuedouble;
+            hasMux = true;
+        }
+        if (!hasMux && cJSON_IsObject(mux))
+        {
+            hasMux = signalObserverJsonReadU32(mux, "value", muxValue);
+        }
+        if (hasMux)
+        {
+            uint32_t muxStartBit = 0;
+            uint32_t muxLength = 3;
+            signalObserverJsonReadU32(entry, "mux_start_bit", muxStartBit) ||
+                signalObserverJsonReadU32(entry, "muxStartBit", muxStartBit);
+            signalObserverJsonReadU32(entry, "mux_length", muxLength) ||
+                signalObserverJsonReadU32(entry, "muxLength", muxLength);
+            if (cJSON_IsObject(mux))
+            {
+                signalObserverJsonReadU32(mux, "start_bit", muxStartBit) ||
+                    signalObserverJsonReadU32(mux, "startBit", muxStartBit);
+                signalObserverJsonReadU32(mux, "length", muxLength);
+            }
+            uint32_t muxMask = (muxLength >= 32) ? 0xFFFFFFFFUL : ((1UL << muxLength) - 1UL);
+            if (muxStartBit > 63 || muxLength == 0 || muxLength > 32 || muxStartBit + muxLength > 64 || muxValue > muxMask)
+            {
+                cJSON_Delete(root);
+                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid mux layout");
+                return ESP_FAIL;
+            }
+            def.muxStartBit = static_cast<uint8_t>(muxStartBit);
+            def.muxLength = static_cast<uint8_t>(muxLength);
+            def.muxValue = muxValue;
+        }
         nextDefs[nextCount++] = def;
     }
     cJSON_Delete(root);
@@ -1006,6 +1256,9 @@ static esp_err_t nvsResetHandler(httpd_req_t *req)
 static esp_err_t rootHandler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+    httpd_resp_set_hdr(req, "Pragma", "no-cache");
+    httpd_resp_set_hdr(req, "Expires", "0");
     if (gOtaRecoveryModeActive) {
         httpd_resp_send(req, WEB_RECOVERY_UI_HTML, sizeof(WEB_RECOVERY_UI_HTML) - 1);
     } else {
@@ -1050,6 +1303,13 @@ static esp_err_t statusHandler(httpd_req_t *req)
         kWebSupportsUlcOffHighway ? (aChannelTx && (bool)uiUlcOffHighwayRuntime) : false;
     bool autoLaneChangeEnabled =
         kWebSupportsAutoLaneChange ? (aChannelTx && (bool)uiAutoLaneChangeEnableRuntime) : false;
+    bool autoTurnSignalModePulseActive = uiAutoTurnSignalModePulseActive(handlerStartMs);
+    bool autoTurnSignalModeEnabled =
+        kWebSupportsAutoTurnSignalMode ? (aChannelTx && autoTurnSignalModePulseActive) : false;
+    uint32_t autoTurnSignalModeRemainingMs = autoTurnSignalModeEnabled
+        ? (uint32_t)((uint32_t)uiAutoTurnSignalModePulseUntilMs - handlerStartMs) : 0;
+    bool dasUlcConfirmationEnabled =
+        kWebSupportsDasUlcConfirmationRequest ? (aChannelTx && (bool)dasUlcConfirmationRequestRuntime) : false;
     uint8_t ulcSpeedConfig = kWebSupportsUlcSpeedConfig ? (uint8_t)uiUlcSpeedConfigRuntime : kUlcConfigStock;
     uint8_t ulcBlindSpotConfig = kWebSupportsUlcBlindSpotConfig ? (uint8_t)uiUlcBlindSpotConfigRuntime : kUlcConfigStock;
     bool ulcSpeedConfigActive = aChannelTx && ulcSpeedConfig <= 3;
@@ -1071,6 +1331,9 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "ui_alc_off_highway_enable_enabled", alcOffHighwayEnabled);
     cJSON_AddBoolToObject(root, "ui_ulc_off_highway_enabled", ulcOffHighwayEnabled);
     cJSON_AddBoolToObject(root, "ui_auto_lane_change_enable_enabled", autoLaneChangeEnabled);
+    cJSON_AddBoolToObject(root, "ui_auto_turn_signal_mode_enabled", autoTurnSignalModeEnabled);
+    cJSON_AddNumberToObject(root, "ui_auto_turn_signal_mode_remaining_ms", autoTurnSignalModeRemainingMs);
+    cJSON_AddBoolToObject(root, "das_ulc_confirmation_request_enabled", dasUlcConfirmationEnabled);
     cJSON_AddNumberToObject(root, "ui_ulc_speed_config_value", ulcSpeedConfig);
     cJSON_AddStringToObject(root, "ui_ulc_speed_config_name", uiUlcSpeedConfigName(ulcSpeedConfig));
     cJSON_AddBoolToObject(root, "ui_ulc_speed_config_active", ulcSpeedConfigActive);
@@ -1155,15 +1418,45 @@ static esp_err_t statusHandler(httpd_req_t *req)
         // 현재 파티션 레이블
         const esp_partition_t *runPart = esp_ota_get_running_partition();
         cJSON_AddStringToObject(root, "ota_current_label", runPart ? runPart->label : "");
-        // fallback 레이블
         char fallback[32] = {};
+        char expectPart[32] = {};
+        char uploadAt[40] = {};
+        char fbVersion[24] = {};
+        char fbBuildId[96] = {};
+        char fbBuiltAt[40] = {};
+        char fbEnv[32] = {};
+        char fbGitSha[48] = {};
+        char fbSource[96] = {};
         nvs_handle_t fnh;
         if (nvs_open(kNvsNamespace, NVS_READONLY, &fnh) == ESP_OK) {
-            size_t sz = sizeof(fallback);
-            nvs_get_str(fnh, kNvsKeyOtaFallback, fallback, &sz);
+            nvsGetStrFromHandle(fnh, kNvsKeyOtaFallback, fallback, sizeof(fallback));
+            nvsGetStrFromHandle(fnh, kNvsKeyOtaExpectPart, expectPart, sizeof(expectPart));
+            nvsGetStrFromHandle(fnh, kNvsKeyOtaUploadAt, uploadAt, sizeof(uploadAt));
+            nvsGetStrFromHandle(fnh, kNvsKeyOtaFbVersion, fbVersion, sizeof(fbVersion));
+            nvsGetStrFromHandle(fnh, kNvsKeyOtaFbBuildId, fbBuildId, sizeof(fbBuildId));
+            nvsGetStrFromHandle(fnh, kNvsKeyOtaFbBuiltAt, fbBuiltAt, sizeof(fbBuiltAt));
+            nvsGetStrFromHandle(fnh, kNvsKeyOtaFbEnv, fbEnv, sizeof(fbEnv));
+            nvsGetStrFromHandle(fnh, kNvsKeyOtaFbGitSha, fbGitSha, sizeof(fbGitSha));
+            nvsGetStrFromHandle(fnh, kNvsKeyOtaFbSource, fbSource, sizeof(fbSource));
             nvs_close(fnh);
         }
+        otaFillMetaFromPartitionLabel(fallback, fbVersion, sizeof(fbVersion),
+                                      fbBuildId, sizeof(fbBuildId), fbBuiltAt, sizeof(fbBuiltAt));
         cJSON_AddStringToObject(root, "ota_fallback_label", fallback);
+        cJSON_AddStringToObject(root, "ota_expected_label", expectPart);
+        cJSON_AddStringToObject(root, "ota_upload_at", uploadAt);
+        cJSON_AddStringToObject(root, "ota_current_version", FIRMWARE_VERSION);
+        cJSON_AddStringToObject(root, "ota_current_build_id", FIRMWARE_BUILD_ID);
+        cJSON_AddStringToObject(root, "ota_current_build_at", FIRMWARE_BUILD_AT);
+        cJSON_AddStringToObject(root, "ota_current_build_env", FIRMWARE_BUILD_ENV);
+        cJSON_AddStringToObject(root, "ota_current_git_sha", FIRMWARE_GIT_SHA);
+        cJSON_AddStringToObject(root, "ota_current_source_hash", FIRMWARE_SOURCE_HASH);
+        cJSON_AddStringToObject(root, "ota_fallback_version", fbVersion);
+        cJSON_AddStringToObject(root, "ota_fallback_build_id", fbBuildId);
+        cJSON_AddStringToObject(root, "ota_fallback_build_at", fbBuiltAt);
+        cJSON_AddStringToObject(root, "ota_fallback_build_env", fbEnv);
+        cJSON_AddStringToObject(root, "ota_fallback_git_sha", fbGitSha);
+        cJSON_AddStringToObject(root, "ota_fallback_source_hash", fbSource);
     }
 
     cJSON *features = cJSON_AddObjectToObject(root, "features");
@@ -1188,6 +1481,10 @@ static esp_err_t statusHandler(httpd_req_t *req)
                     ulcOffHighwayEnabled, kUlcOffHighwayBuildEnabled);
     addFeatureState(features, "ui_auto_lane_change_enable", kWebSupportsAutoLaneChange,
                     autoLaneChangeEnabled, kAutoLaneChangeEnableBuildEnabled);
+    addFeatureState(features, "ui_auto_turn_signal_mode", kWebSupportsAutoTurnSignalMode,
+                    autoTurnSignalModeEnabled, kAutoTurnSignalModeBuildEnabled);
+    addFeatureState(features, "das_ulc_confirmation_request", kWebSupportsDasUlcConfirmationRequest,
+                    dasUlcConfirmationEnabled, kDasUlcConfirmationRequestBuildEnabled);
     addFeatureState(features, "ui_ulc_speed_config", kWebSupportsUlcSpeedConfig,
                     ulcSpeedConfigActive, kWebSupportsUlcSpeedConfig);
     addFeatureState(features, "ui_ulc_blind_spot_config", kWebSupportsUlcBlindSpotConfig,
@@ -1281,9 +1578,12 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(ach, "id_1016_period_ms", (uint32_t)period1016Ms);
     cJSON_AddNumberToObject(ach, "frames_1021", (uint32_t)aChannelDiag.frames1021);
     cJSON_AddNumberToObject(ach, "id_1021_period_ms", (uint32_t)period1021Ms);
+    cJSON_AddNumberToObject(ach, "frames_1001", (uint32_t)aChannelDiag.frames1001);
     cJSON_AddNumberToObject(ach, "eap_modified", (uint32_t)aChannelDiag.eapModifiedCount);
     cJSON_AddNumberToObject(ach, "auto_lane_change_modified", (uint32_t)aChannelDiag.autoLaneChangeModifiedCount);
     cJSON_AddNumberToObject(ach, "auto_lane_change_skipped", (uint32_t)aChannelDiag.autoLaneChangeSkipCount);
+    cJSON_AddNumberToObject(ach, "auto_turn_signal_mode_modified", (uint32_t)aChannelDiag.autoTurnSignalModeModifiedCount);
+    cJSON_AddNumberToObject(ach, "auto_turn_signal_mode_skipped", (uint32_t)aChannelDiag.autoTurnSignalModeSkipCount);
     cJSON_AddNumberToObject(ach, "ulc_stalk_confirm_modified", (uint32_t)aChannelDiag.ulcStalkConfirmModifiedCount);
     cJSON_AddNumberToObject(ach, "ulc_stalk_confirm_skipped", (uint32_t)aChannelDiag.ulcStalkConfirmSkipCount);
     cJSON_AddNumberToObject(ach, "ulc_off_highway_modified", (uint32_t)aChannelDiag.ulcOffHighwayModifiedCount);
@@ -1294,6 +1594,8 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(ach, "ulc_speed_config_skipped", (uint32_t)aChannelDiag.ulcSpeedConfigSkipCount);
     cJSON_AddNumberToObject(ach, "ulc_blind_spot_config_modified", (uint32_t)aChannelDiag.ulcBlindSpotConfigModifiedCount);
     cJSON_AddNumberToObject(ach, "ulc_blind_spot_config_skipped", (uint32_t)aChannelDiag.ulcBlindSpotConfigSkipCount);
+    cJSON_AddNumberToObject(ach, "das_ulc_confirmation_modified", (uint32_t)aChannelDiag.dasUlcConfirmationModifiedCount);
+    cJSON_AddNumberToObject(ach, "das_ulc_confirmation_skipped", (uint32_t)aChannelDiag.dasUlcConfirmationSkipCount);
     cJSON_AddNumberToObject(ach, "last_frame_id", (uint32_t)aChannelDiag.lastFrameIdReceived);
     cJSON_AddNumberToObject(ach, "last_update_ms", (uint32_t)aChannelDiag.lastStatusUpdateMs);
     cJSON_AddNumberToObject(ach, "last_loop_ms", (uint32_t)aChannelDiag.lastLoopMs);
@@ -1307,6 +1609,9 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddBoolToObject(ach, "ui_alc_off_highway_enable_enabled", alcOffHighwayEnabled);
     cJSON_AddBoolToObject(ach, "ui_ulc_off_highway_enabled", ulcOffHighwayEnabled);
     cJSON_AddBoolToObject(ach, "ui_auto_lane_change_enable_enabled", autoLaneChangeEnabled);
+    cJSON_AddBoolToObject(ach, "ui_auto_turn_signal_mode_enabled", autoTurnSignalModeEnabled);
+    cJSON_AddNumberToObject(ach, "ui_auto_turn_signal_mode_remaining_ms", autoTurnSignalModeRemainingMs);
+    cJSON_AddBoolToObject(ach, "das_ulc_confirmation_request_enabled", dasUlcConfirmationEnabled);
     cJSON_AddNumberToObject(ach, "ui_ulc_speed_config_value", ulcSpeedConfig);
     cJSON_AddStringToObject(ach, "ui_ulc_speed_config_name", uiUlcSpeedConfigName(ulcSpeedConfig));
     cJSON_AddBoolToObject(ach, "ui_ulc_speed_config_active", ulcSpeedConfigActive);
@@ -1547,6 +1852,51 @@ static esp_err_t uiAutoLaneChangeEnableHandler(httpd_req_t *req)
 {
     return featureToggleHandler(req, uiAutoLaneChangeEnableRuntime, kWebSupportsAutoLaneChange,
                                 kNvsKeyAutoLaneChange, "UI_autoLaneChangeEnable", false);
+}
+
+static esp_err_t uiAutoTurnSignalModeHandler(httpd_req_t *req)
+{
+    if (!rateLimitOk())
+    {
+        httpd_resp_set_status(req, "429 Too Many Requests");
+        httpd_resp_send(req, "Rate limited", HTTPD_RESP_USE_STRLEN);
+        return ESP_FAIL;
+    }
+    if (!kWebSupportsAutoTurnSignalMode)
+    {
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Feature not available");
+        return ESP_FAIL;
+    }
+
+    bool enabled = false;
+    if (!parseToggleBody(req, enabled))
+        return ESP_FAIL;
+
+    if (enabled)
+    {
+        if (!(bool)aChannelTxRuntime)
+        {
+            aChannelTxRuntime = true;
+            logRing.push("[Web] A_CHANNEL_TX: ON (session dependency)", millis());
+        }
+        uiAutoTurnSignalModeTrigger(millis());
+    }
+    else
+    {
+        uiAutoTurnSignalModeCancel();
+    }
+
+    Serial.printf("Web: UI_autoTurnSignalMode %s\n", enabled ? "trigger" : "cancel");
+    logRing.push(enabled ? "[Web] UI_autoTurnSignalMode: TRIGGER (50ms)" : "[Web] UI_autoTurnSignalMode: CANCEL", millis());
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+static esp_err_t dasUlcConfirmationRequestHandler(httpd_req_t *req)
+{
+    return featureToggleHandler(req, dasUlcConfirmationRequestRuntime, kWebSupportsDasUlcConfirmationRequest,
+                                "", "DAS_ulcConfirmationRequestActive", false);
 }
 
 static esp_err_t uiUlcSpeedConfigHandler(httpd_req_t *req)
@@ -2267,7 +2617,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
 
     // 섹션 3: 채널 상태 스냅샷
     httpd_resp_sendstr_chunk(req, "\r\n=== [3] 채널 상태 스냅샷 ===\r\n");
-    snprintf(line, sizeof(line), "A채널: RX=%u 293=%u 1016=%u 1021=%u EAP=%u AutoLC=%u/스킵=%u ULC=%u/스킵=%u UlcOffHW=%u/스킵=%u AlcOffHW=%u/스킵=%u Speed=%u/스킵=%u Blind=%u/스킵=%u\r\n",
+    snprintf(line, sizeof(line), "A채널: RX=%u 293=%u 1016=%u 1021=%u EAP=%u AutoLC=%u/스킵=%u AutoTurn=%u/스킵=%u ULC=%u/스킵=%u UlcOffHW=%u/스킵=%u AlcOffHW=%u/스킵=%u Speed=%u/스킵=%u Blind=%u/스킵=%u\r\n",
         (unsigned)aChannelDiag.framesReceivedTotal,
         (unsigned)aChannelDiag.frames293,
         (unsigned)aChannelDiag.frames1016,
@@ -2275,6 +2625,8 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         (unsigned)aChannelDiag.eapModifiedCount,
         (unsigned)aChannelDiag.autoLaneChangeModifiedCount,
         (unsigned)aChannelDiag.autoLaneChangeSkipCount,
+        (unsigned)aChannelDiag.autoTurnSignalModeModifiedCount,
+        (unsigned)aChannelDiag.autoTurnSignalModeSkipCount,
         (unsigned)aChannelDiag.ulcStalkConfirmModifiedCount,
         (unsigned)aChannelDiag.ulcStalkConfirmSkipCount,
         (unsigned)aChannelDiag.ulcOffHighwayModifiedCount,
@@ -2287,8 +2639,9 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         (unsigned)aChannelDiag.ulcBlindSpotConfigSkipCount);
     httpd_resp_sendstr_chunk(req, line);
     snprintf(line, sizeof(line),
-        "A실험설정: AutoLC=%s ULCOffHW=%s ALCOffHW=%s ULCspeed=%s(%u) ULCblind=%s(%u)\r\n",
+        "A실험설정: AutoLC=%s AutoTurn=%s ULCOffHW=%s ALCOffHW=%s ULCspeed=%s(%u) ULCblind=%s(%u)\r\n",
         (bool)uiAutoLaneChangeEnableRuntime ? "ON" : "stock",
+        (bool)uiAutoTurnSignalModeRuntime ? "ON" : "stock",
         (bool)uiUlcOffHighwayRuntime ? "ON" : "stock",
         (bool)uiAlcOffHighwayEnableRuntime ? "ON" : "stock",
         uiUlcSpeedConfigName((uint8_t)uiUlcSpeedConfigRuntime),
@@ -2919,6 +3272,33 @@ static esp_err_t setThemeHandler(httpd_req_t *req)
     return ESP_OK;
 }
 
+static void formatEpochMsKst(int64_t epochMs, char *out, size_t outLen)
+{
+    if (!out || outLen == 0) return;
+    time_t sec = (time_t)(epochMs / 1000);
+    int ms = (int)(epochMs % 1000);
+    struct tm tm_v;
+    localtime_r(&sec, &tm_v);
+    snprintf(out, outLen, "%04d-%02d-%02d %02d:%02d:%02d.%03d",
+             tm_v.tm_year + 1900, tm_v.tm_mon + 1, tm_v.tm_mday,
+             tm_v.tm_hour, tm_v.tm_min, tm_v.tm_sec, ms);
+}
+
+static void formatOtaUploadTimestamp(const char *epochMsText, char *out, size_t outLen)
+{
+    if (!out || outLen == 0) return;
+    out[0] = '\0';
+    if (epochMsText && epochMsText[0]) {
+        char *end = nullptr;
+        int64_t epochMs = strtoll(epochMsText, &end, 10);
+        if (end && *end == '\0' && epochMs > 0) {
+            formatEpochMsKst(epochMs, out, outLen);
+            return;
+        }
+    }
+    formatLogTimestamp(millis(), out, outLen);
+}
+
 
 
 static esp_err_t otaHandler(httpd_req_t *req)
@@ -2929,11 +3309,23 @@ static esp_err_t otaHandler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
+    const esp_partition_t *updatePart = esp_ota_get_next_update_partition(NULL);
+    char uploadEpochMs[32] = {};
+    httpd_req_get_hdr_value_str(req, "X-Upload-Epoch-Ms", uploadEpochMs, sizeof(uploadEpochMs));
+    char uploadAt[40] = {};
+    formatOtaUploadTimestamp(uploadEpochMs, uploadAt, sizeof(uploadAt));
+
     char contentType[64] = {};
     if (httpd_req_get_hdr_value_str(req, "Content-Type", contentType, sizeof(contentType)) == ESP_OK &&
         strstr(contentType, "multipart/form-data") != nullptr)
     {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Upload raw firmware .bin, not multipart/form-data");
+        return ESP_FAIL;
+    }
+
+    if (!prepareOtaUploadCanQuiet())
+    {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to disable CAN TX before OTA");
         return ESP_FAIL;
     }
 
@@ -2989,18 +3381,19 @@ static esp_err_t otaHandler(httpd_req_t *req)
     // 만약 새 펌웨어가 크래시로 부팅 완료를 못하면 다음 부팅 시 ota_pending==2를 발견 → 롤백
     {
         const esp_partition_t *running = esp_ota_get_running_partition();
-        const esp_partition_t *nextPart = esp_ota_get_next_update_partition(NULL);
         if (running) {
             nvs_handle_t wh;
             if (nvs_open(kNvsNamespace, NVS_READWRITE, &wh) == ESP_OK) {
                 nvs_set_u8(wh,  kNvsKeyOtaPending,  1);
                 nvs_set_str(wh, kNvsKeyOtaFallback, running->label);
-                nvs_set_str(wh, kNvsKeyOtaExpectPart, nextPart ? nextPart->label : "");
+                nvs_set_str(wh, kNvsKeyOtaExpectPart, updatePart ? updatePart->label : "");
+                nvs_set_str(wh, kNvsKeyOtaUploadAt, uploadAt);
+                otaWriteFallbackFirmwareMeta(wh);
                 nvs_commit(wh);
                 nvs_close(wh);
                 char buf[80];
                 snprintf(buf, sizeof(buf), "[OTA] 롤백 대기 설정: fallback=%s expect=%s",
-                         running->label, nextPart ? nextPart->label : "?");
+                         running->label, updatePart ? updatePart->label : "?");
                 Serial.println(buf);
                 logRing.push(buf, millis());
             }
@@ -3015,7 +3408,7 @@ static esp_err_t otaHandler(httpd_req_t *req)
 }
 
 // ─── POST /api/ota-confirm ───────────────────────────────────────────────────
-// 신 펌웨어 정상 동작 확인 → pending=0, fallback="" 클리어
+// 신 펌웨어 정상 동작 확인 → pending=0. 표시용 이전 펌웨어 메타는 보존.
 static esp_err_t otaConfirmHandler(httpd_req_t *req)
 {
     if (!rateLimitOk()) {
@@ -3026,7 +3419,7 @@ static esp_err_t otaConfirmHandler(httpd_req_t *req)
     nvs_handle_t nh;
     if (nvs_open(kNvsNamespace, NVS_READWRITE, &nh) == ESP_OK) {
         nvs_set_u8(nh,  kNvsKeyOtaPending,  0);
-        nvs_set_str(nh, kNvsKeyOtaFallback, "");
+        nvs_set_str(nh, kNvsKeyOtaExpectPart, "");
         nvs_commit(nh);
         nvs_close(nh);
     }
@@ -3074,7 +3467,7 @@ static esp_err_t otaRollbackHandler(httpd_req_t *req)
 }
 
 // ─── POST /api/ota-recovery-confirm ─────────────────────────────────────────
-// 복구 파티션 정상 확인 → pending=0, 복구모드 해제
+// 복구 파티션 정상 확인 → pending=0, 복구모드 해제. 표시용 이전 펌웨어 메타는 보존.
 static esp_err_t otaRecoveryConfirmHandler(httpd_req_t *req)
 {
     if (!rateLimitOk()) {
@@ -3085,7 +3478,7 @@ static esp_err_t otaRecoveryConfirmHandler(httpd_req_t *req)
     nvs_handle_t nh;
     if (nvs_open(kNvsNamespace, NVS_READWRITE, &nh) == ESP_OK) {
         nvs_set_u8(nh,  kNvsKeyOtaPending,  0);
-        nvs_set_str(nh, kNvsKeyOtaFallback, "");
+        nvs_set_str(nh, kNvsKeyOtaExpectPart, "");
         nvs_commit(nh);
         nvs_close(nh);
     }
@@ -3331,12 +3724,13 @@ static void webServerInit(TWAIDriver* drv = nullptr)
         Serial.printf("NVS: ENHANCED_AUTOPILOT = %d\n",
                       (bool)enhancedAutopilotRuntime);
         Serial.printf("NVS: NAG_KILLER = %d\n", (bool)nagKillerRuntime);
-        Serial.printf("NVS: A_TX = %d, UI_ulcStalkConfirm = %d, UI_alcOffHighwayEnable = %d, UI_ulcOffHighway = %d, UI_autoLaneChangeEnable = %d, UI_ulcSpeedConfig = %s, UI_ulcBlindSpotConfig = %s, A_SPI = %lu Hz, A_ONESHOT = %d, A_TX_GUARD = %d\n",
+        Serial.printf("NVS: A_TX = %d, UI_ulcStalkConfirm = %d, UI_alcOffHighwayEnable = %d, UI_ulcOffHighway = %d, UI_autoLaneChangeEnable = %d, UI_autoTurnSignalMode = %d, UI_ulcSpeedConfig = %s, UI_ulcBlindSpotConfig = %s, A_SPI = %lu Hz, A_ONESHOT = %d, A_TX_GUARD = %d\n",
               (int)(bool)aChannelTxRuntime,
                   (int)(bool)uiUlcStalkConfirmRuntime,
                   (int)(bool)uiAlcOffHighwayEnableRuntime,
                   (int)(bool)uiUlcOffHighwayRuntime,
                   (int)(bool)uiAutoLaneChangeEnableRuntime,
+                  (int)(bool)uiAutoTurnSignalModeRuntime,
                   uiUlcSpeedConfigName((uint8_t)uiUlcSpeedConfigRuntime),
                   uiUlcBlindSpotConfigName((uint8_t)uiUlcBlindSpotConfigRuntime),
                   (unsigned long)(uint32_t)aMcpSpiFreqHz,
@@ -3414,6 +3808,10 @@ static void webServerInit(TWAIDriver* drv = nullptr)
         .uri = "/api/ui-ulc-off-highway", .method = HTTP_POST, .handler = uiUlcOffHighwayHandler, .user_ctx = NULL};
     httpd_uri_t uriAutoLaneChangeEnable = {
         .uri = "/api/ui-auto-lane-change-enable", .method = HTTP_POST, .handler = uiAutoLaneChangeEnableHandler, .user_ctx = NULL};
+    httpd_uri_t uriAutoTurnSignalMode = {
+        .uri = "/api/ui-auto-turn-signal-mode", .method = HTTP_POST, .handler = uiAutoTurnSignalModeHandler, .user_ctx = NULL};
+    httpd_uri_t uriDasUlcConfirmationRequest = {
+        .uri = "/api/das-ulc-confirmation-request", .method = HTTP_POST, .handler = dasUlcConfirmationRequestHandler, .user_ctx = NULL};
     httpd_uri_t uriUlcSpeedConfig = {
         .uri = "/api/ui-ulc-speed-config", .method = HTTP_POST, .handler = uiUlcSpeedConfigHandler, .user_ctx = NULL};
     httpd_uri_t uriUlcBlindSpotConfig = {
@@ -3516,6 +3914,8 @@ static void webServerInit(TWAIDriver* drv = nullptr)
     httpd_register_uri_handler(webServer, &uriAlcOffHighway);
     httpd_register_uri_handler(webServer, &uriUlcOffHighway);
     httpd_register_uri_handler(webServer, &uriAutoLaneChangeEnable);
+    httpd_register_uri_handler(webServer, &uriAutoTurnSignalMode);
+    httpd_register_uri_handler(webServer, &uriDasUlcConfirmationRequest);
     httpd_register_uri_handler(webServer, &uriUlcSpeedConfig);
     httpd_register_uri_handler(webServer, &uriUlcBlindSpotConfig);
     httpd_register_uri_handler(webServer, &uriAChannelTx);
