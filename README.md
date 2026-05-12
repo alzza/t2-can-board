@@ -115,6 +115,7 @@ Once connected to the **`TeslaCAN`** WiFi AP and navigating to `http://192.168.4
 ### Signal Observer JSON
 
 The Signal Observer is a receive-only diagnostic tool. It extracts raw values from selected CAN signals, records transitions in a bounded event log, and exports a CSV through the web UI.
+Each signal must use one channel only: `A`/`VEH` or `B`/`CH`. Mixed `A+B`/`both`/`AB` configs are rejected to avoid cross-channel raw-value mixing.
 
 Generate uploadable JSON from T-CAN signal names:
 
@@ -128,16 +129,33 @@ Big-endian Motorola signals are supported. The generator writes `byte_order` fro
 .venv/bin/python scripts/tcan_signal_observer_json.py EPAS3P_torsionBarTorque EPAS3P_handsOnLevel --bus CH --channel B --output docs/epas_observer.json
 ```
 
+Muxed signals include `mux_start_bit`, `mux_length`, and `mux_value`. The firmware ignores frames whose mux selector does not match, so shared-bit frames such as `0x3FD UI_autopilotControl` do not create false raw changes.
+
 Observer limits:
 
 - Maximum observer slots: **10 signals**.
 - CAN-A MCP2515 hardware filters: **6 total frame IDs**.
-- CAN-A always reserves `0x293`, `0x3F8`, and `0x3FD`, so generated A or A+B observers normally have room for **3 additional distinct A-side frame IDs**.
+- CAN-A always reserves `0x293`, `0x3F8`, `0x3FD`, and `0x3E9`, so generated A observers normally have room for **2 additional distinct A-side frame IDs**.
 - B-only observers do not consume CAN-A filter slots.
-- The generator fails early if the requested A/A+B signals would exceed the 6-ID filter budget.
+- The generator fails early if the requested A-side signals would exceed the 6-ID filter budget.
 - Generated JSON includes `aFilterIds`, `aFilterUsed`, and `aFilterRemaining` metadata for quick review before upload.
 
 The CAN controller handles physical CAN CRC validation in hardware. Tesla payload checksum/counter handling is separate and is required only for transmitted modified frames, not for receive-only Signal Observer extraction.
+
+### OTA auto-refresh
+
+After uploading a new firmware `.bin` file in the OTA tab:
+
+1. **Upload completes** → device reboots automatically
+2. **Within 9 seconds** → web dashboard polls device status
+3. **Device responds** → page automatically refreshes with cache-busting
+4. **Display updates** → shows new firmware version
+
+No manual page refresh needed.
+
+**Metadata display format:**
+- Firmware: `1.3.2 · 26-05-13` (version · YY-MM-DD)
+- Build: `26-05-13 01:16:00` (YY-MM-DD HH:MM:SS)
 
 ### OTA rollback safety
 
