@@ -44,6 +44,7 @@ static volatile uint32_t gWebLogsBundleReqCount = 0;
 static volatile uint32_t gWebLogsBundleLastMs = 0;
 static volatile uint32_t gWebLogsBundleLastDurMs = 0;
 static volatile uint32_t gWebLogsBundleMaxDurMs = 0;
+static volatile uint32_t gWebDownloadBusyUntilMs = 0;
 static volatile uint32_t gWebApStationCount = 0;
 static volatile uint32_t gWebApStationChangeCount = 0;
 static volatile uint32_t gWebApStationLastChangeMs = 0;
@@ -67,6 +68,11 @@ static inline uint32_t webSafeAgeMs(uint32_t now, uint32_t lastMs) {
     if (!lastMs) return 0;
     uint32_t ageMs = now - lastMs;
     return (ageMs > 0x7FFFFFFFUL) ? 0 : ageMs;
+}
+
+static inline bool webDownloadBusy(uint32_t now) {
+    uint32_t until = (uint32_t)gWebDownloadBusyUntilMs;
+    return (until != 0) && ((uint32_t)(until - now) < 0x80000000UL);
 }
 
 static void formatDurationHms(uint32_t durationMs, char *out, size_t out_n);
@@ -526,6 +532,31 @@ static esp_err_t writeOtaSafeFeatureSettings(nvs_handle_t handle)
     if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyATxGuard, kATxGuardDefaultEnabled ? 1 : 0);
     if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyNagProfile, kNagSmartProfileDefault);
     return err;
+}
+
+// 로그 다운로드 중 CAN TX 임시 중단 (NVS 미저장, 핸들러 완료 시 복원)
+// A채널 TX + NAG 킬러를 끄고 B채널 TX 큐를 비운다.
+// 몇 초간 CAN 주입이 없어야 로그 청크 전송 중 차량 에러 유발을 방지할 수 있다.
+static void logDownloadCanQuietOn(bool &savedATx, bool &savedNag)
+{
+    savedATx = (bool)aChannelTxRuntime;
+    savedNag = (bool)nagKillerRuntime;
+    if (savedATx || savedNag) {
+        aChannelTxRuntime = false;
+        nagKillerRuntime = false;
+        esp_err_t ce = twai_clear_transmit_queue();
+        (void)ce;
+        logRing.push("[Web] 로그 저장: CAN TX 임시 중단", millis());
+    }
+}
+
+static void logDownloadCanQuietOff(bool savedATx, bool savedNag)
+{
+    if (savedATx || savedNag) {
+        aChannelTxRuntime = savedATx;
+        nagKillerRuntime = savedNag;
+        logRing.push("[Web] 로그 저장 완료: CAN TX 복원", millis());
+    }
 }
 
 static bool prepareOtaUploadCanQuiet()
@@ -1271,6 +1302,14 @@ static esp_err_t statusHandler(httpd_req_t *req)
 {
     const uint32_t handlerStartMs = millis();
     webHealthMark(gWebStatusReqCount, gWebStatusLastMs, handlerStartMs);
+    if (webDownloadBusy(handlerStartMs)) {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        httpd_resp_set_hdr(req, "Retry-After", "3");
+        httpd_resp_send(req, "{\"busy\":\"logs_bundle\"}", HTTPD_RESP_USE_STRLEN);
+        webHealthRecordDuration(gWebStatusLastDurMs, gWebStatusMaxDurMs, handlerStartMs);
+        return ESP_OK;
+    }
 
     // Parse log_since from query string
     uint32_t logSince = 0;
@@ -2053,6 +2092,14 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
 {
     const uint32_t handlerStartMs = millis();
     webHealthMark(gWebNagStatsReqCount, gWebNagStatsLastMs, handlerStartMs);
+    if (webDownloadBusy(handlerStartMs)) {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        httpd_resp_set_hdr(req, "Retry-After", "3");
+        httpd_resp_send(req, "{\"busy\":\"logs_bundle\"}", HTTPD_RESP_USE_STRLEN);
+        webHealthRecordDuration(gWebNagStatsLastDurMs, gWebNagStatsMaxDurMs, handlerStartMs);
+        return ESP_OK;
+    }
     uint32_t nowMs = handlerStartMs;
     cJSON *root = cJSON_CreateObject();
     if (!root) {
@@ -2408,6 +2455,8 @@ static void signalObserverWriteEventCsvRow(httpd_req_t *req, const SignalObserve
 }
 
 static esp_err_t signalObserverLogDlHandler(httpd_req_t *req) {
+    bool _savedATx = false, _savedNag = false;
+    logDownloadCanQuietOn(_savedATx, _savedNag);
     httpd_resp_set_type(req, "text/csv; charset=utf-8");
     char fname[88];
     if (wallEpochMsAtBoot != 0) {
@@ -2423,6 +2472,9 @@ static esp_err_t signalObserverLogDlHandler(httpd_req_t *req) {
             "attachment; filename=\"CAN_SNIPPER_uptime%u.csv\"", (unsigned)millis());
     }
     httpd_resp_set_hdr(req, "Content-Disposition", fname);
+    httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "Connection", "close");
 
     size_t n = 0;
     size_t head = 0;
@@ -2440,6 +2492,78 @@ static esp_err_t signalObserverLogDlHandler(httpd_req_t *req) {
         signalObserverEventCopyAt(start + i, ev);
         signalObserverWriteEventCsvRow(req, ev, line, sizeof(line), tsBuf, sizeof(tsBuf));
     }
+    logDownloadCanQuietOff(_savedATx, _savedNag);
+    httpd_resp_sendstr_chunk(req, nullptr);
+    return ESP_OK;
+}
+
+static esp_err_t eventsBundleHandler(httpd_req_t *req) {
+    bool _savedATx = false, _savedNag = false;
+    logDownloadCanQuietOn(_savedATx, _savedNag);
+    httpd_resp_set_type(req, "text/plain; charset=utf-8");
+    char fname[88];
+    if (wallEpochMsAtBoot != 0) {
+        time_t sec = (time_t)((wallEpochMsAtBoot + (int64_t)millis()) / 1000);
+        struct tm tm_v;
+        localtime_r(&sec, &tm_v);
+        snprintf(fname, sizeof(fname),
+            "attachment; filename=\"canmod_events_%04d%02d%02d_%02d%02d%02d.txt\"",
+            tm_v.tm_year + 1900, tm_v.tm_mon + 1, tm_v.tm_mday,
+            tm_v.tm_hour, tm_v.tm_min, tm_v.tm_sec);
+    } else {
+        snprintf(fname, sizeof(fname),
+            "attachment; filename=\"canmod_events_uptime%u.txt\"", (unsigned)millis());
+    }
+    httpd_resp_set_hdr(req, "Content-Disposition", fname);
+    httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "Connection", "close");
+
+    char line[512];
+    char tsBuf[40];
+    formatLogTimestamp(millis(), tsBuf, sizeof(tsBuf));
+    snprintf(line, sizeof(line), "=== CanMod 이벤트 로그 묶음 ===\r\nGenerated: %s\r\n\r\n", tsBuf);
+    httpd_resp_sendstr_chunk(req, line);
+
+    size_t observerN = 0;
+    size_t observerHead = 0;
+    uint32_t observerOverwritten = 0;
+    signalObserverEventSnapshot(observerN, observerHead, observerOverwritten);
+    snprintf(line, sizeof(line), "=== [1] 관찰기 이벤트 ===\r\n# uptime_ms=%u count=%u capacity=%u overwritten=%u\r\n",
+        (unsigned)millis(), (unsigned)observerN, (unsigned)kSignalObserverEventCap, (unsigned)observerOverwritten);
+    httpd_resp_sendstr_chunk(req, line);
+    signalObserverWriteEventCsvHeader(req);
+    size_t observerStart = (observerN < kSignalObserverEventCap) ? 0 : observerHead;
+    for (size_t i = 0; i < observerN; ++i) {
+        SignalObserverEvent ev;
+        signalObserverEventCopyAt(observerStart + i, ev);
+        signalObserverWriteEventCsvRow(req, ev, line, sizeof(line), tsBuf, sizeof(tsBuf));
+    }
+
+    size_t eventN = 0;
+    size_t eventHead = 0;
+    eventLogSnapshot(eventN, eventHead);
+    snprintf(line, sizeof(line), "\r\n=== [2] 밀리초 이벤트 ===\r\n# uptime_ms=%u count=%u capacity=%u\r\n",
+        (unsigned)millis(), (unsigned)eventN, (unsigned)EVT_CAP);
+    httpd_resp_sendstr_chunk(req, line);
+    httpd_resp_sendstr_chunk(req,
+        "# type: 0=BUSOFF 1=REC_OK 2=REC_FAIL 3=REC_SOFT 4=ERR_PASS 5=ARB_LOST 6=BUS_ERR 7=TX_FAIL 8=RX_FULL 9=TX_BACKOFF 10=USER_MARK 11=NAG_MODE 12=MODEB_STATE 13=MODEB_PHASE 14=MODEB_FIRST_ECHO\r\n");
+    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING_START 2=AP_WARNING_END | NAG_MODE detail: smartProfile 0=default 1=A 2=B 3=C 4=D | MODEB_STATE detail: ap<<16|oldHo<<8|newHo | MODEB_PHASE detail: phase<<24|ap<<16|ho<<8|decision | FIRST_ECHO detail: delay_ms | detailText is decoded for analysis\r\n");
+    httpd_resp_sendstr_chunk(req, "wall_time,timestamp_ms,type,typeName,tec,rec,detail,detailText\r\n");
+    char detailText[180];
+    size_t eventStart = (eventN < EVT_CAP) ? 0 : eventHead;
+    for (size_t i = 0; i < eventN; ++i) {
+        CanEvent e;
+        eventLogCopyAt(eventStart + i, e);
+        formatLogTimestamp(e.t_ms, tsBuf, sizeof(tsBuf));
+        snprintf(line, sizeof(line), "%s,%u,%u,%s,%u,%u,%u,%s\r\n",
+            tsBuf, (unsigned)e.t_ms, (unsigned)e.type,
+            eventTypeName(e.type),
+            (unsigned)e.tec, (unsigned)e.rec, (unsigned)e.detail,
+            eventDetailText(e.type, e.detail, detailText, sizeof(detailText)));
+        httpd_resp_sendstr_chunk(req, line);
+    }
+    logDownloadCanQuietOff(_savedATx, _savedNag);
     httpd_resp_sendstr_chunk(req, nullptr);
     return ESP_OK;
 }
@@ -2537,6 +2661,9 @@ static esp_err_t userMarkerHandler(httpd_req_t *req) {
 static esp_err_t logsBundleHandler(httpd_req_t *req) {
     const uint32_t handlerStartMs = millis();
     webHealthMark(gWebLogsBundleReqCount, gWebLogsBundleLastMs, handlerStartMs);
+    gWebDownloadBusyUntilMs = handlerStartMs + 180000UL;
+    bool _savedATx = false, _savedNag = false;
+    logDownloadCanQuietOn(_savedATx, _savedNag);
     httpd_resp_set_type(req, "text/plain; charset=utf-8");
     // 다운로드 파일명: 동기화된 시각 있으면 YYYYMMDD_HHMMSS, 없으면 uptime
     char fname[80];
@@ -2553,6 +2680,9 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
             "attachment; filename=\"canmod_uptime%u.txt\"", (unsigned)millis());
     }
     httpd_resp_set_hdr(req, "Content-Disposition", fname);
+    httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "Connection", "close");
     char line[768];
     char tsBuf[40];
 
@@ -2591,7 +2721,11 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                 const LogRingBuffer::Entry &e = logRing.at(i);
                 formatLogTimestamp(e.timestamp_ms, tsBuf, sizeof(tsBuf));
                 snprintf(line, sizeof(line), "[%s] %s\r\n", tsBuf, e.msg);
-                httpd_resp_sendstr_chunk(req, line);
+                if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) {
+                    logDownloadCanQuietOff(_savedATx, _savedNag);
+                    gWebDownloadBusyUntilMs = 0;
+                    return ESP_FAIL;
+                }
             }
         }
     }
@@ -2611,7 +2745,11 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                 (unsigned)ev.seqNum, tsBuf, (unsigned)ev.timestampMs,
                 (unsigned)ev.tec, (unsigned)ev.rec,
                 (unsigned)ev.recoveryDurMs, (unsigned)ev.sinceLastMs, (unsigned)ev.recovered);
-            httpd_resp_sendstr_chunk(req, line);
+            if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) {
+                logDownloadCanQuietOff(_savedATx, _savedNag);
+                gWebDownloadBusyUntilMs = 0;
+                return ESP_FAIL;
+            }
         }
     }
 
@@ -2766,52 +2904,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         (unsigned)bChannelDiag.lastRecoveryDurationMs,
         (unsigned)bChannelDiag.maxRecoveryDurationMs);
     httpd_resp_sendstr_chunk(req, line);
-    httpd_resp_sendstr_chunk(req, "관찰기: name,ch,id,byte_order,raw,frames,active,changes,bursts,current_run,last_run,max_run,age_ms\r\n");
-    {
-        uint32_t now = millis();
-        uint8_t count = (uint8_t)signalObserverCount;
-        if (count > kSignalObserverMaxSignals) count = kSignalObserverMaxSignals;
-        for (uint8_t i = 0; i < count; ++i) {
-            const SignalObserverDef &def = signalObserverDefs[i];
-            const SignalObserverState &st = signalObserverStates[i];
-            snprintf(line, sizeof(line),
-                "관찰기,%s,%s,0x%03X,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
-                def.name,
-                signalObserverChannelName(def.channelMask),
-                (unsigned)def.frameId,
-                signalObserverByteOrderName(def.byteOrder),
-                (unsigned)st.lastRaw,
-                (unsigned)st.frameCount,
-                (unsigned)st.activeFrameCount,
-                (unsigned)st.changeCount,
-                (unsigned)st.burstCount,
-                (unsigned)st.currentRunFrames,
-                (unsigned)st.lastRunFrames,
-                (unsigned)st.maxRunFrames,
-                (unsigned)(st.lastSeenMs ? webSafeAgeMs(now, st.lastSeenMs) : 0));
-            httpd_resp_sendstr_chunk(req, line);
-        }
-    }
-    {
-        size_t eventN = 0;
-        size_t eventHead = 0;
-        uint32_t eventOverwritten = 0;
-        signalObserverEventSnapshot(eventN, eventHead, eventOverwritten);
-        snprintf(line, sizeof(line), "관찰기 이벤트: count=%u cap=%u overwritten=%u\r\n",
-            (unsigned)eventN, (unsigned)kSignalObserverEventCap, (unsigned)eventOverwritten);
-        httpd_resp_sendstr_chunk(req, line);
-        signalObserverWriteEventCsvHeader(req);
-        if (eventN == 0) {
-            httpd_resp_sendstr_chunk(req, "(관찰기 이벤트 없음)\r\n");
-        } else {
-            size_t start = (eventN < kSignalObserverEventCap) ? 0 : eventHead;
-            for (size_t i = 0; i < eventN; ++i) {
-                SignalObserverEvent ev;
-                signalObserverEventCopyAt(start + i, ev);
-                signalObserverWriteEventCsvRow(req, ev, line, sizeof(line), tsBuf, sizeof(tsBuf));
-            }
-        }
-    }
+    // 관찰기 관련 출력, [3] 섹션에서 제거됨. [6] 섹션에서만 출력.
     {
         uint32_t now = millis();
         uint32_t markerCount = (uint32_t)userMarkerCount;
@@ -2901,40 +2994,71 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                     (unsigned)s.ageEchoMs, (unsigned)s.modeBStateAgeMs, (unsigned)s.modeBPhaseAgeMs,
                     (unsigned)s.modeBFirstEchoDelayMs, (unsigned)s.modeBDelayTargetMs,
                     (unsigned)s.d297, (unsigned)s.dModeBInject);
-                httpd_resp_sendstr_chunk(req, line);
+                if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) {
+                    logDownloadCanQuietOff(_savedATx, _savedNag);
+                    gWebDownloadBusyUntilMs = 0;
+                    return ESP_FAIL;
+                }
             }
         }
     }
 
-    // 섹션 5: 밀리초 이벤트 로그 (BUS-OFF/Recovery/TWAI alert)
+    // 섹션 5: 밀리초 이벤트 로그는 별도 CSV로 분리한다.
     httpd_resp_sendstr_chunk(req, "\r\n=== [5] 밀리초 이벤트 로그 ===\r\n");
-    httpd_resp_sendstr_chunk(req,
-        "# type: 0=BUSOFF 1=REC_OK 2=REC_FAIL 3=REC_SOFT 4=ERR_PASS 5=ARB_LOST 6=BUS_ERR 7=TX_FAIL 8=RX_FULL 9=TX_BACKOFF 10=USER_MARK 11=NAG_MODE 12=MODEB_STATE 13=MODEB_PHASE 14=MODEB_FIRST_ECHO\r\n");
-    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING_START 2=AP_WARNING_END | NAG_MODE detail: smartProfile 0=default 1=A 2=B 3=C 4=D | MODEB_STATE detail: ap<<16|oldHo<<8|newHo | MODEB_PHASE detail: phase<<24|ap<<16|ho<<8|decision | FIRST_ECHO detail: delay_ms | detailText is decoded for analysis\r\n");
-    httpd_resp_sendstr_chunk(req, "wall_time,timestamp_ms,type,typeName,tec,rec,detail,detailText\r\n");
     {
         size_t evtN = 0;
         size_t evtSnapHead = 0;
         eventLogSnapshot(evtN, evtSnapHead);
-        size_t start = (evtN < EVT_CAP) ? 0 : evtSnapHead;
-        if (evtN == 0) {
-            httpd_resp_sendstr_chunk(req, "(이벤트 없음)\r\n");
-        } else {
-            for (size_t i = 0; i < evtN; ++i) {
-                CanEvent e;
-                eventLogCopyAt(start + i, e);
-                formatLogTimestamp(e.t_ms, tsBuf, sizeof(tsBuf));
-                char detailText[180];
-                snprintf(line, sizeof(line), "%s,%u,%u,%s,%u,%u,%u,%s\r\n",
-                    tsBuf, (unsigned)e.t_ms, (unsigned)e.type,
-                    eventTypeName(e.type),
-                    (unsigned)e.tec, (unsigned)e.rec, (unsigned)e.detail,
-                    eventDetailText(e.type, e.detail, detailText, sizeof(detailText)));
-                httpd_resp_sendstr_chunk(req, line);
+        snprintf(line, sizeof(line), "밀리초 이벤트: count=%u cap=%u event_bundle=/api/events-bundle legacy_csv=/api/events.csv\r\n",
+            (unsigned)evtN, (unsigned)EVT_CAP);
+        httpd_resp_sendstr_chunk(req, line);
+        (void)evtSnapHead;
+    }
+
+    // 섹션 6: 관찰기 요약/이벤트/CSV 안내
+    httpd_resp_sendstr_chunk(req, "\r\n=== [6] 관찰기 요약 ===\r\n");
+    httpd_resp_sendstr_chunk(req, "관찰기: name,ch,id,byte_order,raw,frames,active,changes,bursts,current_run,last_run,max_run,age_ms\r\n");
+    {
+        uint32_t now = millis();
+        uint8_t count = (uint8_t)signalObserverCount;
+        if (count > kSignalObserverMaxSignals) count = kSignalObserverMaxSignals;
+        for (uint8_t i = 0; i < count; ++i) {
+            const SignalObserverDef &def = signalObserverDefs[i];
+            const SignalObserverState &st = signalObserverStates[i];
+            snprintf(line, sizeof(line),
+                "관찰기,%s,%s,0x%03X,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+                def.name,
+                signalObserverChannelName(def.channelMask),
+                (unsigned)def.frameId,
+                signalObserverByteOrderName(def.byteOrder),
+                (unsigned)st.lastRaw,
+                (unsigned)st.frameCount,
+                (unsigned)st.activeFrameCount,
+                (unsigned)st.changeCount,
+                (unsigned)st.burstCount,
+                (unsigned)st.currentRunFrames,
+                (unsigned)st.lastRunFrames,
+                (unsigned)st.maxRunFrames,
+                (unsigned)(st.lastSeenMs ? webSafeAgeMs(now, st.lastSeenMs) : 0));
+            if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) {
+                logDownloadCanQuietOff(_savedATx, _savedNag);
+                gWebDownloadBusyUntilMs = 0;
+                return ESP_FAIL;
             }
         }
     }
-
+    {
+        size_t eventN = 0;
+        size_t eventHead = 0;
+        uint32_t eventOverwritten = 0;
+        signalObserverEventSnapshot(eventN, eventHead, eventOverwritten);
+        snprintf(line, sizeof(line), "관찰기 이벤트: count=%u cap=%u overwritten=%u event_bundle=/api/events-bundle observer_csv=/api/signal-observer-log-dl\r\n",
+            (unsigned)eventN, (unsigned)kSignalObserverEventCap, (unsigned)eventOverwritten);
+        httpd_resp_sendstr_chunk(req, line);
+        (void)eventHead;
+    }
+    logDownloadCanQuietOff(_savedATx, _savedNag);
+    gWebDownloadBusyUntilMs = 0;
     webHealthRecordDuration(gWebLogsBundleLastDurMs, gWebLogsBundleMaxDurMs, handlerStartMs);
     httpd_resp_sendstr_chunk(req, nullptr);
     return ESP_OK;
@@ -3880,6 +4004,8 @@ static void webServerInit(TWAIDriver* drv = nullptr)
         .uri = "/api/timeseries/status", .method = HTTP_GET, .handler = timeseriesStatusHandler, .user_ctx = NULL};
     httpd_uri_t uriEventsCsv = {
         .uri = "/api/events.csv", .method = HTTP_GET, .handler = eventLogCsvHandler, .user_ctx = NULL};
+    httpd_uri_t uriEventsBundle = {
+        .uri = "/api/events-bundle", .method = HTTP_GET, .handler = eventsBundleHandler, .user_ctx = NULL};
     httpd_uri_t uriLogsBundle = {
         .uri = "/api/logs-bundle", .method = HTTP_GET, .handler = logsBundleHandler, .user_ctx = NULL};
     // 브라우저 → 디바이스 wall-clock 동기화 (단독 AP 모드에서 NTP 대체)
@@ -3949,6 +4075,7 @@ static void webServerInit(TWAIDriver* drv = nullptr)
     httpd_register_uri_handler(webServer, &uriTimeseriesRec);
     httpd_register_uri_handler(webServer, &uriTimeseriesStatus);
     httpd_register_uri_handler(webServer, &uriEventsCsv);
+    httpd_register_uri_handler(webServer, &uriEventsBundle);
     httpd_register_uri_handler(webServer, &uriLogsBundle);
     httpd_register_uri_handler(webServer, &uriTimeSync);
     httpd_register_uri_handler(webServer, &uriUserMarker);

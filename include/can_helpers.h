@@ -57,6 +57,10 @@ inline constexpr bool kUlcOffHighwayDefaultEnabled = false;
 inline constexpr bool kUlcOffHighwayBuildEnabled = true;
 inline constexpr bool kAutoLaneChangeEnableDefaultEnabled = false;
 inline constexpr bool kAutoLaneChangeEnableBuildEnabled = true;
+inline constexpr bool kAutoTurnSignalModeDefaultEnabled = false;
+inline constexpr bool kAutoTurnSignalModeBuildEnabled = true;
+inline constexpr bool kDasUlcConfirmationRequestDefaultEnabled = false;
+inline constexpr bool kDasUlcConfirmationRequestBuildEnabled = true;
 #else
 inline constexpr bool kUlcStalkConfirmDefaultEnabled = false;
 inline constexpr bool kUlcStalkConfirmBuildEnabled = false;
@@ -66,6 +70,10 @@ inline constexpr bool kUlcOffHighwayDefaultEnabled = false;
 inline constexpr bool kUlcOffHighwayBuildEnabled = false;
 inline constexpr bool kAutoLaneChangeEnableDefaultEnabled = false;
 inline constexpr bool kAutoLaneChangeEnableBuildEnabled = false;
+inline constexpr bool kAutoTurnSignalModeDefaultEnabled = false;
+inline constexpr bool kAutoTurnSignalModeBuildEnabled = false;
+inline constexpr bool kDasUlcConfirmationRequestDefaultEnabled = false;
+inline constexpr bool kDasUlcConfirmationRequestBuildEnabled = false;
 #endif
 
 inline constexpr uint8_t kUlcConfigStock = 0xFF;
@@ -113,6 +121,9 @@ inline Shared<bool> uiUlcStalkConfirmRuntime{kUlcStalkConfirmDefaultEnabled};   
 inline Shared<bool> uiAlcOffHighwayEnableRuntime{kAlcOffHighwayEnableDefaultEnabled};      // UI_alcOffHighwayEnable bit56 -> 1
 inline Shared<bool> uiUlcOffHighwayRuntime{kUlcOffHighwayDefaultEnabled};                  // UI_ulcOffHighway bit15 -> 1
 inline Shared<bool> uiAutoLaneChangeEnableRuntime{kAutoLaneChangeEnableDefaultEnabled};    // UI_autoLaneChangeEnable bits24-25 -> ON(1)
+inline Shared<bool> uiAutoTurnSignalModeRuntime{kAutoTurnSignalModeDefaultEnabled};        // UI_autoTurnSignalMode bit52 -> 1 (약 50ms 펄스)
+inline Shared<uint32_t> uiAutoTurnSignalModePulseUntilMs{0};                               // 펄스 만료 시각(ms)
+inline Shared<bool> dasUlcConfirmationRequestRuntime{kDasUlcConfirmationRequestDefaultEnabled};  // DAS_ulcConfirmationRequestActive bit28 -> 1
 inline Shared<uint8_t> uiUlcSpeedConfigRuntime{kUlcSpeedConfigDefault};                    // UI_ulcSpeedConfig bits50-51, 0xFF=순정 유지
 inline Shared<uint8_t> uiUlcBlindSpotConfigRuntime{kUlcBlindSpotConfigDefault};            // UI_ulcBlindSpotConfig bits52-53, 0xFF=순정 유지
 inline Shared<bool> aChannelTxRuntime{true};     // A채널 1021 수정 송신 마스터 토글
@@ -140,6 +151,27 @@ inline const char* uiUlcBlindSpotConfigName(uint8_t raw) {
     }
 }
 
+inline constexpr uint32_t kAutoTurnSignalModePulseMs = 50;
+
+inline void uiAutoTurnSignalModeTrigger(uint32_t nowMs) {
+    uiAutoTurnSignalModeRuntime = true;
+    uiAutoTurnSignalModePulseUntilMs = nowMs + kAutoTurnSignalModePulseMs;
+}
+
+inline void uiAutoTurnSignalModeCancel() {
+    uiAutoTurnSignalModeRuntime = false;
+    uiAutoTurnSignalModePulseUntilMs = 0;
+}
+
+inline bool uiAutoTurnSignalModePulseActive(uint32_t nowMs) {
+    if (!(bool)uiAutoTurnSignalModeRuntime) return false;
+    uint32_t untilMs = (uint32_t)uiAutoTurnSignalModePulseUntilMs;
+    if (!untilMs) return false;
+    if ((int32_t)(untilMs - nowMs) > 0) return true;
+    uiAutoTurnSignalModeCancel();
+    return false;
+}
+
 inline constexpr uint8_t kSignalObserverMaxSignals = 10;
 inline constexpr uint8_t kSignalObserverMaxAFilterIds = 6;
 inline constexpr uint8_t kSignalObserverChannelA = 0x01;
@@ -159,6 +191,9 @@ struct SignalObserverDef {
     uint8_t length;
     uint32_t idleRaw;
     char name[kSignalObserverNameLen];
+    uint8_t muxStartBit;
+    uint8_t muxLength;
+    uint32_t muxValue;
 };
 
 struct SignalObserverState {
@@ -210,13 +245,10 @@ struct SignalObserverEvent {
     uint32_t maxRunFrames;
 };
 
-inline Shared<bool> signalObserverRuntime{true};
-inline Shared<uint8_t> signalObserverCount{4};
+inline Shared<bool> signalObserverRuntime{false};  // 부팅 시 정지 상태; 시작 버튼 누를 때까지 카운트 없음
+inline Shared<uint8_t> signalObserverCount{1};      // A채널 기본 신호 1개; B/Both 채널 제거 (mux 혼용 오탐 방지)
 inline SignalObserverDef signalObserverDefs[kSignalObserverMaxSignals] = {
-    {true, kSignalObserverChannelB, kSignalObserverByteOrderLittle, 586, 21, 3, 0, "DAS_autosteerHealthState"},
-    {true, kSignalObserverChannelB, kSignalObserverByteOrderLittle, 586, 58, 2, 0, "DAS_ulcType"},
     {true, kSignalObserverChannelA, kSignalObserverByteOrderLittle, 1001, 28, 1, 0, "DAS_ulcConfirmationRequestActive"},
-    {true, kSignalObserverChannelBoth, kSignalObserverByteOrderLittle, 585, 16, 4, 0, "SCCM_turnIndicatorStalkStatus"},
 };
 inline SignalObserverState signalObserverStates[kSignalObserverMaxSignals] = {};
 inline SignalObserverEvent signalObserverEvents[kSignalObserverEventCap] = {};
@@ -317,34 +349,46 @@ inline uint8_t signalObserverNextBigEndianBit(uint8_t bitPosition) {
     return (bitPosition % 8U == 0U) ? static_cast<uint8_t>(bitPosition + 15U) : static_cast<uint8_t>(bitPosition - 1U);
 }
 
-inline bool signalObserverExtractRaw(const CanFrame &frame, const SignalObserverDef &def, uint32_t &rawOut) {
-    if (!def.enabled || def.length == 0 || def.length > 32) return false;
-    if (def.startBit > 63) return false;
-
+inline bool signalObserverExtractRawBits(const CanFrame &frame, uint8_t startBit, uint8_t length,
+                                         uint8_t byteOrder, uint32_t &rawOut) {
+    if (length == 0 || length > 32) return false;
+    if (startBit > 63) return false;
     uint8_t dlc = frame.dlc > 8 ? 8 : frame.dlc;
-    if (def.byteOrder == kSignalObserverByteOrderBig) {
+    if (byteOrder == kSignalObserverByteOrderBig) {
         uint32_t raw = 0;
-        uint8_t bitPosition = def.startBit;
-        for (uint8_t bitIndex = 0; bitIndex < def.length; ++bitIndex) {
+        uint8_t bitPosition = startBit;
+        for (uint8_t bitIndex = 0; bitIndex < length; ++bitIndex) {
             if (bitPosition >= (uint8_t)(dlc * 8U)) return false;
             raw = (raw << 1U) | ((frame.data[bitPosition / 8U] >> (bitPosition % 8U)) & 0x01U);
-            if (bitIndex + 1U < def.length) bitPosition = signalObserverNextBigEndianBit(bitPosition);
+            if (bitIndex + 1U < length) bitPosition = signalObserverNextBigEndianBit(bitPosition);
         }
         rawOut = raw;
         return true;
     }
 
-    if ((uint16_t)def.startBit + (uint16_t)def.length > 64) return false;
-    uint8_t neededBytes = static_cast<uint8_t>(((uint16_t)def.startBit + (uint16_t)def.length + 7U) / 8U);
+    if ((uint16_t)startBit + (uint16_t)length > 64) return false;
+    uint8_t neededBytes = static_cast<uint8_t>(((uint16_t)startBit + (uint16_t)length + 7U) / 8U);
     if (dlc < neededBytes) return false;
 
     uint64_t payload = 0;
     for (uint8_t byteIndex = 0; byteIndex < dlc; ++byteIndex) {
         payload |= (static_cast<uint64_t>(frame.data[byteIndex]) << (8U * byteIndex));
     }
-    uint64_t mask = (def.length >= 32) ? 0xFFFFFFFFULL : ((1ULL << def.length) - 1ULL);
-    rawOut = static_cast<uint32_t>((payload >> def.startBit) & mask);
+    uint64_t mask = (length >= 32) ? 0xFFFFFFFFULL : ((1ULL << length) - 1ULL);
+    rawOut = static_cast<uint32_t>((payload >> startBit) & mask);
     return true;
+}
+
+inline bool signalObserverExtractRaw(const CanFrame &frame, const SignalObserverDef &def, uint32_t &rawOut) {
+    if (!def.enabled) return false;
+    if (def.muxLength > 0) {
+        uint32_t muxRaw = 0;
+        if (!signalObserverExtractRawBits(frame, def.muxStartBit, def.muxLength, def.byteOrder, muxRaw)) {
+            return false;
+        }
+        if (muxRaw != def.muxValue) return false;
+    }
+    return signalObserverExtractRawBits(frame, def.startBit, def.length, def.byteOrder, rawOut);
 }
 
 inline void signalObserverObserveFrame(uint8_t channelMask, const CanFrame &frame, uint32_t nowMs) {
@@ -661,9 +705,12 @@ struct AChannelDiagnostics {
     Shared<uint32_t> frames293{0};               // UI_chassisControl 프레임 수
     Shared<uint32_t> frames1016{0};              // UI_driverAssistControl 프레임 수
     Shared<uint32_t> frames1021{0};              // EAP 프레임 수
+    Shared<uint32_t> frames1001{0};              // DAS_bodyControls 프레임 수
     Shared<uint32_t> eapModifiedCount{0};        // 규제 완화 적용 횟수
     Shared<uint32_t> autoLaneChangeModifiedCount{0};      // UI_autoLaneChangeEnable 적용 횟수
     Shared<uint32_t> autoLaneChangeSkipCount{0};          // 이미 ON이라 송신하지 않은 횟수
+    Shared<uint32_t> autoTurnSignalModeModifiedCount{0};  // UI_autoTurnSignalMode 적용 횟수
+    Shared<uint32_t> autoTurnSignalModeSkipCount{0};      // 이미 bit52=1이라 송신하지 않은 횟수
     Shared<uint32_t> ulcStalkConfirmModifiedCount{0};      // UI_ulcStalkConfirm 적용 횟수
     Shared<uint32_t> ulcStalkConfirmSkipCount{0};          // 이미 bit1=0이라 송신하지 않은 횟수
     Shared<uint32_t> ulcOffHighwayModifiedCount{0};        // UI_ulcOffHighway 적용 횟수
@@ -674,6 +721,8 @@ struct AChannelDiagnostics {
     Shared<uint32_t> ulcSpeedConfigSkipCount{0};           // 이미 목표 raw라 송신하지 않은 횟수
     Shared<uint32_t> ulcBlindSpotConfigModifiedCount{0};   // UI_ulcBlindSpotConfig 적용 횟수
     Shared<uint32_t> ulcBlindSpotConfigSkipCount{0};       // 이미 목표 raw라 송신하지 않은 횟수
+    Shared<uint32_t> dasUlcConfirmationModifiedCount{0};   // DAS_ulcConfirmationRequestActive 적용 횟수
+    Shared<uint32_t> dasUlcConfirmationSkipCount{0};       // 이미 bit28=1이라 송신하지 않은 횟수
     Shared<uint32_t> tsllcModifiedCount{0};       // TSLLC 주입 횟수 (스톱/초록불 비트 세팅)
     Shared<uint32_t> lastFrameIdReceived{0};     // 마지막 수신 프레임 ID
     Shared<uint32_t> lastStatusUpdateMs{0};      // 마지막 상태 업데이트 시각

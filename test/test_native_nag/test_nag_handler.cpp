@@ -509,6 +509,71 @@ void test_nag_profile_d_holds_strong_direction_when_steering_crosses_zero()
     TEST_ASSERT_EQUAL_INT8(-1, injectedTorqueDir(mock.sent[0]));
 }
 
+void test_nag_profile_d_holds_direction_across_strong_ramp_boundary()
+{
+    nagConfig.smartProfile = kNagSmartProfileD;
+    primeStrongRequest();
+
+    const NagSmartProfileSettings &profile = nagSmartProfileSettings(nagConfig.smartProfile);
+
+    CanFrame positiveSteer = makeSteeringFrame(2.0f);
+    handler.handleMessage(positiveSteer, mock);
+    CanFrame first = makeEpasFrame(0, 0.33f, 0x0A);
+    handler.handleMessage(first, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_INT8(-1, injectedTorqueDir(mock.sent[0]));
+
+    mock.reset();
+    handler._mbStrongActiveMs = millis() - profile.strongRampMs + 1;
+    CanFrame negativeSteer = makeSteeringFrame(-2.0f);
+    handler.handleMessage(negativeSteer, mock);
+    CanFrame rampEdgeBefore = makeEpasFrame(0, 0.33f, 0x0B);
+    handler.handleMessage(rampEdgeBefore, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_INT8(-1, injectedTorqueDir(mock.sent[0]));
+
+    mock.reset();
+    handler._mbStrongActiveMs = millis() - profile.strongRampMs - 1;
+    CanFrame rampEdgeAfter = makeEpasFrame(0, 0.33f, 0x0C);
+    handler.handleMessage(rampEdgeAfter, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_INT8(-1, injectedTorqueDir(mock.sent[0]));
+
+    handler._mbDirHoldUntilMs = 0;
+    mock.reset();
+    handler._mbStrongActiveMs = millis() - profile.strongRampMs - 1;
+    CanFrame switched = makeEpasFrame(0, 0.33f, 0x0D);
+    handler.handleMessage(switched, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_INT8(1, injectedTorqueDir(mock.sent[0]));
+}
+
+void test_nag_profile_d_preserves_held_direction_after_single_real_hands_on_pulse()
+{
+    nagConfig.smartProfile = kNagSmartProfileD;
+    primeDasRequest();
+
+    CanFrame positiveSteer = makeSteeringFrame(2.0f);
+    handler.handleMessage(positiveSteer, mock);
+    CanFrame first = makeEpasFrame(0, 0.33f, 0x06);
+    handler.handleMessage(first, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_INT8(-1, injectedTorqueDir(mock.sent[0]));
+
+    mock.reset();
+    CanFrame transientHandsOn = makeEpasFrame(1, 0.33f, 0x07);
+    handler.handleMessage(transientHandsOn, mock);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT8(kNagDecisionHandsOn, (uint8_t)bChannelDiag.nagLastDecision);
+
+    CanFrame negativeSteer = makeSteeringFrame(-2.0f);
+    handler.handleMessage(negativeSteer, mock);
+    CanFrame resume = makeEpasFrame(0, 0.33f, 0x08);
+    handler.handleMessage(resume, mock);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_INT8(-1, injectedTorqueDir(mock.sent[0]));
+}
+
 void test_nag_output_handson_never_exceeds_1()
 {
     primeDasRequest();
@@ -676,6 +741,8 @@ int main()
     RUN_TEST(test_nag_profile_c_switches_direction_immediately);
     RUN_TEST(test_nag_profile_d_holds_state2_direction_until_hold_expires);
     RUN_TEST(test_nag_profile_d_holds_strong_direction_when_steering_crosses_zero);
+    RUN_TEST(test_nag_profile_d_holds_direction_across_strong_ramp_boundary);
+    RUN_TEST(test_nag_profile_d_preserves_held_direction_after_single_real_hands_on_pulse);
     RUN_TEST(test_nag_output_handson_never_exceeds_1);
 
     // Counters

@@ -267,7 +267,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
 .observer-head h2{margin-bottom:0}
 .observer-file-input{display:none}
 .observer-file-btn{width:auto;min-width:92px;padding:9px 12px}
-.observer-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:8px;align-items:stretch}
+.observer-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:8px;margin-bottom:8px;align-items:stretch}
 .observer-actions .btn-action{padding:9px 8px}
 .observer-actions .btn-action:disabled{opacity:.48;cursor:not-allowed;border-color:var(--bd);color:var(--tx4)}
 .observer-table-wrap{overflow:auto;max-height:360px;border:1px solid var(--bd);border-radius:8px;background:var(--bg2);scroll-behavior:smooth}
@@ -471,7 +471,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
     <button id="theme-btn" onclick="toggleTheme()">&#9728; Light</button>
   </div>
   <div class="header-actions">
-    <a id="log-save-btn" href="/api/logs-bundle" download="canmod_logs.txt">&#128190; 전체 저장</a>
+    <a id="log-save-btn" href="/api/logs-bundle" data-download-url="/api/logs-bundle" download="canmod_logs.txt" onclick="return handleDownloadAction(event,this)">&#128190; 전체 저장</a>
     <span class="user-mark-wrap">
       <button id="userMarkBtn" class="user-mark-btn" onclick="markApWarning()">USER_MARK</button>
       <span id="userMarkCount" class="user-mark-count">0회</span>
@@ -853,7 +853,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
     <button class="btn" onclick="resetTimeseries()">🗑 로그 초기화</button>
     <button class="btn" id="recBtn" onclick="toggleTimeseriesRec()">⏺ 기록 시작</button>
     <button class="btn user-mark-btn" id="markBtn" onclick="markApWarning()">USER_MARK</button>
-    <a class="btn" href="/api/logs-bundle" download="canmod_logs.txt" style="text-decoration:none;display:inline-flex;align-items:center">💾 전체 저장</a>
+    <a class="btn" href="/api/logs-bundle" data-download-url="/api/logs-bundle" download="canmod_logs.txt" onclick="return handleDownloadAction(event,this)" style="text-decoration:none;display:inline-flex;align-items:center">💾 전체 저장</a>
     <span id="recStatus" style="font-size:12px;color:var(--muted)"></span>
     <span id="diagStatus" style="font-size:12px;color:var(--muted)"></span>
   </div>
@@ -984,7 +984,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
     <button class="btn-action" onclick="resetSignalObserver()">카운터 리셋</button>
     <button class="btn-action" id="signalObserverStartBtn" onclick="setSignalObserverCapture(true)">시작</button>
     <button class="btn-action rec-active" id="signalObserverStopBtn" onclick="setSignalObserverCapture(false)">정지</button>
-    <a class="btn-action btn-dl" href="/api/signal-observer-log-dl" download="CAN_SNIPPER.csv">관찰기 저장</a>
+    <a class="btn-action btn-dl" href="/api/events-bundle" data-download-url="/api/events-bundle" download="canmod_events.txt" onclick="return handleDownloadAction(event,this)">이벤트 묶음 저장</a>
   </div>
   <div class="experiment-current observer-status" id="signalObserverStatus">기본 프리셋 대기 중</div>
   <div class="observer-table-wrap">
@@ -1001,6 +1001,36 @@ var baseUptimeMs=0,baseUptimeTs=0,detailPollingStarted=false;
 var _activeView='main';
 var _otaUploadInProgress=false;
 var _otaReloadTimer=null;
+var _backgroundNetworkPaused=false;
+var _logsBundleResumeTimer=null;
+var LOGS_BUNDLE_PAUSE_MS=180000;
+var EVENTS_BUNDLE_PAUSE_MS=90000;
+var DEFAULT_DOWNLOAD_PAUSE_MS=45000;
+function isBackgroundNetworkPaused(){return _backgroundNetworkPaused;}
+function pauseBackgroundNetwork(){_backgroundNetworkPaused=true;}
+function resumeBackgroundNetwork(){_backgroundNetworkPaused=false;}
+function appendQueryParam(url,key,value){
+  return url+(url.indexOf('?')>=0?'&':'?')+key+'='+encodeURIComponent(value);
+}
+function scheduleLogsBundleNetworkResume(pauseMs){
+  if(_logsBundleResumeTimer)clearTimeout(_logsBundleResumeTimer);
+  _logsBundleResumeTimer=setTimeout(function(){
+    _logsBundleResumeTimer=null;
+    resumeBackgroundNetwork();
+    poll();
+    tickNagStats();
+  },pauseMs||DEFAULT_DOWNLOAD_PAUSE_MS);
+}
+function handleDownloadAction(ev,el){
+  if(!el&&ev&&ev.currentTarget)el=ev.currentTarget;
+  if(!el)return true;
+  var base=el.getAttribute('data-download-url')||el.getAttribute('href')||'/api/logs-bundle';
+  var pauseMs=base.indexOf('/api/logs-bundle')===0?LOGS_BUNDLE_PAUSE_MS:(base.indexOf('/api/events-bundle')===0?EVENTS_BUNDLE_PAUSE_MS:DEFAULT_DOWNLOAD_PAUSE_MS);
+  pauseBackgroundNetwork();
+  scheduleLogsBundleNetworkResume(pauseMs);
+  el.setAttribute('href',appendQueryParam(base,'dl',Date.now()));
+  return true;
+}
 function showView(name){
   var views={main:1,control:1,diag:1,ota:1,experiment:1};
   if(!views[name])name='main';
@@ -1243,6 +1273,7 @@ function setNagProfile(p){
   }).catch(function(){alert('프로파일 변경 실패');});
 }
 function tickNagStats(){
+  if(isBackgroundNetworkPaused())return;
   fetch('/api/nag-stats').then(function(r){return r.json();}).then(function(d){
     var stateColors={'running':'var(--acc2)','bus_off':'var(--err)','recovering':'var(--warn)','init':'var(--tx3)'};
     var canStateText={'running':'RUNNING','bus_off':'BUS-OFF','recovering':'RECOVERING','init':'INIT'};
@@ -1632,7 +1663,7 @@ function updateChannelStatus(d){
   if(ds){ds.textContent=issues.length?issues.join(' · '):'A/B 정상';ds.className='diag-sum '+(issues.some(function(x){return x.indexOf('FAIL')>=0||x.indexOf('OFF')>=0;})?'err':issues.length?'warn':'ok');}
 }
 async function poll(){
-  if(_otaUploadInProgress)return;
+  if(_otaUploadInProgress||isBackgroundNetworkPaused())return;
   try{
     var r=await fetch('/api/status?log_since='+logSince);
     if(!r.ok)throw new Error('status');
@@ -2134,6 +2165,15 @@ input[type=file]{width:100%;padding:8px;background:#0f0f23;color:var(--tx);borde
 .status{font-size:.82em;color:var(--tx3);margin-top:8px;min-height:1.2em}
 .warn-box{background:#1a1200;border:1px solid var(--warn);border-radius:8px;padding:12px;font-size:.82em;color:var(--warn);margin-bottom:12px}
 progress{width:100%;height:8px;border-radius:4px;accent-color:var(--acc);margin-top:6px;display:none}
+.ota-status-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.stat{background:#0f0f23;border:1px solid var(--bd);border-radius:8px;padding:10px}
+.stat-lbl{font-size:.72em;color:var(--tx3);margin-bottom:4px}
+.stat-val{font-size:.84em;color:var(--tx2);word-break:break-word}
+.v-dim{color:var(--tx3)}
+.v-acc{color:var(--acc)}
+.v-warn{color:var(--warn)}
+.v-err{color:var(--err)}
+.v-ok{color:var(--ok)}
 </style>
 </head>
 <body>
@@ -2158,24 +2198,85 @@ progress{width:100%;height:8px;border-radius:4px;accent-color:var(--acc);margin-
 
 <div class="card">
   <h2>&#x2139; 현재 상태</h2>
-  <div style="font-size:.82em;color:var(--tx3)" id="recInfo">로드 중...</div>
+  <div class="ota-status-grid">
+    <div class="stat"><div class="stat-lbl">현재 파티션</div><div class="stat-val v-dim" id="recCurrent">--</div></div>
+    <div class="stat"><div class="stat-lbl">이전 파티션</div><div class="stat-val v-dim" id="recFallback">--</div></div>
+    <div class="stat"><div class="stat-lbl">현재 펌웨어</div><div class="stat-val v-acc" id="recCurrentFw">--</div></div>
+    <div class="stat"><div class="stat-lbl">이전 펌웨어</div><div class="stat-val v-warn" id="recFallbackFw">--</div></div>
+    <div class="stat"><div class="stat-lbl">현재 빌드 시각</div><div class="stat-val v-dim" id="recCurrentBuilt">--</div></div>
+    <div class="stat"><div class="stat-lbl">이전 빌드 시각</div><div class="stat-val v-dim" id="recFallbackBuilt">--</div></div>
+    <div class="stat"><div class="stat-lbl">업로드 시각</div><div class="stat-val v-warn" id="recUploadAt">--</div></div>
+    <div class="stat"><div class="stat-lbl">확인 상태</div><div class="stat-val v-dim" id="recState">--</div></div>
+    <div class="stat"><div class="stat-lbl">복구 모드</div><div class="stat-val v-err" id="recRecovery">--</div></div>
+    <div class="stat"><div class="stat-lbl">현재 Build ID</div><div class="stat-val v-dim" id="recBuildId">--</div></div>
+  </div>
 </div>
 
 <script>
+var _recOtaReloadTimer=null;
+function recShortDateTime(text){
+  var s=String(text||'').trim();
+  if(!s)return '--';
+  var iso=s.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+  if(iso)return iso[1].slice(2)+'-'+iso[2]+'-'+iso[3]+' '+iso[4]+':'+iso[5]+':'+iso[6];
+  var months={Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
+  var c=s.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})/);
+  if(c)return c[3].slice(2)+'-'+months[c[1]]+'-'+('0'+c[2]).slice(-2)+' '+c[4]+':'+c[5]+':'+c[6];
+  return s.length>19?s.slice(0,19):s;
+}
+function recBuildDateOnly(bid,builtAt){
+  var m=String(bid||'').match(/FW\d+-(\d{2})(\d{2})(\d{2})\d{4}/);
+  if(m)return m[1]+'-'+m[2]+'-'+m[3];
+  var dt=recShortDateTime(builtAt);
+  return dt==='--'?'':dt.slice(0,8);
+}
+function recFwBrief(ver,bid,builtAt){
+  var v=ver||'--',d=recBuildDateOnly(bid,builtAt);
+  return d?v+' · '+d:v;
+}
+function setRecStat(id,text,cls){
+  var el=document.getElementById(id);
+  if(el){el.textContent=text||'--';el.className='stat-val '+(cls||'v-dim');}
+}
+function renderRecInfo(d){
+  var state=d.ota_pending_state||0;
+  var stateText=state===2?'확인 대기':state===4?'복구 확인':state===5?'복구 모드':'정상';
+  var stateLevel=state===0?'v-ok':state===2?'v-warn':state===4?'v-warn':'v-err';
+  setRecStat('recCurrent',d.ota_current_label||'--','v-dim');
+  setRecStat('recFallback',d.ota_fallback_label||'--','v-dim');
+  setRecStat('recCurrentFw',recFwBrief(d.ota_current_version||d.firmware_version,d.ota_current_build_id||d.firmware_build_id,d.ota_current_build_at||d.firmware_build_at),'v-acc');
+  setRecStat('recFallbackFw',recFwBrief(d.ota_fallback_version,d.ota_fallback_build_id,d.ota_fallback_build_at),d.ota_fallback_version?'v-warn':'v-dim');
+  setRecStat('recCurrentBuilt',recShortDateTime(d.ota_current_build_at||d.firmware_build_at),'v-dim');
+  setRecStat('recFallbackBuilt',recShortDateTime(d.ota_fallback_build_at),'v-dim');
+  setRecStat('recUploadAt',d.ota_upload_at||'--',d.ota_upload_at?'v-warn':'v-dim');
+  setRecStat('recState',stateText,stateLevel);
+  setRecStat('recRecovery',d.ota_recovery_mode?'ON':'OFF',d.ota_recovery_mode?'v-err':'v-ok');
+  setRecStat('recBuildId',d.firmware_build_id||d.ota_current_build_id||'--','v-dim');
+}
 async function loadRecInfo(){
   try{
-    var r=await fetch('/api/status');
+    var r=await fetch('/api/status?recovery='+Date.now(),{cache:'no-store'});
     var d=await r.json();
-    var info=document.getElementById('recInfo');
-    if(info){
-      info.innerHTML='<b>파티션:</b> '+(d.ota_current_label||'--')
-        +'<br><b>이전 파티션:</b> '+(d.ota_fallback_label||'--')
-        +'<br><b>OTA 상태:</b> pending='+(d.ota_pending_state||0)
-        +'<br><b>펌웨어:</b> '+(d.firmware_version||'--')+' ('+( d.firmware_build_id||'--')+')';
-    }
-  }catch(e){var i=document.getElementById('recInfo');if(i)i.textContent='상태 조회 실패';}
+    renderRecInfo(d);
+  }catch(e){setRecStat('recState','상태 조회 실패','v-err');}
 }
 loadRecInfo();
+
+function scheduleRecoveryOtaReload(st){
+  if(_recOtaReloadTimer)return;
+  var started=Date.now();
+  function waitReady(){
+    fetch('/api/status?ota_reload='+Date.now(),{cache:'no-store'}).then(function(r){
+      if(!r.ok)throw new Error('status');
+      if(st)st.textContent='재연결됨. 새 페이지 로드 중...';
+      location.replace('/?ota_reload='+Date.now());
+    }).catch(function(){
+      if(st)st.textContent='업로드 완료. 보드 재부팅 중... 재연결 대기 '+Math.floor((Date.now()-started)/1000)+'초';
+      _recOtaReloadTimer=setTimeout(waitReady,2000);
+    });
+  }
+  _recOtaReloadTimer=setTimeout(waitReady,9000);
+}
 
 function uploadOta(){
   var file=document.getElementById('otaFile').files[0];
@@ -2192,6 +2293,7 @@ function uploadOta(){
   xhr.timeout=300000;
   xhr.open('POST','/api/ota');
   xhr.setRequestHeader('Content-Type','application/octet-stream');
+  xhr.setRequestHeader('X-Upload-Epoch-Ms',String(Date.now()));
   xhr.upload.onprogress=function(e){
     if(e.lengthComputable){
       prog.value=Math.round(e.loaded/e.total*100);
@@ -2201,7 +2303,7 @@ function uploadOta(){
   xhr.onload=function(){
     if(xhr.status<200||xhr.status>=300){st.textContent='실패: '+(xhr.responseText||xhr.status);resetBtn();return;}
     try{var d=JSON.parse(xhr.responseText);
-      if(d.ok){st.textContent='업로드 완료 — 재부팅 중...';prog.value=100;}
+      if(d.ok){st.textContent='업로드 완료 — 재부팅 중...';prog.value=100;scheduleRecoveryOtaReload(st);}
       else{st.textContent='실패: '+(d.error||'알 수 없음');resetBtn();}
     }catch(ex){st.textContent='응답 파싱 오류';resetBtn();}
   };

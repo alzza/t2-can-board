@@ -268,6 +268,46 @@ void test_signalObserverExtractRaw_rejects_short_big_endian_frame()
     TEST_ASSERT_FALSE(signalObserverExtractRaw(f, def, raw));
 }
 
+void test_signalObserver_defaults_start_stopped_with_single_a_channel_signal()
+{
+    TEST_ASSERT_FALSE(signalObserverRuntime);
+    TEST_ASSERT_EQUAL_UINT8(1, signalObserverCount);
+
+    const SignalObserverDef &def = signalObserverDefs[0];
+    TEST_ASSERT_TRUE(def.enabled);
+    TEST_ASSERT_EQUAL_UINT8(kSignalObserverChannelA, def.channelMask);
+    TEST_ASSERT_EQUAL_UINT8(kSignalObserverByteOrderLittle, def.byteOrder);
+    TEST_ASSERT_EQUAL_UINT16(1001, def.frameId);
+    TEST_ASSERT_EQUAL_UINT8(28, def.startBit);
+    TEST_ASSERT_EQUAL_UINT8(1, def.length);
+    TEST_ASSERT_EQUAL_STRING("DAS_ulcConfirmationRequestActive", def.name);
+}
+
+void test_signalObserverExtractRaw_requires_matching_mux_value()
+{
+    CanFrame f = {.id = 585, .dlc = 8};
+    f.data[0] = 0x00;
+    f.data[2] = 0x05;
+
+    SignalObserverDef def = {};
+    def.enabled = true;
+    def.channelMask = kSignalObserverChannelA;
+    def.byteOrder = kSignalObserverByteOrderLittle;
+    def.frameId = 585;
+    def.startBit = 16;
+    def.length = 4;
+    def.muxStartBit = 0;
+    def.muxLength = 3;
+    def.muxValue = 1;
+
+    uint32_t raw = 0;
+    TEST_ASSERT_FALSE(signalObserverExtractRaw(f, def, raw));
+
+    f.data[0] = 0x01;
+    TEST_ASSERT_TRUE(signalObserverExtractRaw(f, def, raw));
+    TEST_ASSERT_EQUAL_UINT32(5, raw);
+}
+
 // --- Runtime BYPASS_TLSSC_REQUIREMENT ---
 
 void test_runtime_bypass_tlssc_overrides_when_bit_clear()
@@ -336,6 +376,8 @@ int main()
     RUN_TEST(test_signalObserverExtractRaw_reads_little_endian_signal);
     RUN_TEST(test_signalObserverExtractRaw_reads_big_endian_signal);
     RUN_TEST(test_signalObserverExtractRaw_rejects_short_big_endian_frame);
+    RUN_TEST(test_signalObserver_defaults_start_stopped_with_single_a_channel_signal);
+    RUN_TEST(test_signalObserverExtractRaw_requires_matching_mux_value);
 
     RUN_TEST(test_runtime_bypass_tlssc_overrides_when_bit_clear);
     RUN_TEST(test_runtime_bypass_tlssc_off_reads_frame);

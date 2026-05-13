@@ -199,6 +199,34 @@ struct HW3Handler : public CarManagerBase
             return;
         }
 
+        if (frame.id == 1001) {
+            aChannelDiag.frames1001++;
+#if defined(ENHANCED_AUTOPILOT)
+            if (dasUlcConfirmationRequestRuntime) {
+                const bool requestActive = (frame.data[3] & 0x10U) != 0;
+                if (requestActive) {
+                    aChannelDiag.dasUlcConfirmationSkipCount++;
+                    return;
+                }
+                if (shouldSkipATx("DAS 1001")) return;
+
+                setBit(frame, 28, true);  // DAS_ulcConfirmationRequestActive=1 유지
+                finalizeTeslaCounter52Checksum56(frame);
+                aChannelDiag.dasUlcConfirmationModifiedCount++;
+                framesSent++;
+                if (driver.sendCheck(frame)) { aChannelDiag.aTxOk++; aChannelDiag.lastTxMs = millis(); }
+                else                           aChannelDiag.aTxFail++;
+
+                static unsigned long lastDasConfirmAction = 0;
+                if (millis() - lastDasConfirmAction > 5000) {
+                    logRing.push("🟣⚡ [A-CH] DAS_bodyControls 주입: DAS_ulcConfirmationRequestActive=1", millis());
+                    lastDasConfirmAction = millis();
+                }
+            }
+#endif
+            return;
+        }
+
         if (frame.id != 1021) return;
         aChannelDiag.frames1021++;
 
@@ -225,21 +253,36 @@ struct HW3Handler : public CarManagerBase
 
         if (readMuxID(frame) == 1) {
 #if defined(ENHANCED_AUTOPILOT)
-            if (enhancedAutopilotRuntime) {
-                if (shouldSkipATx("EAP")) return;
+            const bool eapEnabled = (bool)enhancedAutopilotRuntime;
+            const bool autoTurnSignalEnabled = uiAutoTurnSignalModePulseActive(millis());
+            const bool autoTurnSignalAlreadySet = (frame.data[6] & 0x10U) != 0;
+            const bool updateAutoTurnSignal = autoTurnSignalEnabled && !autoTurnSignalAlreadySet;
+
+            if (autoTurnSignalEnabled && !updateAutoTurnSignal) {
+                aChannelDiag.autoTurnSignalModeSkipCount++;
+            }
+
+            if (eapEnabled || updateAutoTurnSignal) {
+                if (shouldSkipATx(eapEnabled ? "EAP" : "UI 1021")) return;
                 setBit(frame, 19, false);  // UI_applyEceR79=0 (ECE R79 적용 해제, HW3/HW4 공통)
 #if defined(HW3)
-                setBit(frame, 46, true);   // UI_hardCoreSummon HW3용 스마트 서먼 해제 비트
+                if (eapEnabled) setBit(frame, 46, true);   // UI_hardCoreSummon HW3용 스마트 서먼 해제 비트
 #elif defined(HW4)
-                setBit(frame, 47, true);   // UI_hardCoreSummon HW4 전용 비트
+                if (eapEnabled) setBit(frame, 47, true);   // UI_hardCoreSummon HW4 전용 비트
 #endif
-                aChannelDiag.eapModifiedCount++;
+                if (eapEnabled) {
+                    aChannelDiag.eapModifiedCount++;
+                }
+                if (updateAutoTurnSignal) {
+                    setBit(frame, 52, true);  // UI_autoTurnSignalMode m1=1 펄스
+                    aChannelDiag.autoTurnSignalModeModifiedCount++;
+                }
                 framesSent++;
                 if (driver.sendCheck(frame)) { aChannelDiag.aTxOk++; aChannelDiag.lastTxMs = millis(); }
                 else                           aChannelDiag.aTxFail++;
 
                 static unsigned long lastAAction = 0;
-                if (millis() - lastAAction > 5000) {
+                if (eapEnabled && millis() - lastAAction > 5000) {
                     logRing.push("🔵⚡ [A-CH] 작동 OK: EAP 규제 완화 주입 완료", millis());
                     lastAAction = millis();
                 }
@@ -436,7 +479,9 @@ struct NagHandler : public CarManagerBase
         uint8_t realHo = (frame.data[4] >> 6) & 0x03;
         if (realHo != 0) {
             bChannelDiag.skipHandsOn++;
-            _mbResetTorqueDirHold();
+            if (profile.id != kNagSmartProfileD) {
+                _mbResetTorqueDirHold();
+            }
             _mbSetPhase(0, nowMs, kNagDecisionHandsOn);
             bChannelDiag.nagLastDecision = kNagDecisionHandsOn;
             return;
