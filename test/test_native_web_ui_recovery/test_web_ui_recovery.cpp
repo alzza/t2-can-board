@@ -21,7 +21,9 @@ void test_recovery_upload_sets_epoch_header_and_triggers_auto_reload()
 {
     TEST_ASSERT_TRUE(contains(WEB_RECOVERY_UI_HTML, "xhr.setRequestHeader('X-Upload-Epoch-Ms',String(Date.now()));"));
     TEST_ASSERT_TRUE(contains(WEB_RECOVERY_UI_HTML, "scheduleRecoveryOtaReload(st);"));
+    TEST_ASSERT_TRUE(contains(WEB_RECOVERY_UI_HTML, "_recOtaReloadTimer=null;"));
     TEST_ASSERT_TRUE(contains(WEB_RECOVERY_UI_HTML, "fetch('/api/status?ota_reload='+Date.now(),{cache:'no-store'})"));
+    TEST_ASSERT_TRUE(contains(WEB_RECOVERY_UI_HTML, "return r.json();"));
     TEST_ASSERT_TRUE(contains(WEB_RECOVERY_UI_HTML, "location.replace('/?ota_reload='+Date.now());"));
 }
 
@@ -62,6 +64,16 @@ void test_main_ui_download_uses_direct_attachment_not_blob_buffer()
     TEST_ASSERT_FALSE(contains(WEB_UI_HTML, ">관찰기 저장</a>"));
 }
 
+void test_main_ui_ota_reconnect_resets_timer_and_shows_confirm_banner()
+{
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "function scheduleOtaReload(st){"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "_otaReloadTimer=null;"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "return r.json();"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "_otaUploadInProgress=false;"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "if(typeof updateOtaConfirmBanner==='function')updateOtaConfirmBanner(d);"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "if((state===2||state===4)&&typeof poll==='function'){poll();return;}"));
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -70,6 +82,7 @@ int main()
     RUN_TEST(test_recovery_status_card_renders_upload_time_and_fallback_firmware);
     RUN_TEST(test_main_ui_logs_bundle_pauses_background_polling_during_download);
     RUN_TEST(test_main_ui_download_uses_direct_attachment_not_blob_buffer);
+    RUN_TEST(test_main_ui_ota_reconnect_resets_timer_and_shows_confirm_banner);
 
     return UNITY_END();
 }

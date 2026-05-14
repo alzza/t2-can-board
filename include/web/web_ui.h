@@ -2023,9 +2023,16 @@ function scheduleOtaReload(st){
   if(_otaReloadTimer)return;
   var started=Date.now();
   function waitReady(){
+    _otaReloadTimer=null;
     fetch('/api/status?ota_reload='+Date.now(),{cache:'no-store'}).then(function(r){
       if(!r.ok)throw new Error('status');
-      if(st)st.textContent='재연결됨. 새 페이지 로드 중...';
+      return r.json();
+    }).then(function(d){
+      _otaUploadInProgress=false;
+      if(typeof updateOtaConfirmBanner==='function')updateOtaConfirmBanner(d);
+      var state=d.ota_pending_state||0;
+      if(st)st.textContent=(state===2)?'재연결됨. 새 펌웨어 확인 창 표시 중...':(state===4)?'재연결됨. 복구 확인 창 표시 중...':'재연결됨. 새 페이지 로드 중...';
+      if((state===2||state===4)&&typeof poll==='function'){poll();return;}
       location.replace('/?ota_reload='+Date.now());
     }).catch(function(){
       if(st)st.textContent='업로드 완료. 보드 재부팅 중... 재연결 대기 '+Math.floor((Date.now()-started)/1000)+'초';
@@ -2266,9 +2273,13 @@ function scheduleRecoveryOtaReload(st){
   if(_recOtaReloadTimer)return;
   var started=Date.now();
   function waitReady(){
+    _recOtaReloadTimer=null;
     fetch('/api/status?ota_reload='+Date.now(),{cache:'no-store'}).then(function(r){
       if(!r.ok)throw new Error('status');
-      if(st)st.textContent='재연결됨. 새 페이지 로드 중...';
+      return r.json();
+    }).then(function(d){
+      var state=d.ota_pending_state||0;
+      if(st)st.textContent=(state===2)?'재연결됨. 새 펌웨어 확인 창 표시 중...':'재연결됨. 새 페이지 로드 중...';
       location.replace('/?ota_reload='+Date.now());
     }).catch(function(){
       if(st)st.textContent='업로드 완료. 보드 재부팅 중... 재연결 대기 '+Math.floor((Date.now()-started)/1000)+'초';
