@@ -294,6 +294,18 @@ inline void timeseriesCopyAt(size_t idx, TsSample& out) {
     portEXIT_CRITICAL(&tsMux);
 }
 
+// logsBundleHandler 전용: Critical Section 1회로 전체 스냅샷을 dst에 복사.
+// dst는 malloc(count * sizeof(TsSample))으로 사전 할당해야 한다.
+// count, head는 timeseriesSnapshot()이 반환한 값을 그대로 넘긴다.
+inline void timeseriesBundleSnapshot(TsSample* dst, size_t count, size_t head) {
+    size_t n     = (count < TS_CAP) ? count : TS_CAP;
+    size_t start = (count < TS_CAP) ? 0 : head;
+    portENTER_CRITICAL(&tsMux);
+    for (size_t i = 0; i < n; ++i)
+        dst[i] = tsBuf[(start + i) % TS_CAP];
+    portEXIT_CRITICAL(&tsMux);
+}
+
 inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
     httpd_resp_set_type(req, "text/csv");
     httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=timeseries.csv");

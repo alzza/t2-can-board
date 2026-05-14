@@ -98,6 +98,7 @@
 #include "drivers/twai_driver.h"
 #include "handlers.h"
 #include "event_log.h"
+#include <esp_system.h>
 
 static std::unique_ptr<TWAIDriver> driverB;
 static NagHandler nagHandlerB;
@@ -557,6 +558,7 @@ void setup() {
                   FIRMWARE_GIT_SHA,
                   (unsigned)(FIRMWARE_GIT_DIRTY != 0),
                   FIRMWARE_SOURCE_HASH);
+    Serial.printf("  >> Reset reason: %d\n", (int)esp_reset_reason());
     Serial.println("==================================================");
     Serial.println("  >> Runtime self-diagnostics disabled in this build");
     Serial.println("==================================================");

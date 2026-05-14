@@ -18,6 +18,8 @@
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <esp_system.h>
+#include <esp_task_wdt.h>
+#include <freertos/task.h>
 
 #include "shared_types.h"
 #include "can_helpers.h"
@@ -73,6 +75,17 @@ static inline uint32_t webSafeAgeMs(uint32_t now, uint32_t lastMs) {
 static inline bool webDownloadBusy(uint32_t now) {
     uint32_t until = (uint32_t)gWebDownloadBusyUntilMs;
     return (until != 0) && ((uint32_t)(until - now) < 0x80000000UL);
+}
+
+static inline void logsBundleSerialTrace(const char *stage, uint32_t startMs) {
+    uint32_t now = millis();
+    Serial.printf("[LOGDL] %lu +%lums %s heap=%u min=%u stack=%u\n",
+        (unsigned long)now,
+        (unsigned long)(now - startMs),
+        stage,
+        (unsigned)esp_get_free_heap_size(),
+        (unsigned)esp_get_minimum_free_heap_size(),
+        (unsigned)uxTaskGetStackHighWaterMark(NULL));
 }
 
 static void formatDurationHms(uint32_t durationMs, char *out, size_t out_n);
@@ -534,28 +547,27 @@ static esp_err_t writeOtaSafeFeatureSettings(nvs_handle_t handle)
     return err;
 }
 
-// 로그 다운로드 중 CAN TX 임시 중단 (NVS 미저장, 핸들러 완료 시 복원)
-// A채널 TX + NAG 킬러를 끄고 B채널 TX 큐를 비운다.
-// 몇 초간 CAN 주입이 없어야 로그 청크 전송 중 차량 에러 유발을 방지할 수 있다.
+// 로그 다운로드 중 NAG 킬러 TX 임시 중단 (NVS 미저장, 핸들러 완료 시 복원)
+// A채널 포워딩은 유지하고 B채널 nag 주입만 끄고 TX 큐를 비운다.
+// A채널 TX까지 끄면 로그 저장 수십 초간 포워딩이 끊겨 차량 CAN 에러가 발생한다.
 static void logDownloadCanQuietOn(bool &savedATx, bool &savedNag)
 {
-    savedATx = (bool)aChannelTxRuntime;
+    savedATx = false;  // A채널 TX는 끄지 않음 — 포워딩 유지
     savedNag = (bool)nagKillerRuntime;
-    if (savedATx || savedNag) {
-        aChannelTxRuntime = false;
+    if (savedNag) {
         nagKillerRuntime = false;
         esp_err_t ce = twai_clear_transmit_queue();
         (void)ce;
-        logRing.push("[Web] 로그 저장: CAN TX 임시 중단", millis());
+        logRing.push("[Web] 로그 저장: NAG TX 임시 중단 (A채널 포워딩 유지)", millis());
     }
 }
 
 static void logDownloadCanQuietOff(bool savedATx, bool savedNag)
 {
-    if (savedATx || savedNag) {
-        aChannelTxRuntime = savedATx;
+    (void)savedATx;  // A채널 TX는 건드리지 않음
+    if (savedNag) {
         nagKillerRuntime = savedNag;
-        logRing.push("[Web] 로그 저장 완료: CAN TX 복원", millis());
+        logRing.push("[Web] 로그 저장 완료: NAG TX 복원", millis());
     }
 }
 
@@ -2662,8 +2674,9 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
     const uint32_t handlerStartMs = millis();
     webHealthMark(gWebLogsBundleReqCount, gWebLogsBundleLastMs, handlerStartMs);
     gWebDownloadBusyUntilMs = handlerStartMs + 180000UL;
-    bool _savedATx = false, _savedNag = false;
-    logDownloadCanQuietOn(_savedATx, _savedNag);
+    const esp_err_t wdtDeleteErr = esp_task_wdt_delete(NULL);  // 다운로드 중 TCP send 블로킹 허용
+    const bool wdtDetached = (wdtDeleteErr == ESP_OK);
+    logsBundleSerialTrace(wdtDetached ? "start wdt=off" : "start wdt=keep", handlerStartMs);
     httpd_resp_set_type(req, "text/plain; charset=utf-8");
     // 다운로드 파일명: 동기화된 시각 있으면 YYYYMMDD_HHMMSS, 없으면 uptime
     char fname[80];
@@ -2708,8 +2721,10 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         uptimeHms,
         (uint32_t)bChannelDiag.busoffCooldownMs);
     httpd_resp_sendstr_chunk(req, line);
+    logsBundleSerialTrace("meta sent", handlerStartMs);
 
     // 섹션 1: 런타임 로그 (logRing 전체) — 스트리밍 (스택 절약, kCapacity=256 대응)
+    logsBundleSerialTrace("section1 runtime", handlerStartMs);
     httpd_resp_sendstr_chunk(req, "=== [1] 런타임 로그 ===\r\n");
     {
         uint32_t h = logRing.currentHead();
@@ -2718,11 +2733,13 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
             httpd_resp_sendstr_chunk(req, "(로그 없음)\r\n");
         } else {
             for (uint32_t i = oldest; i < h; i++) {
+                esp_task_wdt_reset();
                 const LogRingBuffer::Entry &e = logRing.at(i);
                 formatLogTimestamp(e.timestamp_ms, tsBuf, sizeof(tsBuf));
                 snprintf(line, sizeof(line), "[%s] %s\r\n", tsBuf, e.msg);
                 if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) {
-                    logDownloadCanQuietOff(_savedATx, _savedNag);
+                    logsBundleSerialTrace("fail section1", handlerStartMs);
+                    if (wdtDetached) esp_task_wdt_add(NULL);
                     gWebDownloadBusyUntilMs = 0;
                     return ESP_FAIL;
                 }
@@ -2731,6 +2748,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
     }
 
     // 섹션 2: BUS-OFF 이벤트 로그
+    logsBundleSerialTrace("section2 busoff", handlerStartMs);
     httpd_resp_sendstr_chunk(req, "\r\n=== [2] BUS-OFF 이벤트 로그 ===\r\n");
     httpd_resp_sendstr_chunk(req, "seq,wall_time,timestamp_ms,tec,rec,recovery_dur_ms,since_last_ms,recovered\r\n");
     uint32_t h = busOffLog.count();
@@ -2739,6 +2757,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
     } else {
         uint32_t oldest = (h > (uint32_t)BusOffEventLog::kCapacity) ? (h - BusOffEventLog::kCapacity) : 0;
         for (uint32_t i = oldest; i < h; i++) {
+            esp_task_wdt_reset();
             const BusOffEvent& ev = busOffLog.at(i);
             formatLogTimestamp(ev.timestampMs, tsBuf, sizeof(tsBuf));
             snprintf(line, sizeof(line), "%u,%s,%u,%u,%u,%u,%u,%u\r\n",
@@ -2746,7 +2765,8 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                 (unsigned)ev.tec, (unsigned)ev.rec,
                 (unsigned)ev.recoveryDurMs, (unsigned)ev.sinceLastMs, (unsigned)ev.recovered);
             if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) {
-                logDownloadCanQuietOff(_savedATx, _savedNag);
+                logsBundleSerialTrace("fail section2", handlerStartMs);
+                if (wdtDetached) esp_task_wdt_add(NULL);
                 gWebDownloadBusyUntilMs = 0;
                 return ESP_FAIL;
             }
@@ -2754,6 +2774,8 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
     }
 
     // 섹션 3: 채널 상태 스냅샷
+    esp_task_wdt_reset();
+    logsBundleSerialTrace("section3 snapshot", handlerStartMs);
     httpd_resp_sendstr_chunk(req, "\r\n=== [3] 채널 상태 스냅샷 ===\r\n");
     snprintf(line, sizeof(line), "A채널: RX=%u 293=%u 1016=%u 1021=%u EAP=%u AutoLC=%u/스킵=%u AutoTurn=%u/스킵=%u ULC=%u/스킵=%u UlcOffHW=%u/스킵=%u AlcOffHW=%u/스킵=%u Speed=%u/스킵=%u Blind=%u/스킵=%u\r\n",
         (unsigned)aChannelDiag.framesReceivedTotal,
@@ -2946,6 +2968,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
     }
 
     // 섹션 4: 20분 시계열 로그 (5초 × 240 샘플)
+    logsBundleSerialTrace("section4 timeseries", handlerStartMs);
     httpd_resp_sendstr_chunk(req, "\r\n=== [4] 20분 시계열 로그 ===\r\n");
     size_t tsN = 0;
     size_t tsSnapHead = 0;
@@ -2961,15 +2984,23 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
     httpd_resp_sendstr_chunk(req,
         "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,dasStateName,dasStateGroup,dasWarnLevel,dasWarning,nagMode,smartProfile,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,f297,apState,modeBPhase,steerDeg,realTorqueNm,modeBInject,modeBLastNm,age880Ms,ageDasMs,age297Ms,ageEchoMs,modeBStateAgeMs,modeBPhaseAgeMs,modeBFirstEchoDelayMs,modeBDelayTargetMs,d297,dModeBInject\r\n");
     {
-        size_t start = (tsN < TS_CAP) ? 0 : tsSnapHead;
         if (tsN == 0) {
             httpd_resp_sendstr_chunk(req, "(시계열 없음)\r\n");
         } else {
+            // Critical Section 1회로 전체 스냅샷 복사 (tsMux 잠금 240회 → 1회)
+            TsSample* snap = (TsSample*)malloc(tsN * sizeof(TsSample));
+            if (snap) timeseriesBundleSnapshot(snap, tsN, tsSnapHead);
+            const size_t fallbackStart = (tsN < TS_CAP) ? 0 : tsSnapHead;
             for (size_t i = 0; i < tsN; ++i) {
+                esp_task_wdt_reset();
                 TsSample s;
-                timeseriesCopyAt(start + i, s);
+                if (snap) {
+                    s = snap[i];
+                } else {
+                    timeseriesCopyAt(fallbackStart + i, s);  // malloc 실패 시 fallback
+                }
                 formatLogTimestamp(s.t_ms, tsBuf, sizeof(tsBuf));
-                snprintf(line, sizeof(line), "%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%.1f,%.2f,%u,%.2f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+                snprintf(line, sizeof(line), "%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%.1f,%.2f,%u,%.2f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
                     tsBuf, (unsigned)s.t_ms,
                     (unsigned)s.busoff, (unsigned)s.tec, (unsigned)s.rec,
                     (unsigned)s.arbLost, (unsigned)s.busErr, (unsigned)s.txFail,
@@ -2995,15 +3026,20 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                     (unsigned)s.modeBFirstEchoDelayMs, (unsigned)s.modeBDelayTargetMs,
                     (unsigned)s.d297, (unsigned)s.dModeBInject);
                 if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) {
-                    logDownloadCanQuietOff(_savedATx, _savedNag);
+                    if (snap) free(snap);
+                    logsBundleSerialTrace("fail section4", handlerStartMs);
+                    if (wdtDetached) esp_task_wdt_add(NULL);
                     gWebDownloadBusyUntilMs = 0;
                     return ESP_FAIL;
                 }
             }
+            if (snap) free(snap);
         }
     }
+    logsBundleSerialTrace("section4 done", handlerStartMs);
 
     // 섹션 5: 밀리초 이벤트 로그는 별도 CSV로 분리한다.
+    logsBundleSerialTrace("section5 summary", handlerStartMs);
     httpd_resp_sendstr_chunk(req, "\r\n=== [5] 밀리초 이벤트 로그 ===\r\n");
     {
         size_t evtN = 0;
@@ -3016,6 +3052,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
     }
 
     // 섹션 6: 관찰기 요약/이벤트/CSV 안내
+    logsBundleSerialTrace("section6 observer", handlerStartMs);
     httpd_resp_sendstr_chunk(req, "\r\n=== [6] 관찰기 요약 ===\r\n");
     httpd_resp_sendstr_chunk(req, "관찰기: name,ch,id,byte_order,raw,frames,active,changes,bursts,current_run,last_run,max_run,age_ms\r\n");
     {
@@ -3023,6 +3060,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         uint8_t count = (uint8_t)signalObserverCount;
         if (count > kSignalObserverMaxSignals) count = kSignalObserverMaxSignals;
         for (uint8_t i = 0; i < count; ++i) {
+            esp_task_wdt_reset();
             const SignalObserverDef &def = signalObserverDefs[i];
             const SignalObserverState &st = signalObserverStates[i];
             snprintf(line, sizeof(line),
@@ -3041,7 +3079,8 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                 (unsigned)st.maxRunFrames,
                 (unsigned)(st.lastSeenMs ? webSafeAgeMs(now, st.lastSeenMs) : 0));
             if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) {
-                logDownloadCanQuietOff(_savedATx, _savedNag);
+                logsBundleSerialTrace("fail section6", handlerStartMs);
+                if (wdtDetached) esp_task_wdt_add(NULL);
                 gWebDownloadBusyUntilMs = 0;
                 return ESP_FAIL;
             }
@@ -3057,11 +3096,13 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         httpd_resp_sendstr_chunk(req, line);
         (void)eventHead;
     }
-    logDownloadCanQuietOff(_savedATx, _savedNag);
+    logsBundleSerialTrace("final chunk", handlerStartMs);
+    esp_err_t finalErr = httpd_resp_sendstr_chunk(req, nullptr);
     gWebDownloadBusyUntilMs = 0;
     webHealthRecordDuration(gWebLogsBundleLastDurMs, gWebLogsBundleMaxDurMs, handlerStartMs);
-    httpd_resp_sendstr_chunk(req, nullptr);
-    return ESP_OK;
+    logsBundleSerialTrace(finalErr == ESP_OK ? "done ok" : "done fail", handlerStartMs);
+    if (wdtDetached) esp_task_wdt_add(NULL);
+    return finalErr == ESP_OK ? ESP_OK : ESP_FAIL;
 }
 
 // DELETE /api/busoff-log — BUS-OFF 이벤트 로그 초기화
