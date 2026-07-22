@@ -6,4 +6,4 @@
 - [x] docs-site Summon 및 이전 EAP 안내 갱신.
 - [x] 버전·변경 이력 `1.3.4` 갱신.
 - [x] 릴리스 메타데이터·Web UI·native·HW3 빌드·diff 검증.
-- [ ] 전체 변경을 커밋하고 `origin`에 push.
+- [x] 전체 변경을 커밋하고 `origin`에 push.

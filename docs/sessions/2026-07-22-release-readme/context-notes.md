@@ -20,3 +20,4 @@
 - `pio test -e native` 91/91, `pio test -e native_nag` 43/43, `pio run -e lilygo_t2can`이 통과했다.
 - 최종 HW3 바이너리 SHA-256은 `1867f03e89d08493eac1cba5a5a5562436bcad286d463a0da770e203c4f19a76`이다.
 - docs-site `npm run build`는 소스 문제가 아니라 로컬 Node가 `libllhttp.9.3.dylib`를 찾지 못해 실행되지 않았다.
+- 전체 변경은 `a65038d` (`release: 1.3.4 HW3 Summon safety`)로 커밋했고 GitHub `origin/main`에 push했다.
