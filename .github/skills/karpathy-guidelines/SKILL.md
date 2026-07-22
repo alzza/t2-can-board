@@ -175,6 +175,7 @@ BUS-OFF 수정 성공 기준:
 - **Plan** — 무엇을 왜 만드는지.
 - **Checklist** (`checklist.md`) — 체크박스로 추적할 구체 작업.
 - **Context Notes** (`context-notes.md`) — 작업 중 결정과 근거를 계속 기록하는 메모.
+- `checklist.md`, `context-notes.md`, `plan.md`, `chat_log_YYYY-MM-DD.md`는 기본적으로 한글로 작성해라.
 
 사용자가 계획만 주고 바로 코딩을 원하면, 체크리스트와 컨텍스트 노트도 함께 만들지 먼저 확인해라. 다음 세션이 처음부터 다시 추론하지 않게 만드는 장치다.
 

@@ -339,6 +339,7 @@ CAN signal 이름, frame ID, start bit, length, endian, scale, offset, enum, bit
 - 기능이 완성된 경우에는 무엇을 바꿨는지보다 성공 기준과 실제 검증 결과를 우선 기록한다.
 - 기능이 미완성인 경우에는 현재까지 확인한 사실, 남은 의문, 다음 액션을 명확히 남긴다.
 - 사용자가 수동 커밋을 선호하는 경우, 세션 로그에는 커밋을 만들었다고 쓰지 말고 커밋 후보 단위와 검증 결과만 적는다.
+- `checklist.md`, `context-notes.md`, `plan.md`, `chat_log_YYYY-MM-DD.md`는 기본적으로 한글로 작성한다.
 
 권장 포맷은 아래 순서를 따른다.
 
@@ -368,6 +369,14 @@ CAN signal 이름, frame ID, start bit, length, endian, scale, offset, enum, bit
 ---
 
 ### 유틸리티 스크립트
+
+#### Web UI 원본 (`/web/web_ui.html`)
+
+- 일반 대시보드 UI는 `include/web/web_ui.h`의 raw literal을 직접 편집하지 말고 `web/web_ui.html`만 편집한다.
+- 변경 후 `python3 scripts/sync_web_ui.py --sync`로 펌웨어 임베디드 헤더를 갱신한다.
+- 검증 시 `python3 scripts/sync_web_ui.py --check`를 실행한다.
+- 복구모드 UI인 `WEB_RECOVERY_UI_HTML`은 계속 `include/web/web_ui.h`에서 관리하며 요청 범위가 아니면 수정하지 않는다.
+- 로컬 mock 서버는 HTML 원본을 직접 읽으므로 UI 수정 후 헤더 전체를 다시 읽지 않고 바로 확인할 수 있다.
 
 #### C 주석 박스 정렬 생성기 (`/scripts/gen_box2.py`)
 

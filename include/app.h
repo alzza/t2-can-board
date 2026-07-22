@@ -84,7 +84,9 @@ static void appSetup(std::unique_ptr<Driver> drv, const char *readyMsg)
 template <typename Driver>
 static void appLoop()
 {
-    aChannelDiag.lastLoopMs = millis();
+    const uint32_t appLoopNowMs = millis();
+    aChannelDiag.lastLoopMs = appLoopNowMs;
+    summonGateMaintain(appLoopNowMs);
 #if !defined(NATIVE_BUILD)
     aChannelDiag.loopCoreId = xPortGetCoreID();
 #endif

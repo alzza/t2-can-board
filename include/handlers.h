@@ -42,7 +42,7 @@ struct CarManagerBase
 };
 
 // ===================================================================
-// [A채널] HW3Handler (EAP)
+// [A채널] HW3Handler (Summon Unlock/TSLLC)
 // ===================================================================
 struct HW3Handler : public CarManagerBase
 {
@@ -87,151 +87,41 @@ struct HW3Handler : public CarManagerBase
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
+        const uint32_t nowMs = millis();
         aChannelDiag.framesReceivedTotal++;
         aChannelDiag.lastFrameIdReceived = frame.id;
-        signalObserverObserveFrame(kSignalObserverChannelA, frame, millis());
+        signalObserverObserveFrame(kSignalObserverChannelA, frame, nowMs);
 
-        if (frame.id == 659) {
-            aChannelDiag.frames293++;
-            if (frame.dlc < 8) return;
-#if defined(ENHANCED_AUTOPILOT)
-            if (uiAutoLaneChangeEnableRuntime) {
-                const uint8_t alcRaw = frame.data[3] & 0x03;
-                const bool updateAutoLaneChange = alcRaw != 1;
-                if (!updateAutoLaneChange) {
-                    aChannelDiag.autoLaneChangeSkipCount++;
-                    return;
-                }
-                if (shouldSkipATx("UI 293")) return;
+        if (frame.id == 280) {
+            aChannelDiag.frames280++;
+            summonHandle280(frame, nowMs);
+            return;
+        }
 
-                frame.data[3] = static_cast<uint8_t>((frame.data[3] & ~0x03U) | 0x01U);
-                finalizeTeslaCounter52Checksum56(frame);
-                aChannelDiag.autoLaneChangeModifiedCount++;
-                framesSent++;
-                if (driver.sendCheck(frame)) { aChannelDiag.aTxOk++; aChannelDiag.lastTxMs = millis(); }
-                else                           aChannelDiag.aTxFail++;
+        if (frame.id == 390) {
+            aChannelDiag.frames390++;
+            summonHandle390(frame, nowMs);
+            return;
+        }
 
-                static unsigned long lastAutoLaneChangeAction = 0;
-                if (millis() - lastAutoLaneChangeAction > 5000) {
-                    logRing.push("🟣⚡ [A-CH] UI_chassisControl 주입: UI_autoLaneChangeEnable=ON", millis());
-                    lastAutoLaneChangeAction = millis();
-                }
-            }
-#endif
+        if (frame.id == 921) {
+            aChannelDiag.frames921++;
+            summonHandle921(frame);
             return;
         }
 
         if (frame.id == 1016) {
             aChannelDiag.frames1016++;
-            if (frame.dlc < 8) return;
-            uint8_t followDistance = (frame.data[5] >> 5) & 0x07;
-            if (followDistance == 1) speedProfile = 2;
-            else if (followDistance == 2) speedProfile = 1;
-            else if (followDistance == 3) speedProfile = 0;
-#if defined(ENHANCED_AUTOPILOT)
-            const bool ulcEnabled = (bool)uiUlcStalkConfirmRuntime;
-            const bool ulcOffHighwayEnabled = (bool)uiUlcOffHighwayRuntime;
-            const bool offHighwayEnabled = (bool)uiAlcOffHighwayEnableRuntime;
-            const uint8_t speedTarget = (uint8_t)uiUlcSpeedConfigRuntime;
-            const uint8_t blindSpotTarget = (uint8_t)uiUlcBlindSpotConfigRuntime;
-            const bool speedConfigEnabled = speedTarget <= 3;
-            const bool blindSpotConfigEnabled = blindSpotTarget <= 2;
-            if (ulcEnabled || ulcOffHighwayEnabled || offHighwayEnabled || speedConfigEnabled || blindSpotConfigEnabled) {
-                const bool ulcConfirmSet = (frame.data[0] & 0x02) != 0;
-                const bool ulcOffHighwaySet = (frame.data[1] & 0x80) != 0;
-                const bool alcOffHighwaySet = (frame.data[7] & 0x01) != 0;
-                const uint8_t speedRaw = (frame.data[6] >> 2) & 0x03;
-                const uint8_t blindSpotRaw = (frame.data[6] >> 4) & 0x03;
-                const bool updateUlcConfirm = ulcEnabled && ulcConfirmSet;
-                const bool updateUlcOffHighway = ulcOffHighwayEnabled && !ulcOffHighwaySet;
-                const bool updateOffHighway = offHighwayEnabled && !alcOffHighwaySet;
-                const bool updateSpeedConfig = speedConfigEnabled && speedRaw != speedTarget;
-                const bool updateBlindSpotConfig = blindSpotConfigEnabled && blindSpotRaw != blindSpotTarget;
-
-                if (ulcEnabled && !updateUlcConfirm) aChannelDiag.ulcStalkConfirmSkipCount++;
-                if (ulcOffHighwayEnabled && !updateUlcOffHighway) aChannelDiag.ulcOffHighwaySkipCount++;
-                if (offHighwayEnabled && !updateOffHighway) aChannelDiag.alcOffHighwaySkipCount++;
-                if (speedConfigEnabled && !updateSpeedConfig) aChannelDiag.ulcSpeedConfigSkipCount++;
-                if (blindSpotConfigEnabled && !updateBlindSpotConfig) aChannelDiag.ulcBlindSpotConfigSkipCount++;
-                if (!updateUlcConfirm && !updateUlcOffHighway && !updateOffHighway &&
-                    !updateSpeedConfig && !updateBlindSpotConfig) return;
-                if (shouldSkipATx("UI 1016")) return;
-
-                if (updateUlcConfirm) {
-                    setBit(frame, 1, false);  // UI_ulcStalkConfirm=0: 고속도로 NoA 컨펌 완화
-                    aChannelDiag.ulcStalkConfirmModifiedCount++;
-                }
-                if (updateUlcOffHighway) {
-                    setBit(frame, 15, true);  // UI_ulcOffHighway=1: ULC 비고속도로 허용 실험
-                    aChannelDiag.ulcOffHighwayModifiedCount++;
-                }
-                if (updateOffHighway) {
-                    setBit(frame, 56, true);  // UI_alcOffHighwayEnable=1: 비고속도로 ALC 허용
-                    aChannelDiag.alcOffHighwayModifiedCount++;
-                }
-                if (updateSpeedConfig) {
-                    frame.data[6] = static_cast<uint8_t>((frame.data[6] & ~(0x03U << 2)) | ((speedTarget & 0x03U) << 2));
-                    aChannelDiag.ulcSpeedConfigModifiedCount++;
-                }
-                if (updateBlindSpotConfig) {
-                    frame.data[6] = static_cast<uint8_t>((frame.data[6] & ~(0x03U << 4)) | ((blindSpotTarget & 0x03U) << 4));
-                    aChannelDiag.ulcBlindSpotConfigModifiedCount++;
-                }
-                framesSent++;
-                if (driver.sendCheck(frame)) { aChannelDiag.aTxOk++; aChannelDiag.lastTxMs = millis(); }
-                else                           aChannelDiag.aTxFail++;
-
-                static unsigned long lastAlcAction = 0;
-                if (millis() - lastAlcAction > 5000) {
-                    char buf[176];
-                    snprintf(buf, sizeof(buf),
-                             "🟣⚡ [A-CH] UI_driverAssistControl 주입: stalk=%s ulcOffHW=%s alcOffHW=%s speed=%s blind=%s",
-                             ulcEnabled ? "0" : "stock",
-                             ulcOffHighwayEnabled ? "1" : "stock",
-                             offHighwayEnabled ? "1" : "stock",
-                             uiUlcSpeedConfigName(speedTarget),
-                             uiUlcBlindSpotConfigName(blindSpotTarget));
-                    logRing.push(buf, millis());
-                    lastAlcAction = millis();
-                }
-            }
-#endif
-            return;
-        }
-
-        if (frame.id == 1001) {
-            aChannelDiag.frames1001++;
-#if defined(ENHANCED_AUTOPILOT)
-            if (dasUlcConfirmationRequestRuntime) {
-                const bool requestActive = (frame.data[3] & 0x10U) != 0;
-                if (requestActive) {
-                    aChannelDiag.dasUlcConfirmationSkipCount++;
-                    return;
-                }
-                if (shouldSkipATx("DAS 1001")) return;
-
-                setBit(frame, 28, true);  // DAS_ulcConfirmationRequestActive=1 유지
-                finalizeTeslaCounter52Checksum56(frame);
-                aChannelDiag.dasUlcConfirmationModifiedCount++;
-                framesSent++;
-                if (driver.sendCheck(frame)) { aChannelDiag.aTxOk++; aChannelDiag.lastTxMs = millis(); }
-                else                           aChannelDiag.aTxFail++;
-
-                static unsigned long lastDasConfirmAction = 0;
-                if (millis() - lastDasConfirmAction > 5000) {
-                    logRing.push("🟣⚡ [A-CH] DAS_bodyControls 주입: DAS_ulcConfirmationRequestActive=1", millis());
-                    lastDasConfirmAction = millis();
-                }
-            }
-#endif
+            summonHandle1016(frame);
             return;
         }
 
         if (frame.id != 1021) return;
         aChannelDiag.frames1021++;
+        if (frame.dlc < 8) return;
 
         if (readMuxID(frame) == 0) {
-#if defined(ENHANCED_AUTOPILOT)
+#if defined(SUMMON_UNLOCK)
             if (tsllcRuntime) {
                 if (shouldSkipATx("TSLLC")) return;
                 setBit(frame, 38, true);  // UI_fsdStopsControlEnabled: 스톱사인/신호등 자동 정지 제어 활성화 (TSLLC 검증)
@@ -252,38 +142,39 @@ struct HW3Handler : public CarManagerBase
         }
 
         if (readMuxID(frame) == 1) {
-#if defined(ENHANCED_AUTOPILOT)
-            const bool eapEnabled = (bool)enhancedAutopilotRuntime;
-            const bool autoTurnSignalEnabled = uiAutoTurnSignalModePulseActive(millis());
-            const bool autoTurnSignalAlreadySet = (frame.data[6] & 0x10U) != 0;
-            const bool updateAutoTurnSignal = autoTurnSignalEnabled && !autoTurnSignalAlreadySet;
+#if defined(SUMMON_UNLOCK)
+            const bool summonEnabled = (bool)summonUnlockRuntime;
+            const bool gateOpen = summonGateOpen();
+            const bool summonInject = summonEnabled && gateOpen;
 
-            if (autoTurnSignalEnabled && !updateAutoTurnSignal) {
-                aChannelDiag.autoTurnSignalModeSkipCount++;
+            if (summonEnabled && !gateOpen) {
+                summonGateDiag.blocked = (uint32_t)summonGateDiag.blocked + 1;
             }
 
-            if (eapEnabled || updateAutoTurnSignal) {
-                if (shouldSkipATx(eapEnabled ? "EAP" : "UI 1021")) return;
+            if (summonInject) {
+                summonGateDiag.mux1Received = (uint32_t)summonGateDiag.mux1Received + 1;
+                if (shouldSkipATx("SummonUnlock")) return;
                 setBit(frame, 19, false);  // UI_applyEceR79=0 (ECE R79 적용 해제, HW3/HW4 공통)
 #if defined(HW3)
-                if (eapEnabled) setBit(frame, 46, true);   // UI_hardCoreSummon HW3용 스마트 서먼 해제 비트
+                setBit(frame, 46, true); // 검증된 HW3 Summon Unlock 비트
 #elif defined(HW4)
-                if (eapEnabled) setBit(frame, 47, true);   // UI_hardCoreSummon HW4 전용 비트
+                setBit(frame, 47, true); // HW4 빌드 호환 경로
 #endif
-                if (eapEnabled) {
-                    aChannelDiag.eapModifiedCount++;
-                }
-                if (updateAutoTurnSignal) {
-                    setBit(frame, 52, true);  // UI_autoTurnSignalMode m1=1 펄스
-                    aChannelDiag.autoTurnSignalModeModifiedCount++;
-                }
+                aChannelDiag.summonUnlockModifiedCount++;
                 framesSent++;
-                if (driver.sendCheck(frame)) { aChannelDiag.aTxOk++; aChannelDiag.lastTxMs = millis(); }
-                else                           aChannelDiag.aTxFail++;
+                const bool sent = driver.sendCheck(frame);
+                if (sent) {
+                    aChannelDiag.aTxOk++;
+                    aChannelDiag.lastTxMs = millis();
+                    summonGateDiag.txOk = (uint32_t)summonGateDiag.txOk + 1;
+                } else {
+                    aChannelDiag.aTxFail++;
+                    summonGateDiag.txFail = (uint32_t)summonGateDiag.txFail + 1;
+                }
 
                 static unsigned long lastAAction = 0;
-                if (eapEnabled && millis() - lastAAction > 5000) {
-                    logRing.push("🔵⚡ [A-CH] 작동 OK: EAP 규제 완화 주입 완료", millis());
+                if (millis() - lastAAction > 5000) {
+                    logRing.push("🔵⚡ [A-CH] Summon Unlock 주입 완료: HW3 bit46", millis());
                     lastAAction = millis();
                 }
             }

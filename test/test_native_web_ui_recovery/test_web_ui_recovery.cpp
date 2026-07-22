@@ -35,6 +35,9 @@ void test_recovery_status_card_renders_upload_time_and_fallback_firmware()
     TEST_ASSERT_TRUE(contains(WEB_RECOVERY_UI_HTML,
                               "setRecStat('recFallbackFw',recFwBrief(d.ota_fallback_version,d.ota_fallback_build_id,d.ota_fallback_build_at)"));
     TEST_ASSERT_TRUE(contains(WEB_RECOVERY_UI_HTML, "setRecStat('recFallbackBuilt',recShortDateTime(d.ota_fallback_build_at)"));
+    TEST_ASSERT_TRUE(contains(WEB_RECOVERY_UI_HTML, "id=\"recBootBlock\""));
+    TEST_ASSERT_TRUE(contains(WEB_RECOVERY_UI_HTML, "d.can_boot_block_reason||'--'"));
+    TEST_ASSERT_TRUE(contains(WEB_RECOVERY_UI_HTML, "d.can_boot_allowed?'v-ok':'v-err'"));
 }
 
 void test_main_ui_logs_bundle_pauses_background_polling_during_download()
@@ -74,6 +77,49 @@ void test_main_ui_ota_reconnect_resets_timer_and_shows_confirm_banner()
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "if((state===2||state===4)&&typeof poll==='function'){poll();return;}"));
 }
 
+void test_main_ui_keeps_can_nag_tsllc_and_summon_status_together()
+{
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"s-main-a\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"s-main-b\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"s-main-busoff\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"s-main-summon\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "Autosteer Nag Killer"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "TSLLC (stop signs/lights)"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "Conditional Summon Unlock (HW3)"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "/api/summon-unlock"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "A 채널 (MCP2515 · Summon/TSLLC)"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "B 채널 (TWAI · Nag Killer)"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "fetch('/api/nag-stats')"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "var ch=d.channels||{},a=ch.a_channel||{},b=ch.b_channel||{};"));
+}
+
+void test_main_ui_uses_ino_summon_control_and_monitoring_fields()
+{
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "d.summon_unlock_enabled"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "var su=d.summon_unlock||{};"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"suActive\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "!su.tx_master?'TX OFF'"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"suCanState\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"aSummonGearRx\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"aSummonGateRx\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"aSummonMuxBlocked\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"aSummonTx\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"tAChannelTx\""));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "/api/enhanced-autopilot"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "enhanced_autopilot"));
+}
+
+void test_main_ui_removes_retired_can_injection_experiments()
+{
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, ">관찰</button>"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "신호 관찰기"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "/api/ui-ulc-"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "/api/ui-alc-"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "/api/ui-auto-turn-signal-mode"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "/api/das-ulc-confirmation-request"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "A채널 실험"));
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -83,6 +129,9 @@ int main()
     RUN_TEST(test_main_ui_logs_bundle_pauses_background_polling_during_download);
     RUN_TEST(test_main_ui_download_uses_direct_attachment_not_blob_buffer);
     RUN_TEST(test_main_ui_ota_reconnect_resets_timer_and_shows_confirm_banner);
+    RUN_TEST(test_main_ui_keeps_can_nag_tsllc_and_summon_status_together);
+    RUN_TEST(test_main_ui_uses_ino_summon_control_and_monitoring_fields);
+    RUN_TEST(test_main_ui_removes_retired_can_injection_experiments);
 
     return UNITY_END();
 }

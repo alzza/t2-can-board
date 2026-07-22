@@ -24,7 +24,7 @@
  *  │   │   └─ appLoop<MCP2515Driver>()                                        │
  *  │   │       ├─ HW3Handler (ID 0x3FD / 1021)                                │
  *  │   │       │   ├─ Mux 0 → TSLLC  bit38/39 인젝션 (스톱사인/초록불)        │
- *  │   │       │   └─ Mux 1 → EAP    bit19/46 인젝션 (Enhanced Autopilot)     │
+ *  │   │       │   └─ Mux 1 → Summon bit19/46 조건부 주입 (HW3)              │
  *  │   │       └─ EFLG/TEC/REC/MERRF 1초 폴링 + TX guard + TXBO 복구          │
  *  │   │                                                                      │
  *  │   └─ CAN-B 폴링 (매 iter, TWAI accept-all + SW 필터)                     │
@@ -57,7 +57,7 @@
  *  │       ├─ GET  /api/status           → 통합 상태 JSON (3s polling)        │
  *  │       ├─ GET  /api/nag-stats        → B채널 Smart Torque 진단 JSON       │
  *  │       ├─ POST /api/nag-profile|update|reset → NagConfig 변경             │
- *  │       ├─ POST /api/enhanced-autopilot | /api/tsllc | /api/nag-killer     │
+ *  │       ├─ POST /api/summon-unlock | /api/tsllc | /api/nag-killer          │
  *  │       ├─ POST /api/busoff-mode|cooldown | /api/twai-ss-tx                │
  *  │       ├─ GET  /api/busoff-log[-dl]  DELETE /api/busoff-log               │
  *  │       ├─ POST /api/can-diag/start   GET /api/can-diag/log                │
@@ -79,7 +79,7 @@
  * ═══════════════════════════════════════════════════════════════════════════
  *  NVS (namespace "canmod")  — 전원 OFF 후에도 설정 유지
  * ═══════════════════════════════════════════════════════════════════════════
- *  isa_speed_chime  emerg_veh_det  enh_autopilot  nag_killer  tsllc
+ *  isa_speed_chime  emerg_veh_det  summon_unlock  nag_killer  tsllc
  *  a_ch_tx          a_spi_mhz      a_oneshot       a_tx_guard
  *  nag_mode         nag_prof       nag_id          nag_tc     nag_tb2  nag_tb3  nag_ho
  *  busoff_cooldown  busoff_soft_mode   theme   ota_pending  ota_fallback
@@ -298,15 +298,15 @@ void nagKillerTask(void* pvParameters) {
             //  · TxFail↑           → 송신 큐 포화/하드 실패(H3)
             //  · RX-OVR↑ 누적     → A루프 폴링 부족
             snprintf(aBuf, sizeof(aBuf),
-                "🟢 [A-CH] RX:%u | 1016:%u ULC:%u/스킵:%u OffHW:%u/스킵:%u | 1021:%u/EAP:%u | TX:OK=%u/Fail=%u | TEC=%u/peak=%u | REC=%u | MERRF=%u | RX-OVR=%u | EFLG=0x%02X",
+                "🟢 [A-CH] RX:%u | 280:%u 390:%u 921:%u 1016:%u 1021:%u | Summon:%u Blocked:%u | TX:OK=%u/Fail=%u | TEC=%u/peak=%u | REC=%u | MERRF=%u | RX-OVR=%u | EFLG=0x%02X",
                 (unsigned)aChannelDiag.framesReceivedTotal,
+                (unsigned)aChannelDiag.frames280,
+                (unsigned)aChannelDiag.frames390,
+                (unsigned)aChannelDiag.frames921,
                 (unsigned)aChannelDiag.frames1016,
-                (unsigned)aChannelDiag.ulcStalkConfirmModifiedCount,
-                (unsigned)aChannelDiag.ulcStalkConfirmSkipCount,
-                (unsigned)aChannelDiag.alcOffHighwayModifiedCount,
-                (unsigned)aChannelDiag.alcOffHighwaySkipCount,
                 (unsigned)aChannelDiag.frames1021,
-                (unsigned)aChannelDiag.eapModifiedCount,
+                (unsigned)aChannelDiag.summonUnlockModifiedCount,
+                (unsigned)summonGateDiag.blocked,
                 (unsigned)aChannelDiag.aTxOk,
                 (unsigned)aChannelDiag.aTxFail,
                 (unsigned)(uint8_t)aChannelDiag.aTec,
@@ -473,75 +473,151 @@ void nagKillerTask(void* pvParameters) {
 //   5      : 복구모드 유지
 // USB 시리얼 플래시 감지: pending!=0 이지만 현재 파티션이 ota_expect_pt와 다를 때 → 클리어
 #if defined(DRIVER_TWAI) && !defined(NATIVE_BUILD)
-static void otaBootCheck()
+static bool otaBootCheck()
 {
-    nvs_flash_init();  // idempotent
     nvs_handle_t nh;
-    if (nvs_open(kNvsNamespace, NVS_READWRITE, &nh) != ESP_OK) return;
+    esp_err_t err = nvs_open(kNvsNamespace, NVS_READWRITE, &nh);
+    if (err != ESP_OK) {
+        enterCanBootFailClosed("OTA_NVS_OPEN_FAILED", err);
+        return false;
+    }
     uint8_t pending = 0;
-    nvs_get_u8(nh, kNvsKeyOtaPending, &pending);
+    err = nvs_get_u8(nh, kNvsKeyOtaPending, &pending);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        pending = 0;
+        err = ESP_OK;
+    }
+    if (err != ESP_OK) {
+        nvs_close(nh);
+        enterCanBootFailClosed("OTA_PENDING_READ_FAILED", err);
+        return false;
+    }
+    gOtaBootPendingState = pending;
 
     // USB 시리얼 플래시 감지: OTA 대기 상태인데 현재 파티션이 기대 파티션과 다른 경우
-    // → USB로 다른 파티션에 플래시됐거나 같은 슬롯에 재플래시된 것이므로 OTA 상태 클리어
+    // → OTA 상태와 현재 기능을 안전값으로 함께 정리한 뒤 정상 부팅한다.
+    bool expectedPartitionMismatch = false;
+    char expectPart[32] = {};
+    const esp_partition_t *runPart = esp_ota_get_running_partition();
     if (pending >= 1 && pending <= 2) {
-        char expectPart[32] = {};
         size_t sz = sizeof(expectPart);
-        nvs_get_str(nh, kNvsKeyOtaExpectPart, expectPart, &sz);
-        const esp_partition_t *runPart = esp_ota_get_running_partition();
-        if (strlen(expectPart) > 0 && runPart && strcmp(runPart->label, expectPart) != 0) {
-            nvs_set_u8(nh,  kNvsKeyOtaPending,    0);
-            nvs_set_str(nh, kNvsKeyOtaFallback,   "");
-            nvs_set_str(nh, kNvsKeyOtaExpectPart, "");
-            nvs_commit(nh);
-            nvs_close(nh);
-            Serial.printf("[OTA] USB 플래시 감지 (run=%s expect=%s) → OTA 상태 클리어\n",
-                          runPart->label, expectPart);
-            return;
+        err = nvs_get_str(nh, kNvsKeyOtaExpectPart, expectPart, &sz);
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            expectPart[0] = '\0';
+            err = ESP_OK;
         }
+        if (err != ESP_OK) {
+            nvs_close(nh);
+            enterCanBootFailClosed("OTA_EXPECT_PART_READ_FAILED", err);
+            return false;
+        }
+        expectedPartitionMismatch = expectPart[0] && runPart && strcmp(runPart->label, expectPart) != 0;
     }
 
-    if (pending == 1) {
-        nvs_set_u8(nh, kNvsKeyOtaPending, 2);
-        nvs_commit(nh);
+    const OtaBootPolicy policy = otaBootPolicy(pending, expectedPartitionMismatch);
+    if (policy.action == OtaBootAction::Normal) {
         nvs_close(nh);
-        Serial.println("[OTA] 신 펌웨어 첫 부팅 → pending=2 (1분 확인 시작)");
-    } else if (pending == 2) {
-        // 확인 창 중 재부팅 → 자동 롤백
+        return true;
+    }
+
+    if (policy.action == OtaBootAction::ClearStaleOta) {
+        err = writeOtaSafeFeatureSettings(nh);
+        if (err == ESP_OK) err = nvs_set_u8(nh, kNvsKeyOtaPending, 0);
+        if (err == ESP_OK) err = nvs_set_str(nh, kNvsKeyOtaFallback, "");
+        if (err == ESP_OK) err = nvs_set_str(nh, kNvsKeyOtaExpectPart, "");
+        if (err == ESP_OK) err = nvs_commit(nh);
+        nvs_close(nh);
+        if (err != ESP_OK) {
+            enterCanBootFailClosed("USB_FLASH_SAFE_RESET_FAILED", err);
+            return false;
+        }
+        gOtaBootPendingState = policy.nextPending;
+        Serial.printf("[OTA] USB 플래시 감지 (run=%s expect=%s) → 안전값/OTA 상태 초기화\n",
+                      runPart ? runPart->label : "?", expectPart);
+        return true;
+    }
+
+    if (policy.action == OtaBootAction::FirstBootSafeReset) {
+        err = writeOtaSafeFeatureSettings(nh);
+        if (err == ESP_OK) err = nvs_set_u8(nh, kNvsKeyOtaPending, policy.nextPending);
+        if (err == ESP_OK) err = nvs_commit(nh);
+        nvs_close(nh);
+        if (err != ESP_OK) {
+            enterCanBootFailClosed("OTA_FIRST_BOOT_SAFE_RESET_FAILED", err);
+            return false;
+        }
+        gOtaBootPendingState = policy.nextPending;
+        Serial.println("[OTA] 신 펌웨어 첫 부팅 → 모든 차량 기능 OFF/stock, pending=2");
+        return true;
+    }
+
+    if (policy.action == OtaBootAction::Rollback) {
         char fallback[32] = {};
         size_t sz = sizeof(fallback);
-        nvs_get_str(nh, kNvsKeyOtaFallback, fallback, &sz);
-        nvs_set_u8(nh, kNvsKeyOtaPending, 3);
-        nvs_commit(nh);
+        err = nvs_get_str(nh, kNvsKeyOtaFallback, fallback, &sz);
+        if (err != ESP_OK || fallback[0] == '\0') {
+            nvs_close(nh);
+            enterCanBootFailClosed("OTA_ROLLBACK_FALLBACK_MISSING",
+                                   err == ESP_OK ? ESP_ERR_NOT_FOUND : err);
+            return false;
+        }
+
+        const esp_partition_t *prev = esp_partition_find_first(
+            ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, fallback);
+        if (!prev || !runPart) {
+            nvs_close(nh);
+            enterCanBootFailClosed("OTA_ROLLBACK_PARTITION_NOT_FOUND", ESP_ERR_NOT_FOUND);
+            return false;
+        }
+
+        err = writeOtaSafeFeatureSettings(nh);
+        if (err == ESP_OK) err = esp_ota_set_boot_partition(prev);
+        if (err == ESP_OK) err = nvs_set_u8(nh, kNvsKeyOtaPending, policy.nextPending);
+        if (err == ESP_OK) err = nvs_commit(nh);
+        if (err != ESP_OK) {
+            esp_err_t restoreErr = esp_ota_set_boot_partition(runPart);
+            nvs_close(nh);
+            if (restoreErr != ESP_OK) {
+                Serial.printf("[OTA] 현재 파티션 boot 복원 실패 (%ld)\n", static_cast<long>(restoreErr));
+            }
+            enterCanBootFailClosed("OTA_ROLLBACK_PREPARE_FAILED", err);
+            return false;
+        }
+        gOtaBootPendingState = policy.nextPending;
         nvs_close(nh);
         Serial.printf("[OTA] 확인 중 재부팅 → 롤백 fallback=%s\n", fallback);
-        if (strlen(fallback) > 0) {
-            const esp_partition_t *prev = esp_partition_find_first(
-                ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, fallback);
-            if (prev) {
-                esp_ota_set_boot_partition(prev);
-                Serial.println("[OTA] 롤백 파티션 설정 완료 → 재부팅");
-                delay(200);
-                esp_restart();
-            }
-        }
-    } else if (pending == 3) {
-        nvs_set_u8(nh, kNvsKeyOtaPending, 4);
-        nvs_commit(nh);
-        nvs_close(nh);
-        Serial.println("[OTA] 복구 파티션 부팅 → pending=4 (60초 확인 시작)");
-    } else if (pending == 4) {
-        nvs_set_u8(nh, kNvsKeyOtaPending, 5);
-        nvs_commit(nh);
-        nvs_close(nh);
-        gOtaRecoveryModeActive = true;
-        Serial.println("[OTA] 복구 확인 전 재부팅 → 복구모드 (pending=5)");
-    } else if (pending == 5) {
-        nvs_close(nh);
-        gOtaRecoveryModeActive = true;
-        Serial.println("[OTA] 복구모드 유지 (pending=5)");
-    } else {
-        nvs_close(nh);
+        delay(200);
+        esp_restart();
+        return false;
     }
+
+    if (policy.action == OtaBootAction::RecoveryVerification) {
+        err = nvs_set_u8(nh, kNvsKeyOtaPending, policy.nextPending);
+        if (err == ESP_OK) err = nvs_commit(nh);
+        nvs_close(nh);
+        if (err != ESP_OK) {
+            enterCanBootFailClosed("OTA_RECOVERY_VERIFY_STATE_FAILED", err);
+            return false;
+        }
+        gOtaBootPendingState = policy.nextPending;
+        Serial.println("[OTA] 복구 파티션 부팅 → pending=4 (60초 확인 시작)");
+        return true;
+    }
+
+    if (policy.action == OtaBootAction::RecoveryOnly) {
+        if (pending == 4) {
+            err = nvs_set_u8(nh, kNvsKeyOtaPending, policy.nextPending);
+            if (err == ESP_OK) err = nvs_commit(nh);
+        }
+        nvs_close(nh);
+        if (err == ESP_OK) gOtaBootPendingState = policy.nextPending;
+        enterCanBootFailClosed(pending == 4 ? "OTA_RECOVERY_CONFIRM_REBOOTED" : "OTA_RECOVERY_MODE", err);
+        return false;
+    }
+
+    nvs_close(nh);
+    enterCanBootFailClosed("OTA_PENDING_INVALID");
+    return false;
 }
 #endif
 
@@ -550,7 +626,7 @@ void setup() {
     delay(2000);
 
     Serial.println("\n\n==================================================");
-    Serial.println("  [V16-WEB LOG EDITION] Tesla Nag Killer (EAP Base)");
+    Serial.println("  [V16-WEB LOG EDITION] Tesla CAN (Summon Unlock HW3)");
     Serial.printf("  >> Firmware %s | %s | env=%s\n", FIRMWARE_VERSION, FIRMWARE_BUILD_ID, FIRMWARE_BUILD_ENV);
     Serial.printf("  >> Built %s | git %s/%s dirty=%u source=%s\n",
                   FIRMWARE_BUILD_AT,
@@ -567,35 +643,66 @@ void setup() {
     // NVS 최초 1회 초기화 (nvs_init_ok 키로 실행 여부 판단)
     // ota_pending==0  → 시리얼 최초 플래시 → nvs_erase_all 후 init_ok 기록
     // ota_pending!=0  → OTA 업그레이드   → erase 건너뜀, 기존 설정 보존, init_ok만 추가
-    {
-        nvs_flash_init();  // idempotent — otaBootCheck() 호출 전 NVS 보장
+    bool nvsStorageErased = false;
+    if (!nvsInit(&nvsStorageErased)) {
+        enterCanBootFailClosed("NVS_INIT_FAILED");
+    } else {
         nvs_handle_t initHandle;
-        if (nvs_open(kNvsNamespace, NVS_READWRITE, &initHandle) == ESP_OK) {
+        esp_err_t initErr = nvs_open(kNvsNamespace, NVS_READWRITE, &initHandle);
+        if (initErr == ESP_OK) {
             uint8_t initDone = 0;
-            if (nvs_get_u8(initHandle, "nvs_init_ok", &initDone) == ESP_ERR_NVS_NOT_FOUND) {
+            initErr = nvs_get_u8(initHandle, "nvs_init_ok", &initDone);
+            if (initErr == ESP_ERR_NVS_NOT_FOUND) {
                 uint8_t otaPending = 0;
-                nvs_get_u8(initHandle, kNvsKeyOtaPending, &otaPending);
-                if (otaPending == 0) {
+                initErr = nvs_get_u8(initHandle, kNvsKeyOtaPending, &otaPending);
+                if (initErr == ESP_ERR_NVS_NOT_FOUND) {
+                    otaPending = 0;
+                    initErr = ESP_OK;
+                }
+                if (initErr == ESP_OK && otaPending == 0) {
                     // 최초 시리얼 플래시: 잔재 설정 제거
-                    nvs_erase_all(initHandle);
-                    Serial.println("[NVS] 최초 시리얼 플래시: NVS 초기화 완료");
-                } else {
+                    initErr = nvs_erase_all(initHandle);
+                    if (initErr == ESP_OK) Serial.println("[NVS] 최초 시리얼 플래시: NVS 초기화 완료");
+                } else if (initErr == ESP_OK) {
                     // OTA 업그레이드: 기존 설정(ota_pending/fallback 포함) 보존
                     Serial.printf("[NVS] OTA 업그레이드 감지(pending=%u) — 설정 보존\n",
                                   (unsigned)otaPending);
                 }
-                nvs_set_u8(initHandle, "nvs_init_ok", 1);
-                nvs_commit(initHandle);
+                if (initErr == ESP_OK) initErr = nvs_set_u8(initHandle, "nvs_init_ok", 1);
+                if (initErr == ESP_OK) initErr = nvs_commit(initHandle);
+            } else if (initErr == ESP_OK && initDone == 0) {
+                initErr = ESP_ERR_INVALID_STATE;
             }
             nvs_close(initHandle);
         }
+        if (initErr != ESP_OK) enterCanBootFailClosed("NVS_BOOT_SENTINEL_FAILED", initErr);
+        else if (nvsStorageErased) {
+            nvs_handle_t safeHandle;
+            esp_err_t safeErr = nvs_open(kNvsNamespace, NVS_READWRITE, &safeHandle);
+            if (safeErr == ESP_OK) {
+                safeErr = writeOtaSafeFeatureSettings(safeHandle);
+                if (safeErr == ESP_OK) safeErr = nvs_commit(safeHandle);
+                nvs_close(safeHandle);
+            }
+            enterCanBootFailClosed(safeErr == ESP_OK ? "NVS_STORAGE_RECOVERED_ERASED" :
+                                   "NVS_STORAGE_RECOVERY_SAFE_SAVE_FAILED", safeErr);
+        }
     }
-    otaBootCheck();  // OTA 상태 머신 부팅 시 전이 처리
+    if (!gOtaRecoveryModeActive && !otaBootCheck() && !gOtaRecoveryModeActive) {
+        enterCanBootFailClosed("OTA_BOOT_CHECK_INCOMPLETE");
+    }
 #endif
 
 #if defined(BOARD_T2CAN)
 #if defined(DRIVER_TWAI) && !defined(NATIVE_BUILD)
-    loadAExperimentSettings();
+    if (!gOtaRecoveryModeActive && !purgeRetiredExperimentNvs()) {
+        enterCanBootFailClosed("NVS_RETIRED_KEY_PURGE_FAILED");
+    }
+    if (!gOtaRecoveryModeActive) {
+        esp_err_t loadErr = loadVehicleRuntimeSettingsBeforeCan();
+        if (loadErr != ESP_OK) enterCanBootFailClosed("NVS_VEHICLE_SETTINGS_LOAD_FAILED", loadErr);
+        else Serial.println("[BOOT-SAFE] 차량 영향 NVS 설정 선로드 완료 — CAN 시작 허용");
+    }
 #endif
 
     if (!gOtaRecoveryModeActive) {

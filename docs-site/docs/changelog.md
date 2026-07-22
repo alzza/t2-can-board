@@ -13,6 +13,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.4] - 2026-07-22
+
+### Added
+
+- HW3 Conditional Summon Unlock with a Parked-or-Summoning transmission gate and Web UI diagnostics.
+- OTA boot-policy coverage and CAN-disabled recovery diagnostics.
+
+### Changed
+
+- CAN-A is used for Summon Unlock and TSLLC; CAN-B is used for Nag Killer.
+- The normal Web UI is maintained as `web/web_ui.html` and synchronized into the firmware.
+
+### Fixed
+
+- Vehicle-impacting NVS values are loaded before CAN startup.
+- OTA and rollback failures now fail closed into a recovery UI with CAN disabled.
+
 ## [1.1.0] - 2026-04-06
 
 ### Added

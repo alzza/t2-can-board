@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [1.3.4] - 2026-07-22
+
+### Added
+
+- HW3 Conditional Summon Unlock based on the validated `summon_unlock.ino` behavior, with a dedicated Web UI control and diagnostics.
+- Summon gate telemetry for Parked, Summoning, ACA, SPR, CAN receive counters, and CAN-A TX success/failure.
+- OTA boot policy tests covering supported states and all invalid pending values.
+
+### Changed
+
+- CAN-A is dedicated to Summon Unlock and TSLLC. CAN-B is dedicated to Nag Killer.
+- The normal Web UI source is maintained in `web/web_ui.html` and synchronized into the firmware header.
+
+### Fixed
+
+- Vehicle-impacting NVS settings are fully loaded before CAN drivers and tasks start.
+- OTA first boot, rollback, and recovery paths rewrite feature-safe OFF/stock values and clear the B-channel TX queue before transition.
+- NVS, OTA metadata, fallback partition, and boot-partition failures fail closed into CAN-disabled recovery UI.
+
 ## [1.3.2] - 2026-05-13
 
 ### Fixed

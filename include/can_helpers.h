@@ -32,53 +32,21 @@ inline constexpr bool kEmergencyVehicleDetectionDefaultEnabled = false;
 inline constexpr bool kEmergencyVehicleDetectionBuildEnabled = false;
 #endif
 
-#if defined(ENHANCED_AUTOPILOT)
-inline constexpr bool kEnhancedAutopilotDefaultEnabled = false;  // 기본값 OFF (웹 UI에서 활성화)
-inline constexpr bool kEnhancedAutopilotBuildEnabled = true;
+#if defined(SUMMON_UNLOCK)
+inline constexpr bool kSummonUnlockDefaultEnabled = true;   // 검증된 INO와 동일한 fresh-NVS 기본값
+inline constexpr bool kSummonUnlockBuildEnabled = true;
 #else
-inline constexpr bool kEnhancedAutopilotDefaultEnabled = false;
-inline constexpr bool kEnhancedAutopilotBuildEnabled = false;
+inline constexpr bool kSummonUnlockDefaultEnabled = false;
+inline constexpr bool kSummonUnlockBuildEnabled = false;
 #endif
 
-#if defined(ENHANCED_AUTOPILOT)
+#if defined(SUMMON_UNLOCK)
 inline constexpr bool kTsllcDefaultEnabled = false;  // 기본값 OFF (스톱사인/신호등 자동 제어)
 inline constexpr bool kTsllcBuildEnabled = true;
 #else
 inline constexpr bool kTsllcDefaultEnabled = false;
 inline constexpr bool kTsllcBuildEnabled = false;
 #endif
-
-#if defined(ENHANCED_AUTOPILOT)
-inline constexpr bool kUlcStalkConfirmDefaultEnabled = false;      // 기본값 OFF (웹 UI에서 활성화)
-inline constexpr bool kUlcStalkConfirmBuildEnabled = true;
-inline constexpr bool kAlcOffHighwayEnableDefaultEnabled = false;  // 기본값 OFF (웹 UI에서 활성화)
-inline constexpr bool kAlcOffHighwayEnableBuildEnabled = true;
-inline constexpr bool kUlcOffHighwayDefaultEnabled = false;
-inline constexpr bool kUlcOffHighwayBuildEnabled = true;
-inline constexpr bool kAutoLaneChangeEnableDefaultEnabled = false;
-inline constexpr bool kAutoLaneChangeEnableBuildEnabled = true;
-inline constexpr bool kAutoTurnSignalModeDefaultEnabled = false;
-inline constexpr bool kAutoTurnSignalModeBuildEnabled = true;
-inline constexpr bool kDasUlcConfirmationRequestDefaultEnabled = false;
-inline constexpr bool kDasUlcConfirmationRequestBuildEnabled = true;
-#else
-inline constexpr bool kUlcStalkConfirmDefaultEnabled = false;
-inline constexpr bool kUlcStalkConfirmBuildEnabled = false;
-inline constexpr bool kAlcOffHighwayEnableDefaultEnabled = false;
-inline constexpr bool kAlcOffHighwayEnableBuildEnabled = false;
-inline constexpr bool kUlcOffHighwayDefaultEnabled = false;
-inline constexpr bool kUlcOffHighwayBuildEnabled = false;
-inline constexpr bool kAutoLaneChangeEnableDefaultEnabled = false;
-inline constexpr bool kAutoLaneChangeEnableBuildEnabled = false;
-inline constexpr bool kAutoTurnSignalModeDefaultEnabled = false;
-inline constexpr bool kAutoTurnSignalModeBuildEnabled = false;
-inline constexpr bool kDasUlcConfirmationRequestDefaultEnabled = false;
-inline constexpr bool kDasUlcConfirmationRequestBuildEnabled = false;
-#endif
-
-inline constexpr uint8_t kUlcConfigStock = 0xFF;
-inline constexpr uint8_t kUlcSpeedConfigDefault = kUlcConfigStock;
-inline constexpr uint8_t kUlcBlindSpotConfigDefault = kUlcConfigStock;
 
 #if defined(NAG_KILLER)
 inline constexpr bool kNagKillerDefaultEnabled = true;
@@ -114,62 +82,107 @@ inline constexpr bool kATxGuardDefaultEnabled = (T2CAN_A_TX_GUARD_DEFAULT != 0);
 inline Shared<bool> bypassTlsscRequirementRuntime{kBypassTlsscRequirementDefaultEnabled};
 inline Shared<bool> isaSpeedChimeSuppressRuntime{kIsaSpeedChimeSuppressDefaultEnabled};
 inline Shared<bool> emergencyVehicleDetectionRuntime{kEmergencyVehicleDetectionDefaultEnabled};
-inline Shared<bool> enhancedAutopilotRuntime{kEnhancedAutopilotDefaultEnabled};
+inline Shared<bool> summonUnlockRuntime{kSummonUnlockDefaultEnabled};
 inline Shared<bool> nagKillerRuntime{kNagKillerDefaultEnabled};
 inline Shared<bool> tsllcRuntime{kTsllcDefaultEnabled};         // TSLLC 런타임 토글 (스톱사인/초록불 제어)
-inline Shared<bool> uiUlcStalkConfirmRuntime{kUlcStalkConfirmDefaultEnabled};              // UI_ulcStalkConfirm bit1 -> 0
-inline Shared<bool> uiAlcOffHighwayEnableRuntime{kAlcOffHighwayEnableDefaultEnabled};      // UI_alcOffHighwayEnable bit56 -> 1
-inline Shared<bool> uiUlcOffHighwayRuntime{kUlcOffHighwayDefaultEnabled};                  // UI_ulcOffHighway bit15 -> 1
-inline Shared<bool> uiAutoLaneChangeEnableRuntime{kAutoLaneChangeEnableDefaultEnabled};    // UI_autoLaneChangeEnable bits24-25 -> ON(1)
-inline Shared<bool> uiAutoTurnSignalModeRuntime{kAutoTurnSignalModeDefaultEnabled};        // UI_autoTurnSignalMode bit52 -> 1 (약 50ms 펄스)
-inline Shared<uint32_t> uiAutoTurnSignalModePulseUntilMs{0};                               // 펄스 만료 시각(ms)
-inline Shared<bool> dasUlcConfirmationRequestRuntime{kDasUlcConfirmationRequestDefaultEnabled};  // DAS_ulcConfirmationRequestActive bit28 -> 1
-inline Shared<uint8_t> uiUlcSpeedConfigRuntime{kUlcSpeedConfigDefault};                    // UI_ulcSpeedConfig bits50-51, 0xFF=순정 유지
-inline Shared<uint8_t> uiUlcBlindSpotConfigRuntime{kUlcBlindSpotConfigDefault};            // UI_ulcBlindSpotConfig bits52-53, 0xFF=순정 유지
 inline Shared<bool> aChannelTxRuntime{true};     // A채널 1021 수정 송신 마스터 토글
 inline Shared<uint32_t> aMcpSpiFreqHz{kAMcpDefaultSpiFreqHz};
 inline Shared<uint32_t> aMcpRequestedSpiFreqHz{kAMcpDefaultSpiFreqHz};
 inline Shared<bool> aMcpOneShotRuntime{kAMcpOneShotDefaultEnabled};
 inline Shared<bool> aTxGuardRuntime{kATxGuardDefaultEnabled};
 
-inline const char* uiUlcSpeedConfigName(uint8_t raw) {
-    switch (raw) {
-    case 0: return "DISABLED";
-    case 1: return "MILD";
-    case 2: return "AVERAGE";
-    case 3: return "MAD_MAX";
-    default: return "STOCK";
+// Validated SummonUnlock gate state (HW3): inject only while parked or summoning.
+inline constexpr uint32_t kSummonParkedTimeoutMs = 5000;
+
+struct SummonGateDiagnostics {
+    Shared<bool> apActive{false};
+    Shared<bool> parked{true};
+    Shared<bool> summoning{false};
+    Shared<bool> acaActive{false};
+    Shared<bool> sprSeen{false};
+    Shared<uint32_t> last280Ms{0};
+    Shared<uint32_t> frames280{0};
+    Shared<uint32_t> frames390{0};
+    Shared<uint32_t> frames921{0};
+    Shared<uint32_t> frames1016{0};
+    Shared<uint32_t> mux1Received{0};
+    Shared<uint32_t> txOk{0};
+    Shared<uint32_t> txFail{0};
+    Shared<uint32_t> blocked{0};
+};
+
+inline SummonGateDiagnostics summonGateDiag;
+
+inline int8_t summonGearState(uint8_t gear) {
+    if (gear == 1) return 1;
+    if (gear == 2 || gear == 3 || gear == 4) return 0;
+    return -1;
+}
+
+inline bool summonGateOpen() {
+    return (bool)summonGateDiag.parked || (bool)summonGateDiag.summoning;
+}
+
+inline void summonRecompute() {
+    summonGateDiag.summoning = (bool)summonGateDiag.acaActive && (bool)summonGateDiag.sprSeen;
+}
+
+inline void summonClearOnParkIfAcaInactive(uint8_t gear) {
+    if (gear == 1 && !(bool)summonGateDiag.acaActive) {
+        summonGateDiag.summoning = false;
+        summonGateDiag.sprSeen = false;
     }
 }
 
-inline const char* uiUlcBlindSpotConfigName(uint8_t raw) {
-    switch (raw) {
-    case 0: return "STANDARD";
-    case 1: return "AGGRESSIVE";
-    case 2: return "MAD_MAX";
-    default: return "STOCK";
+inline void summonHandle280(const CanFrame &frame, uint32_t nowMs) {
+    if (frame.dlc < 7) return;
+    summonGateDiag.frames280 = (uint32_t)summonGateDiag.frames280 + 1;
+    summonGateDiag.last280Ms = nowMs;
+    const uint8_t gear = (frame.data[2] >> 5) & 0x07;
+    const int8_t gearState = summonGearState(gear);
+    if (gearState == 1) summonGateDiag.parked = true;
+    if (gearState == 0) summonGateDiag.parked = false;
+
+    const bool aca = (frame.data[6] & 0x04U) != 0;
+    if ((bool)summonGateDiag.acaActive && !aca) summonGateDiag.sprSeen = false;
+    summonGateDiag.acaActive = aca;
+    summonRecompute();
+    summonClearOnParkIfAcaInactive(gear);
+}
+
+inline void summonHandle390(const CanFrame &frame, uint32_t nowMs) {
+    if (frame.dlc < 8) return;
+    summonGateDiag.frames390 = (uint32_t)summonGateDiag.frames390 + 1;
+    const uint8_t gear = (frame.data[2] >> 5) & 0x07;
+    const int8_t gearState = summonGearState(gear);
+    if (gearState < 0) return;
+    const uint32_t last280Ms = (uint32_t)summonGateDiag.last280Ms;
+    if (last280Ms == 0 || nowMs - last280Ms > kSummonParkedTimeoutMs) {
+        summonGateDiag.parked = (gearState == 1);
+        summonClearOnParkIfAcaInactive(gear);
     }
 }
 
-inline constexpr uint32_t kAutoTurnSignalModePulseMs = 50;
-
-inline void uiAutoTurnSignalModeTrigger(uint32_t nowMs) {
-    uiAutoTurnSignalModeRuntime = true;
-    uiAutoTurnSignalModePulseUntilMs = nowMs + kAutoTurnSignalModePulseMs;
+inline void summonHandle921(const CanFrame &frame) {
+    if (frame.dlc < 1) return;
+    summonGateDiag.frames921 = (uint32_t)summonGateDiag.frames921 + 1;
+    const uint8_t status = frame.data[0] & 0x07;
+    summonGateDiag.apActive = status == 2 || status == 3 || status == 4;
 }
 
-inline void uiAutoTurnSignalModeCancel() {
-    uiAutoTurnSignalModeRuntime = false;
-    uiAutoTurnSignalModePulseUntilMs = 0;
+inline void summonHandle1016(const CanFrame &frame) {
+    if (frame.dlc < 4) return;
+    summonGateDiag.frames1016 = (uint32_t)summonGateDiag.frames1016 + 1;
+    const uint8_t spr = (frame.data[3] >> 4) & 0x0F;
+    if (spr != 0) summonGateDiag.sprSeen = true;
+    summonRecompute();
 }
 
-inline bool uiAutoTurnSignalModePulseActive(uint32_t nowMs) {
-    if (!(bool)uiAutoTurnSignalModeRuntime) return false;
-    uint32_t untilMs = (uint32_t)uiAutoTurnSignalModePulseUntilMs;
-    if (!untilMs) return false;
-    if ((int32_t)(untilMs - nowMs) > 0) return true;
-    uiAutoTurnSignalModeCancel();
-    return false;
+inline void summonGateMaintain(uint32_t nowMs) {
+    const uint32_t last280Ms = (uint32_t)summonGateDiag.last280Ms;
+    if (last280Ms > 0 && nowMs - last280Ms > kSummonParkedTimeoutMs) {
+        summonGateDiag.parked = true;
+    }
 }
 
 inline constexpr uint8_t kSignalObserverMaxSignals = 10;
@@ -246,10 +259,8 @@ struct SignalObserverEvent {
 };
 
 inline Shared<bool> signalObserverRuntime{false};  // 부팅 시 정지 상태; 시작 버튼 누를 때까지 카운트 없음
-inline Shared<uint8_t> signalObserverCount{1};      // A채널 기본 신호 1개; B/Both 채널 제거 (mux 혼용 오탐 방지)
-inline SignalObserverDef signalObserverDefs[kSignalObserverMaxSignals] = {
-    {true, kSignalObserverChannelA, kSignalObserverByteOrderLittle, 1001, 28, 1, 0, "DAS_ulcConfirmationRequestActive"},
-};
+inline Shared<uint8_t> signalObserverCount{0};      // 기본 프리셋 없음; 사용자가 올린 수동 관찰 설정만 사용
+inline SignalObserverDef signalObserverDefs[kSignalObserverMaxSignals] = {};
 inline SignalObserverState signalObserverStates[kSignalObserverMaxSignals] = {};
 inline SignalObserverEvent signalObserverEvents[kSignalObserverEventCap] = {};
 inline volatile size_t signalObserverEventHead = 0;
@@ -458,9 +469,11 @@ inline bool signalObserverIdAlreadyPresent(const uint32_t *ids, uint8_t count, u
 }
 
 inline uint8_t signalObserverFillAFilterIds(uint32_t *ids, uint8_t maxCount) {
-    if (!ids || maxCount < 3) return 0;
+    if (!ids || maxCount < 5) return 0;
     uint8_t count = 0;
-    ids[count++] = 659;
+    ids[count++] = 280;
+    ids[count++] = 390;
+    ids[count++] = 921;
     ids[count++] = 1016;
     ids[count++] = 1021;
 
@@ -702,27 +715,12 @@ inline BChannelDiagnostics bChannelDiag;
 struct AChannelDiagnostics {
     Shared<uint32_t> framesReceivedTotal{0};     // 총 수신 프레임 수
     Shared<float>    frameHz{0.0f};              // A채널 수신 프레임레이트 (Hz)
-    Shared<uint32_t> frames293{0};               // UI_chassisControl 프레임 수
+    Shared<uint32_t> frames280{0};               // DI_systemStatus 프레임 수
+    Shared<uint32_t> frames390{0};               // Drive inverter 상태 프레임 수
+    Shared<uint32_t> frames921{0};               // DAS 상태 프레임 수
     Shared<uint32_t> frames1016{0};              // UI_driverAssistControl 프레임 수
-    Shared<uint32_t> frames1021{0};              // EAP 프레임 수
-    Shared<uint32_t> frames1001{0};              // DAS_bodyControls 프레임 수
-    Shared<uint32_t> eapModifiedCount{0};        // 규제 완화 적용 횟수
-    Shared<uint32_t> autoLaneChangeModifiedCount{0};      // UI_autoLaneChangeEnable 적용 횟수
-    Shared<uint32_t> autoLaneChangeSkipCount{0};          // 이미 ON이라 송신하지 않은 횟수
-    Shared<uint32_t> autoTurnSignalModeModifiedCount{0};  // UI_autoTurnSignalMode 적용 횟수
-    Shared<uint32_t> autoTurnSignalModeSkipCount{0};      // 이미 bit52=1이라 송신하지 않은 횟수
-    Shared<uint32_t> ulcStalkConfirmModifiedCount{0};      // UI_ulcStalkConfirm 적용 횟수
-    Shared<uint32_t> ulcStalkConfirmSkipCount{0};          // 이미 bit1=0이라 송신하지 않은 횟수
-    Shared<uint32_t> ulcOffHighwayModifiedCount{0};        // UI_ulcOffHighway 적용 횟수
-    Shared<uint32_t> ulcOffHighwaySkipCount{0};            // 이미 bit15=1이라 송신하지 않은 횟수
-    Shared<uint32_t> alcOffHighwayModifiedCount{0};        // UI_alcOffHighwayEnable 적용 횟수
-    Shared<uint32_t> alcOffHighwaySkipCount{0};            // 이미 bit56=1이라 송신하지 않은 횟수
-    Shared<uint32_t> ulcSpeedConfigModifiedCount{0};       // UI_ulcSpeedConfig 적용 횟수
-    Shared<uint32_t> ulcSpeedConfigSkipCount{0};           // 이미 목표 raw라 송신하지 않은 횟수
-    Shared<uint32_t> ulcBlindSpotConfigModifiedCount{0};   // UI_ulcBlindSpotConfig 적용 횟수
-    Shared<uint32_t> ulcBlindSpotConfigSkipCount{0};       // 이미 목표 raw라 송신하지 않은 횟수
-    Shared<uint32_t> dasUlcConfirmationModifiedCount{0};   // DAS_ulcConfirmationRequestActive 적용 횟수
-    Shared<uint32_t> dasUlcConfirmationSkipCount{0};       // 이미 bit28=1이라 송신하지 않은 횟수
+    Shared<uint32_t> frames1021{0};              // UI_autopilotControl 프레임 수
+    Shared<uint32_t> summonUnlockModifiedCount{0}; // 조건부 Summon Unlock 적용 횟수
     Shared<uint32_t> tsllcModifiedCount{0};       // TSLLC 주입 횟수 (스톱/초록불 비트 세팅)
     Shared<uint32_t> lastFrameIdReceived{0};     // 마지막 수신 프레임 ID
     Shared<uint32_t> lastStatusUpdateMs{0};      // 마지막 상태 업데이트 시각
@@ -758,7 +756,7 @@ struct AChannelDiagnostics {
     Shared<uint32_t> mcpLastRecoveryMs{0};       // 최근 MCP2515 재초기화 시각(ms)
     Shared<uint32_t> aTxGuardUntilMs{0};       // A채널 1021 수정 송신 보호모드 종료 시각
     Shared<uint32_t> aTxGuardCount{0};         // 보호모드 진입 횟수
-    Shared<uint32_t> aTxGuardSkipCount{0};     // 보호모드로 TSLLC/EAP 송신을 건너뛴 횟수
+    Shared<uint32_t> aTxGuardSkipCount{0};     // 보호모드로 TSLLC/Summon 송신을 건너뛴 횟수
     Shared<uint8_t>  aTxGuardLastReason{0};    // kATxGuardReason*
 };
 
@@ -1077,4 +1075,3 @@ inline NagConfig nagConfig;
 #include <freertos/portmacro.h>
 inline portMUX_TYPE nagCfgMux = portMUX_INITIALIZER_UNLOCKED;
 #endif
-

@@ -7,7 +7,7 @@ void setUp()
     bypassTlsscRequirementRuntime = kBypassTlsscRequirementDefaultEnabled;
     isaSpeedChimeSuppressRuntime = kIsaSpeedChimeSuppressDefaultEnabled;
     emergencyVehicleDetectionRuntime = kEmergencyVehicleDetectionDefaultEnabled;
-    enhancedAutopilotRuntime = kEnhancedAutopilotDefaultEnabled;
+    summonUnlockRuntime = kSummonUnlockDefaultEnabled;
 }
 void tearDown() {}
 
@@ -268,19 +268,11 @@ void test_signalObserverExtractRaw_rejects_short_big_endian_frame()
     TEST_ASSERT_FALSE(signalObserverExtractRaw(f, def, raw));
 }
 
-void test_signalObserver_defaults_start_stopped_with_single_a_channel_signal()
+void test_signalObserver_defaults_start_stopped_without_retired_experiment_signal()
 {
     TEST_ASSERT_FALSE(signalObserverRuntime);
-    TEST_ASSERT_EQUAL_UINT8(1, signalObserverCount);
-
-    const SignalObserverDef &def = signalObserverDefs[0];
-    TEST_ASSERT_TRUE(def.enabled);
-    TEST_ASSERT_EQUAL_UINT8(kSignalObserverChannelA, def.channelMask);
-    TEST_ASSERT_EQUAL_UINT8(kSignalObserverByteOrderLittle, def.byteOrder);
-    TEST_ASSERT_EQUAL_UINT16(1001, def.frameId);
-    TEST_ASSERT_EQUAL_UINT8(28, def.startBit);
-    TEST_ASSERT_EQUAL_UINT8(1, def.length);
-    TEST_ASSERT_EQUAL_STRING("DAS_ulcConfirmationRequestActive", def.name);
+    TEST_ASSERT_EQUAL_UINT8(0, signalObserverCount);
+    TEST_ASSERT_FALSE(signalObserverDefs[0].enabled);
 }
 
 void test_signalObserverExtractRaw_requires_matching_mux_value()
@@ -335,12 +327,12 @@ void test_runtime_bypass_tlssc_off_still_reads_real_bit()
     TEST_ASSERT_TRUE(isFSDSelectedInUI(f));
 }
 
-void test_runtime_defaults_start_disabled()
+void test_runtime_defaults_match_build_configuration()
 {
     TEST_ASSERT_FALSE(bypassTlsscRequirementRuntime);
     TEST_ASSERT_TRUE(isaSpeedChimeSuppressRuntime);
     TEST_ASSERT_TRUE(emergencyVehicleDetectionRuntime);
-    TEST_ASSERT_FALSE(enhancedAutopilotRuntime);
+    TEST_ASSERT_TRUE(summonUnlockRuntime);
 }
 
 int main()
@@ -376,13 +368,13 @@ int main()
     RUN_TEST(test_signalObserverExtractRaw_reads_little_endian_signal);
     RUN_TEST(test_signalObserverExtractRaw_reads_big_endian_signal);
     RUN_TEST(test_signalObserverExtractRaw_rejects_short_big_endian_frame);
-    RUN_TEST(test_signalObserver_defaults_start_stopped_with_single_a_channel_signal);
+    RUN_TEST(test_signalObserver_defaults_start_stopped_without_retired_experiment_signal);
     RUN_TEST(test_signalObserverExtractRaw_requires_matching_mux_value);
 
     RUN_TEST(test_runtime_bypass_tlssc_overrides_when_bit_clear);
     RUN_TEST(test_runtime_bypass_tlssc_off_reads_frame);
     RUN_TEST(test_runtime_bypass_tlssc_off_still_reads_real_bit);
-    RUN_TEST(test_runtime_defaults_start_disabled);
+    RUN_TEST(test_runtime_defaults_match_build_configuration);
 
     return UNITY_END();
 }

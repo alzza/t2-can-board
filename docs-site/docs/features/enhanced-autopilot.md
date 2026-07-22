@@ -2,35 +2,12 @@
 sidebar_position: 4
 ---
 
-# Enhanced Autopilot
+# Enhanced Autopilot Legacy Configuration
 
-`ENHANCED_AUTOPILOT` gates the extra autopilot-side signals this firmware handles on the CAN side. On HW3 and HW4 it controls the `UI_applyEceR79` override; on HW4 it also enables summon support.
+`ENHANCED_AUTOPILOT` is not used by the current LILYGO T2-CAN HW3 firmware. Its previous EAP setting, runtime variable, and NVS key were retired in favor of the separately controlled **Conditional Summon Unlock (HW3)** feature.
 
-## What It Controls
-
-- Clears `UI_applyEceR79` on CAN message `1021`, mux `1` for HW3 and HW4
-- Enables the HW4 summon bit on CAN message `1021`, mux `1`
-- Keeps the normal `Traffic Light and Stop Sign Control` UI signal as the activation gate
-- Adds a runtime toggle in the built-in WiFi diagnostics page when the feature is compiled in
-
-## CAN Message Details
-
-| CAN ID | Mux | Bit | Value | Signal |
-|---|---|---|---|---|
-| 1021 | 0 | 38 | read | `UI_fsdStopsControlEnabled` |
-| 1021 | 1 | 19 | 0 | `UI_applyEceR79` |
-| 1021 | 1 | 47 | 1 | `UI_hardCoreSummon` |
-
-## Requirements
-
-- **HW3 or HW4 vehicle**
-- Active Tesla entitlement for the relevant Autopilot package
-- `ENHANCED_AUTOPILOT` enabled in `RP2040CAN/sketch_config.h`
-
-```cpp
-#define ENHANCED_AUTOPILOT
-```
+Use the [Conditional Summon Unlock for HW3](/docs/features/smart-summon) guide instead. The current build uses the `SUMMON_UNLOCK` build flag, the `/api/summon-unlock` API, and the `summon_unlock` NVS key.
 
 :::note
-This feature does not change Tesla package entitlements. It only exposes the related CAN-side signals inside the existing firmware flow.
+Old `enh_autopilot` NVS values are intentionally not migrated. After updating, review the new Summon control and CAN-A TX master before enabling transmission.
 :::

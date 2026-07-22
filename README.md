@@ -1,4 +1,5 @@
-### 🚨 DO NOT UPDATE YOUR TESLA TO ```2026.8.6``` and ```2026.2.9.x``` TO KEEP FSD FEATURES 🚨
+> [!CAUTION]
+> Tesla vehicle firmware and CAN behavior can change without notice. Validate this firmware on a parked vehicle after every vehicle OTA before enabling any transmission feature.
 
 <br>
 <hr>
@@ -39,7 +40,7 @@ All features are toggled at **runtime** via the web interface — no recompile r
 
 | Feature | Channel | Description |
 |---------|---------|-------------|
-| **Enhanced Autopilot (EAP)** | CAN-A | Unlocks Smart Summon range limit and lane-change restrictions |
+| **Conditional Summon Unlock (HW3)** | CAN-A | Modifies ID 1021 mux 1 only while the vehicle is Parked or Summoning and A TX is enabled |
 | **TSLLC (Traffic Light & Stop Sign)** | CAN-A | Sets the TSLLC and green-light continue bits in CAN ID 1021 |
 | **Autosteer Nag Killer** | CAN-B | Echoes modified EPAS torque frame (CAN ID 880) to suppress hands-on-wheel nag |
 | **Web Interface & OTA** | WiFi | Real-time monitoring, runtime toggles, over-the-air firmware updates |
@@ -112,6 +113,25 @@ Once connected to the **`TeslaCAN`** WiFi AP and navigating to `http://192.168.4
 - **Signal Observer** — upload generated JSON to watch selected T-CAN signals without transmitting frames
 - **OTA firmware update** — drag-and-drop `.bin` upload with rollback safety
 
+### Conditional Summon Unlock on HW3
+
+This build targets **HW3**. Summon Unlock is a conditional CAN-A feature, not a continuous injector.
+
+Before enabling it, park the vehicle, connect to the dashboard, and confirm CAN-A has stable receive traffic with no BUS-OFF event. After an OTA update, the firmware deliberately starts with Summon Unlock, TSLLC, Nag Killer, and the CAN-A TX master switch OFF.
+
+1. Open **Controls** and enable **Conditional Summon Unlock (HW3)**.
+2. In the **CAN-A** card, enable the **A TX master** switch.
+3. Verify the Summon card reports `Enabled`, `Active`, and `Gate OPEN` only when the vehicle is `PARKED` or `SUMMONING`.
+4. Monitor CAN-A `TX OK / Fail`, `TEC`, `BUS-OFF`, and the 280/390/921/1016 receive counters before relying on the result.
+
+The firmware modifies CAN ID `0x3FD` (decimal 1021), mux 1, only when all of the following are true:
+
+- Summon Unlock is enabled.
+- The CAN-A TX master is enabled.
+- The gate is open: `Parked || Summoning`.
+
+For HW3, the modified frame clears bit 19 and sets bit 46. The displayed AP state is diagnostic only; it does not open the injection gate. Turn off either **Conditional Summon Unlock** or the **A TX master** to stop Summon/TSLLC transmission immediately.
+
 ### Signal Observer JSON
 
 The Signal Observer is a receive-only diagnostic tool. It extracts raw values from selected CAN signals, records transitions in a bounded event log, and exports a CSV through the web UI.
@@ -154,18 +174,20 @@ After uploading a new firmware `.bin` file in the OTA tab:
 No manual page refresh needed.
 
 **Metadata display format:**
-- Firmware: `1.3.2 · 26-05-13` (version · YY-MM-DD)
-- Build: `26-05-13 01:16:00` (YY-MM-DD HH:MM:SS)
+- Firmware: `1.3.4 · YY-MM-DD` (version · build date)
+- Build: `YY-MM-DD HH:MM:SS` (local build time)
 
 ### OTA rollback safety
 
 | State | Meaning |
 |-------|---------|
 | `pending=0` | Normal operation |
-| `pending=2` | New firmware booting — confirm within 3 min or auto-rollback |
+| `pending=1` | OTA payload written; first boot records current safe feature values |
+| `pending=2` | New firmware confirmation window — confirm within 60 seconds or auto-rollback |
+| `pending=3/4` | Previous firmware rollback and its 60-second confirmation window |
 | `pending=5` | Recovery mode — CAN disabled, web server only |
 
-If the new firmware fails to confirm, the device automatically reverts to the previous firmware.
+If a new firmware fails to confirm, the device automatically reverts to the previous firmware. Any NVS or OTA preparation failure enters CAN-disabled recovery mode instead of starting either CAN driver.
 
 ## Firmware Architecture
 
@@ -228,7 +250,9 @@ include/
     mock_driver.h         # Mock driver for unit tests
   web/
     web_server.h          # 45 HTTP handler functions
-    web_ui.h              # Single-page app HTML (normal + OTA recovery UI)
+    web_ui.h              # Embedded UI and OTA recovery UI
+web/
+  web_ui.html             # Editable source for the normal Web UI
 src/
   main.cpp                # setup() / loop() / nagKillerTask / canAlertTask
 scripts/
@@ -251,11 +275,15 @@ pio run -e lilygo_t2can
 # Upload
 pio run -e lilygo_t2can -t upload
 
-# Core nag tests (31 tests)
+# Core nag tests
 pio test -e native_nag
 
 # All native tests
-pio test -e native_nag -e native -e native_log_buffer
+pio test -e native_nag -e native
+
+# Check Web UI source/header sync and release metadata
+python3 scripts/sync_web_ui.py --check
+python3 scripts/check_release_metadata.py
 ```
 
 ## Versioning
