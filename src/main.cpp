@@ -32,8 +32,8 @@
  *  │           ├─ RX 제한: iter당 최대 30프레임 처리로 WDT 보호               │
  *  │           ├─ SW 필터: 880(EPAS) · 921/923(DAS) · 297(SCCM)               │
  *  │           ├─ NagHandler                                                  │
- *  │           │   ├─ Smart Torque: AP/phase/torque/angle 기반 echo           │
- *  │           │   ├─ Profiles: 기본 / A안 / B안 / C안                        │
+ *  │           │   ├─ Nag MODE 1/2/3: 검증 규칙 기반 ID 880 echo              │
+ *  │           │   ├─ Modes: MODE 1 / MODE 2 / MODE 3(기본)                      │
  *  │           │   └─ checksum: (sum + 0x73) & 0xFF                           │
  *  │           ├─ BUS-OFF 복구: soft(twai_initiate_recovery) → hard fallback  │
  *  │           └─ TEC ≥ 96 조기 경고 / BUS-OFF 이벤트 로그 push               │
@@ -55,10 +55,10 @@
  *  │   └─ Web Dashboard (single-file SPA, web_ui.h / web_server.h)            │
  *  │       ├─ GET  /                     → 대시보드 HTML                      │
  *  │       ├─ GET  /api/status           → 통합 상태 JSON (3s polling)        │
- *  │       ├─ GET  /api/nag-stats        → B채널 Smart Torque 진단 JSON       │
- *  │       ├─ POST /api/nag-profile|update|reset → NagConfig 변경             │
+ *  │       ├─ GET  /api/nag-stats        → B채널 Nag 모드 진단 JSON          │
+ *  │       ├─ POST /api/nag-mode|update|reset → NagConfig 변경                │
  *  │       ├─ POST /api/summon-unlock | /api/tsllc | /api/nag-killer          │
- *  │       ├─ POST /api/busoff-mode|cooldown | /api/twai-ss-tx                │
+ *  │       ├─ POST /api/busoff-cooldown                                       │
  *  │       ├─ GET  /api/busoff-log[-dl]  DELETE /api/busoff-log               │
  *  │       ├─ POST /api/can-diag/start   GET /api/can-diag/log                │
  *  │       ├─ GET  /api/logs-bundle      → [1]~[5] 통합 로그 다운로드         │
@@ -81,8 +81,9 @@
  * ═══════════════════════════════════════════════════════════════════════════
  *  isa_speed_chime  emerg_veh_det  summon_unlock  nag_killer  tsllc
  *  a_ch_tx          a_spi_mhz      a_oneshot       a_tx_guard
- *  nag_mode         nag_prof       nag_id          nag_tc     nag_tb2  nag_tb3  nag_ho
- *  busoff_cooldown  busoff_soft_mode   theme   ota_pending  ota_fallback
+ *  nag_mode         busoff_cooldown  theme
+ *  ota_pending      ota_fallback
+ *  폐기 Nag 키(nag_prof/nag_id/nag_tc/nag_tb2/nag_tb3/nag_ho)는 부팅 시 삭제
  *  nvs_init_ok  (최초 부팅 감지 플래그 — 존재하면 초기화 이미 완료)
  *
  *  초기화 규칙:
@@ -170,7 +171,6 @@ void nagKillerTask(void* pvParameters) {
         if (driverB) {
             // TWAI 상태 추적
             uint8_t twaiStateCode = driverB->getStateCode();
-            bChannelDiag.twaiConnected = (twaiStateCode == 1 || twaiStateCode == 3);
             bChannelDiag.twaiStateCode = twaiStateCode;
 
             // 쿨다운 런타임 설정 변경 시 드라이버에 전달
@@ -247,7 +247,6 @@ void nagKillerTask(void* pvParameters) {
             CanFrame frame;
             int rxLimit = 30; // 무한 루프(WDT Panic) 방지 제한
             while (driverB->read(frame) && rxLimit > 0) {
-                bChannelDiag.lastTwaiOk = true;
                 bChannelDiag.frameIdReceived = frame.id;
                 bChannelDiag.framesReceivedTotal++;
                 bChannelDiag.lastFrameRxMs = millis();
@@ -338,7 +337,7 @@ void nagKillerTask(void* pvParameters) {
                 (unsigned)bChannelDiag.frames297,
                 (unsigned)bChannelDiag.dasHandsOnStateRx,
                 (unsigned)bChannelDiag.dasStatusSourceId,
-                nagSmartProfileSettings((uint8_t)bChannelDiag.smartProfile).label,
+                nagModeName((uint8_t)bChannelDiag.nagMode),
                 twaiStr);
             logRing.push(bBuf, millis());
             Serial.println(bBuf);
@@ -379,7 +378,7 @@ void nagKillerTask(void* pvParameters) {
                 (unsigned)d297,
                 (unsigned)dEcho,
                 (unsigned)dDrop,
-                nagSmartProfileSettings((uint8_t)bChannelDiag.smartProfile).label,
+                nagModeName((uint8_t)bChannelDiag.nagMode),
                 (unsigned)(uint8_t)bChannelDiag.dasAutopilotStateRx,
                 (unsigned)(uint8_t)bChannelDiag.modeBPhase,
                 (unsigned)(uint8_t)bChannelDiag.realHo,
@@ -437,8 +436,6 @@ void nagKillerTask(void* pvParameters) {
             logRing.push(bDeep, millis());
             Serial.println(bDeep);
 
-            aChannelDiag.lastStatusUpdateMs = millis();
-            bChannelDiag.lastStatusUpdateMs = millis();
             lastStatusTime = millis();
         }
 

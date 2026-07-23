@@ -1,4 +1,4 @@
-// 밀리초 단위 CAN 이벤트 링버퍼 (B채널 진단용)
+// 밀리초 단위 CAN 이벤트 링버퍼 (A/B채널 진단용)
 // 통합 로그 [5] 섹션에 포함되며, /api/events.csv는 디버그용 보조 엔드포인트다.
 // 외과적 추가: 기존 구조 변경 없음
 #pragma once
@@ -26,10 +26,14 @@ enum CanEventType : uint8_t {
     EV_ALERT_RX_FULL  = 8, // RX 큐 오버플로
     EV_TX_BACKOFF     = 9, // TX 백오프 진입
     EV_USER_MARK      = 10, // 사용자가 경고 발생 시점 표시 버튼을 누름
-    EV_NAG_MODE       = 11, // Smart profile 전환 (detail: 0=기본, 1=A안, 2=B안, 3=C안, 4=D안)
+    EV_NAG_MODE       = 11, // Nag mode 전환 (detail: 1=MODE1, 2=MODE2, 3=MODE3)
     EV_MODEB_STATE    = 12, // Mode B DAS hands-on state 전이 (detail: ap<<16 | old<<8 | new)
     EV_MODEB_PHASE    = 13, // Mode B phase 전이 (detail: phase<<24 | ap<<16 | ho<<8 | decision)
     EV_MODEB_FIRST_ECHO = 14, // 현재 DAS state 진입 후 첫 echo 지연(ms)
+    EV_A_EFLG_SET     = 15, // A채널 MCP2515 EFLG 0→비제로
+    EV_A_EFLG_CLEAR   = 16, // A채널 MCP2515 EFLG 비제로→0
+    EV_A_RX_OVERRUN   = 17, // A채널 MCP2515 RX0OVR/RX1OVR 감지
+    EV_A_WAKE_FIRST_TX = 18, // A채널 재수신 시작→첫 Summon TX 성공 지연
 };
 
 // CSV/통합 번들에서 숫자 event type만 보고 해석하지 않도록 사람이 읽는 이름도 같이 출력한다.
@@ -50,6 +54,10 @@ inline const char* eventTypeName(uint8_t type) {
     case EV_MODEB_STATE: return "MODEB_STATE";
     case EV_MODEB_PHASE: return "MODEB_PHASE";
     case EV_MODEB_FIRST_ECHO: return "MODEB_FIRST_ECHO";
+    case EV_A_EFLG_SET: return "A_EFLG_SET";
+    case EV_A_EFLG_CLEAR: return "A_EFLG_CLEAR";
+    case EV_A_RX_OVERRUN: return "A_RX_OVERRUN";
+    case EV_A_WAKE_FIRST_TX: return "A_WAKE_FIRST_TX";
     default: return "UNKNOWN";
     }
 }
@@ -63,8 +71,8 @@ inline const char* eventDetailText(uint8_t type, uint32_t detail, char* out, siz
         snprintf(out, outLen, "marker=%s", userMarkerDetailName(detail));
         break;
     case EV_NAG_MODE: {
-        uint8_t profileId = nagSmartProfileClamp(static_cast<uint8_t>(detail));
-        snprintf(out, outLen, "profile=%u label=%s", (unsigned)profileId, nagSmartProfileSettings(profileId).label);
+        uint8_t mode = nagModeClamp(static_cast<uint8_t>(detail));
+        snprintf(out, outLen, "mode=%u label=%s", (unsigned)mode, nagModeName(mode));
         break;
     }
     case EV_MODEB_STATE: {
@@ -91,6 +99,20 @@ inline const char* eventDetailText(uint8_t type, uint32_t detail, char* out, siz
     }
     case EV_MODEB_FIRST_ECHO:
         snprintf(out, outLen, "delay_ms=%u", (unsigned)detail);
+        break;
+    case EV_A_EFLG_SET:
+    case EV_A_EFLG_CLEAR:
+    case EV_A_RX_OVERRUN:
+        snprintf(out, outLen,
+                 "eflg=0x%02X state=%s RX1OVR=%u RX0OVR=%u TXBO=%u TXEP=%u RXEP=%u TXWAR=%u RXWAR=%u EWARN=%u",
+                 (unsigned)(detail & 0xFFU), aMcpEflgStateName((uint8_t)detail),
+                 (unsigned)((detail >> 7) & 1U), (unsigned)((detail >> 6) & 1U),
+                 (unsigned)((detail >> 5) & 1U), (unsigned)((detail >> 4) & 1U),
+                 (unsigned)((detail >> 3) & 1U), (unsigned)((detail >> 2) & 1U),
+                 (unsigned)((detail >> 1) & 1U), (unsigned)(detail & 1U));
+        break;
+    case EV_A_WAKE_FIRST_TX:
+        snprintf(out, outLen, "wake_to_summon_tx_ms=%u", (unsigned)detail);
         break;
     default:
         snprintf(out, outLen, "raw=%u", (unsigned)detail);
@@ -171,8 +193,8 @@ inline esp_err_t eventLogCsvHandler(httpd_req_t* req) {
         (unsigned)millis(), (unsigned)n);
     httpd_resp_sendstr_chunk(req, meta);
     httpd_resp_sendstr_chunk(req,
-        "# type: 0=BUSOFF 1=REC_OK 2=REC_FAIL 3=REC_SOFT 4=ERR_PASS 5=ARB_LOST 6=BUS_ERR 7=TX_FAIL 8=RX_FULL 9=TX_BACKOFF 10=USER_MARK 11=NAG_MODE 12=MODEB_STATE 13=MODEB_PHASE 14=MODEB_FIRST_ECHO\n");
-    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING_START 2=AP_WARNING_END | NAG_MODE detail: smartProfile 0=default 1=A 2=B 3=C 4=D | MODEB_STATE detail: ap<<16|oldHo<<8|newHo | MODEB_PHASE detail: phase<<24|ap<<16|ho<<8|decision | FIRST_ECHO detail: delay_ms | detailText is decoded for analysis\n");
+        "# type: 0=BUSOFF 1=REC_OK 2=REC_FAIL 3=REC_SOFT 4=ERR_PASS 5=ARB_LOST 6=BUS_ERR 7=TX_FAIL 8=RX_FULL 9=TX_BACKOFF 10=USER_MARK 11=NAG_MODE 12=MODEB_STATE 13=MODEB_PHASE 14=MODEB_FIRST_ECHO 15=A_EFLG_SET 16=A_EFLG_CLEAR 17=A_RX_OVERRUN 18=A_WAKE_FIRST_TX\n");
+    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING_START 2=AP_WARNING_END | NAG_MODE detail: 1=MODE1 2=MODE2 3=MODE3(default) | MODEB_STATE detail: ap<<16|oldHo<<8|newHo | MODEB_PHASE detail: phase<<24|ap<<16|ho<<8|decision | FIRST_ECHO detail: delay_ms | detailText is decoded for analysis\n");
     httpd_resp_sendstr_chunk(req, "t_ms,type,typeName,tec,rec,detail,detailText\n");
     char line[260];
     char detailText[180];

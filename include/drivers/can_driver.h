@@ -11,8 +11,8 @@ struct CanDriver
     virtual bool enableInterrupt(void (*onReady)()) = 0;        // 수신 인터럽트 콜백 등록
     virtual bool read(CanFrame &frame) = 0;                     // 프레임 1개 수신 (없으면 false)
     virtual void send(const CanFrame &frame) = 0;               // 프레임 1개 전송
-    // 프레임 1개 전송 + 결과 반환 (true=ERROR_OK, false=실패).
-    // MCP2515 진단용. 기본 구현은 send() 호출 후 항상 true (TWAI 등은 자체 카운터 사용).
+    // 프레임 1개 전송 + 결과 반환 (true=성공, false=실패).
+    // 결과 확인을 구현하지 않은 드라이버의 기본값은 send() 호출 후 true다.
     virtual bool sendCheck(const CanFrame &frame) { send(frame); return true; }
     // 에러 플래그 레지스터 (EFLG) 반환 — MCP2515 구현 시 실제 값, 나머지는 0
     // 비트 의미: bit5=TXBO(BUS-OFF), bit4=TXEP(TX에러패시브), bit2=TXWAR(TEC≥96)

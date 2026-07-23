@@ -54,7 +54,7 @@ body{
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
   background:var(--bg);color:var(--tx);
   padding:16px;margin:0 auto;
-  width:100%;max-width:540px;overflow-x:hidden;
+  width:100%;max-width:760px;overflow-x:hidden;
   transition:background .25s,color .25s
 }
 
@@ -252,12 +252,18 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
 .mode-toggle input:checked+.mode-track span:last-child{color:var(--btn-tx)}
 .profile-mode-toggle{align-items:stretch;gap:6px}
 .profile-current{font-size:12px;font-weight:700;color:var(--muted)}
-.profile-seg{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;min-width:0;max-width:520px;flex:1}
-.profile-seg label{display:block}
-.profile-seg input{display:none}
-.profile-seg span{display:block;text-align:center;border:1.5px solid var(--bd);border-radius:6px;background:var(--bg2);padding:8px 6px;font-size:12px;font-weight:800;color:var(--tx3);cursor:pointer}
-.profile-seg input:checked+span{background:var(--acc);border-color:transparent;color:var(--btn-tx)}
-.profile-desc{font-size:11px;line-height:1.6;margin-bottom:8px;padding:5px 7px;background:rgba(0,0,0,.12);border-radius:5px;color:var(--muted)}
+.nag-mode-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:10px 0}
+.nag-mode-card{display:block;min-width:0}
+.nag-mode-card input{display:none}
+.nag-mode-face{display:flex;min-height:110px;box-sizing:border-box;flex-direction:column;gap:6px;padding:12px;border:1px solid var(--bd);border-radius:12px;background:linear-gradient(145deg,var(--bg2),var(--card));cursor:pointer;transition:border-color .16s,transform .16s,box-shadow .16s}
+.nag-mode-face:hover{transform:translateY(-1px);border-color:var(--acc)}
+.nag-mode-card input:checked+.nag-mode-face{border-color:var(--acc);box-shadow:0 0 0 2px rgba(0,212,170,.18),0 8px 20px rgba(0,0,0,.12)}
+.nag-mode-kicker{font-size:10px;font-weight:900;letter-spacing:.09em;color:var(--acc2)}
+.nag-mode-title{font-size:14px;font-weight:900;color:var(--tx)}
+.nag-mode-copy{font-size:10px;line-height:1.45;color:var(--tx3)}
+.nag-mode-badge{display:inline-flex;align-self:flex-start;margin-top:auto;padding:2px 6px;border-radius:999px;background:rgba(0,212,170,.14);color:var(--acc2);font-size:9px;font-weight:900}
+.nag-mode-desc{font-size:11px;line-height:1.6;margin-bottom:9px;padding:9px 10px;background:rgba(0,0,0,.12);border:1px solid var(--bd);border-radius:9px;color:var(--tx2)}
+@media(max-width:520px){.nag-mode-grid{grid-template-columns:1fr}.nag-mode-face{min-height:0}}
 .experiment-current{font-size:11px;color:var(--muted);line-height:1.45;margin-top:5px}
 .observer-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
 .observer-head h2{margin-bottom:0}
@@ -429,6 +435,39 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
 .chip.err{background:rgba(244,67,54,.18);color:var(--err);border-color:rgba(244,67,54,.5);animation:chipPulse 1.5s infinite}
 @keyframes chipPulse{50%{opacity:.55}}
 .v-ok{color:var(--acc2)}.v-err{color:var(--err)}.v-acc{color:var(--acc)}.v-dim{color:var(--tx3)}.v-warn{color:var(--warn)}
+
+/* ── 메인: 채널 상태와 기능 상태를 우선하는 새 배치 ── */
+.main-health-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:14px}
+.health-card{position:relative;overflow:hidden;border:1px solid var(--bd);border-radius:16px;background:linear-gradient(145deg,var(--card),var(--bg2));padding:14px;min-width:0}
+.health-card:before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:var(--dot-off)}
+.health-card.ok:before{background:var(--acc2)}.health-card.warn:before{background:var(--warn)}.health-card.err:before{background:var(--err)}
+.health-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.health-name{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:900;color:var(--tx)}
+.health-badge{padding:4px 8px;border-radius:999px;border:1px solid var(--bd);font-size:10px;font-weight:900;color:var(--tx3);white-space:nowrap}
+.health-card.ok .health-badge{color:var(--acc2);border-color:rgba(61,186,114,.4)}
+.health-card.warn .health-badge{color:var(--warn);border-color:rgba(245,166,35,.45)}
+.health-card.err .health-badge{color:var(--err);border-color:rgba(255,107,107,.45)}
+.health-rate{font-size:30px;line-height:1;font-weight:950;color:var(--tx);margin:14px 0 5px;font-variant-numeric:tabular-nums}
+.health-reason{font-size:11px;line-height:1.45;color:var(--tx3);min-height:32px;overflow-wrap:anywhere}
+.health-mini{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:10px}
+.health-mini>div{border:1px solid var(--bd);border-radius:9px;background:rgba(0,0,0,.1);padding:7px;min-width:0}
+.health-mini .k{font-size:9px;color:var(--tx4);text-transform:uppercase}.health-mini .v{font-size:11px;color:var(--tx2);font-weight:800;margin-top:3px;overflow-wrap:anywhere}
+.main-section-title{font-size:10px;font-weight:900;letter-spacing:.11em;text-transform:uppercase;color:var(--tx3);margin:0 0 7px}
+.main-feature-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:12px}
+.main-live-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:12px}
+.main-feature-grid .stat,.main-live-grid .stat{min-height:80px;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.main-feature-grid .stat-lbl,.main-live-grid .stat-lbl{min-height:0;align-items:center;justify-content:center;text-align:center}
+.main-feature-grid .stat-val,.main-live-grid .stat-val{font-size:17px;font-weight:900;text-align:center}
+.diag-download-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;width:100%}
+.diag-download-grid .btn{margin-top:0;text-decoration:none;display:flex;align-items:center;justify-content:center;text-align:center}
+@media(max-width:620px){
+  .main-feature-grid,.main-live-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:430px){
+  .main-health-grid{grid-template-columns:1fr}
+  .health-rate{font-size:27px}
+  .diag-download-grid{grid-template-columns:1fr}
+}
 </style>
 </head>
 <body>
@@ -484,27 +523,48 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
 <div id="connErr" class="err">Connection lost. Retrying...</div>
 
 <section class="view active" id="view-main" role="tabpanel" aria-labelledby="tab-main">
-<div id="hdr-status">
-  <span class="chan-status"><span class="sdot dot-wait" id="sdot-a"></span><span id="hdr-a">A WAIT</span></span>
-  <span class="chan-status"><span class="sdot dot-wait" id="sdot-b"></span><span id="hdr-b">B WAIT</span></span>
+<div class="main-health-grid">
+  <div class="health-card" id="main-a-health">
+    <div class="health-head">
+      <div class="health-name"><span class="sdot dot-wait" id="sdot-a"></span>A 채널 · Summon/TSLLC</div>
+      <span class="health-badge" id="hdr-a">확인 중</span>
+    </div>
+    <div class="health-rate" id="s-main-a">--</div>
+    <div class="health-reason" id="s-main-a-reason">MCP2515 상태를 확인하고 있습니다.</div>
+    <div class="health-mini">
+      <div><div class="k">EFLG</div><div class="v" id="s-main-a-eflg">--</div></div>
+      <div><div class="k">최근 수신</div><div class="v" id="s-main-a-age">--</div></div>
+      <div><div class="k">TX OK/Fail</div><div class="v" id="s-main-a-tx">0 / 0</div></div>
+    </div>
+  </div>
+  <div class="health-card" id="main-b-health">
+    <div class="health-head">
+      <div class="health-name"><span class="sdot dot-wait" id="sdot-b"></span>B 채널 · Nag Killer</div>
+      <span class="health-badge" id="hdr-b">확인 중</span>
+    </div>
+    <div class="health-rate" id="s-main-b">--</div>
+    <div class="health-reason" id="s-main-b-reason">TWAI 상태를 확인하고 있습니다.</div>
+    <div class="health-mini">
+      <div><div class="k">TWAI</div><div class="v" id="s-main-b-twai">--</div></div>
+      <div><div class="k">최근 880</div><div class="v" id="s-main-b-age">--</div></div>
+      <div><div class="k">BUS-OFF</div><div class="v" id="s-main-busoff">0</div></div>
+    </div>
+  </div>
 </div>
-<div class="fps-bars">
-  <div class="fps-row"><span class="fps-lbl">A</span><div class="fps-bar"><div class="fps-fill fps-fill-a" id="fps-fill-a"></div></div></div>
-  <div class="fps-row"><span class="fps-lbl">B</span><div class="fps-bar"><div class="fps-fill fps-fill-b" id="fps-fill-b"></div></div></div>
-</div>
-<div class="stat-grid main-stat-grid">
-  <div class="stat primary" title="A채널 MCP2515 상태와 수신 속도"><div class="stat-lbl">A 채널</div><div class="stat-val v-dim" id="s-main-a">--</div></div>
-  <div class="stat primary" title="B채널 TWAI 상태와 880 수신 속도"><div class="stat-lbl">B 채널</div><div class="stat-val v-dim" id="s-main-b">--</div></div>
-  <div class="stat" title="B채널 BUS-OFF 누적 발생 횟수. 0 유지가 정상"><div class="stat-lbl">BUS-OFF</div><div class="stat-val v-dim" id="s-main-busoff">0</div></div>
+<div class="main-section-title">기능 상태</div>
+<div class="main-feature-grid">
   <div class="stat primary" title="DAS_autopilotState. 값 뒤 @923은 수신 소스"><div class="stat-lbl">오토파일럿 상태</div><div class="stat-val v-dim" id="s-main-ap">--</div></div>
   <div class="stat primary" title="Summon Unlock 조건부 주입 게이트"><div class="stat-lbl">Summon Gate</div><div class="stat-val v-dim" id="s-main-summon">--</div></div>
   <div class="stat primary" title="Summon Unlock 상태 판정. Parked 또는 Summoning"><div class="stat-lbl">Summon 상태</div><div class="stat-val v-dim" id="s-main-summon-state">--</div></div>
   <div class="stat" title="A채널 Summon Unlock 전송 성공/실패 누적"><div class="stat-lbl">Summon TX</div><div class="stat-val v-dim" id="s-main-summon-tx">0 / 0</div></div>
+  <div class="stat" title="선택한 Nag 모드의 실시간 단계"><div class="stat-lbl">Nag 상태</div><div class="stat-val v-dim" id="s-main-phase">--</div></div>
+</div>
+<div class="main-section-title">실시간 값</div>
+<div class="main-live-grid">
   <div class="stat primary" title="실제 핸들 토크 추정값. nag-stats torqueNm"><div class="stat-lbl">현재 핸들토크</div><div class="stat-val v-dim" id="s-main-torque">--</div></div>
   <div class="stat primary" title="SCCM 조향각도. ID 297 기준"><div class="stat-lbl">조향각</div><div class="stat-val v-dim" id="s-main-angle">--</div></div>
-  <div class="stat" title="Smart Torque 상태 페이즈"><div class="stat-lbl">Smart Torque</div><div class="stat-val v-dim" id="s-main-phase">--</div></div>
   <div class="stat" title="Mode B 누적 토크 주입 횟수"><div class="stat-lbl">주입 횟수</div><div class="stat-val v-acc" id="s-main-inject">0</div></div>
-  <div class="stat" title="현재 Smart Torque 프로파일"><div class="stat-lbl">프로파일</div><div class="stat-val v-dim" id="s-main-profile">--</div></div>
+  <div class="stat" title="현재 Nag Killer 동작 모드"><div class="stat-lbl">Nag 모드</div><div class="stat-val v-dim" id="s-main-profile">--</div></div>
 </div>
 <div class="main-guidance dim" id="mainGuidanceCard">
   <div class="k">운전자 안내</div>
@@ -592,6 +652,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
         <div class="stat"><div class="k">AP (diag)</div><div class="v" id="suAp">--</div></div>
         <div class="stat"><div class="k">A CAN state</div><div class="v" id="suCanState">--</div></div>
         <div class="stat"><div class="k">280 age</div><div class="v" id="su280Age">--</div></div>
+        <div class="stat" title="2초 이상 A채널 수신 공백 뒤 재수신 시작부터 첫 Summon TX 성공까지"><div class="k">재수신→첫 TX</div><div class="v" id="suWakeDelay">--</div></div>
       </div>
     </div>
   </div>
@@ -609,37 +670,35 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
     </div>
     <label class="sw"><input type="checkbox" id="tNag" onchange="togSwitch('/api/nag-killer',this)"><span class="sl"></span></label>
   </div>
-  <!-- Nag Killer 실시간 통계 + 스마트 프로파일 선택 -->
+  <!-- HW3 Nag Killer MODE 1/2/3 선택 + 실시간 통계 -->
   <div class="row child-row" id="nagModePanel">
     <div style="width:100%">
-      <div style="text-align:center;margin-bottom:6px">
-        <span style="font-size:12px;color:var(--muted)">현재 프로파일 &gt;&gt;&nbsp;</span><span style="font-size:14px;font-weight:bold;color:var(--acc2)" id="nagProfileLabel">[--]</span>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:10px;font-weight:800;letter-spacing:.08em;color:var(--tx3)">HW3 · ID 880</div>
+          <div style="font-size:16px;font-weight:900;color:var(--tx);margin-top:2px">Nag 동작 모드</div>
+        </div>
+        <span class="nag-mode-badge" id="nagModeLabel">MODE 3 · 기본</span>
       </div>
-      <div class="profile-seg" role="radiogroup" aria-label="Nag Killer Smart Torque profile" style="margin-bottom:8px">
-        <label><input type="radio" name="nagProfile" value="0" onchange="setNagProfile(0)"><span>기본</span></label>
-        <label><input type="radio" name="nagProfile" value="1" onchange="setNagProfile(1)"><span>A안</span></label>
-        <label><input type="radio" name="nagProfile" value="2" onchange="setNagProfile(2)"><span>B안</span></label>
-        <label><input type="radio" name="nagProfile" value="3" onchange="setNagProfile(3)"><span>C안</span></label>
-        <label><input type="radio" name="nagProfile" value="4" onchange="setNagProfile(4)"><span>D안</span></label>
+      <div class="nag-mode-grid" role="radiogroup" aria-label="Nag Killer mode">
+        <label class="nag-mode-card"><input type="radio" name="nagMode" value="1" onchange="setNagMode(1)"><span class="nag-mode-face"><span class="nag-mode-kicker">MODE 1</span><span class="nag-mode-title">고정 에코</span><span class="nag-mode-copy">+1.80Nm 고정 토크. DAS/조향각 조건 없음.</span></span></label>
+        <label class="nag-mode-card"><input type="radio" name="nagMode" value="2" onchange="setNagMode(2)"><span class="nag-mode-face"><span class="nag-mode-kicker">MODE 2</span><span class="nag-mode-title">순환 에코</span><span class="nag-mode-copy">4단계 토크를 1초 순환하고 1.5초 휴지.</span></span></label>
+        <label class="nag-mode-card"><input type="radio" name="nagMode" value="3" onchange="setNagMode(3)"><span class="nag-mode-face"><span class="nag-mode-kicker">MODE 3</span><span class="nag-mode-title">조건부 상태기계</span><span class="nag-mode-copy">AP·DAS·조향각 최근 수신 상태를 확인한 후만 주입.</span><span class="nag-mode-badge">기본 · 권장</span></span></label>
       </div>
-      <div id="nagProfileDesc" class="profile-desc">
-        --
-      </div>
-      <div id="nagDescB" style="font-size:11px;line-height:1.6;margin-bottom:8px;padding:5px 7px;background:rgba(0,0,0,.12);border-radius:5px">
-        <div style="color:var(--muted);margin-bottom:6px"><b>Smart Torque</b>: AP state 3-6 게이트 + HandsOnState별 조건부 토크 주입. 조건 불충족 시 버스 비개입.</div>
+      <div id="nagModeDesc" class="nag-mode-desc">MODE 3: 조건을 모두 확인할 때만 주입하는 기본 모드입니다.</div>
+      <div id="nagDescB" style="font-size:11px;line-height:1.6;margin-bottom:8px;padding:8px 9px;background:rgba(0,0,0,.12);border-radius:9px">
         <div class="profile-mini-grid">
-          <div class="stat" title="HandsOnState=1 진입 후 기존 값을 유지하는 시간"><div class="k">state1 grace</div><div class="v" id="np_s1">--</div></div>
-          <div class="stat" title="HandsOnState=2 진입 후 mild 주입 전 대기 시간"><div class="k">state2 delay</div><div class="v" id="np_s2">--</div></div>
-          <div class="stat" title="HandsOnState=2 mild random-walk 토크 범위"><div class="k">state2 mild</div><div class="v" id="np_mild">--</div></div>
-          <div class="stat" title="HandsOnState=3-5 진입 후 strong 주입 전 대기 시간"><div class="k">strong delay</div><div class="v" id="np_s3">--</div></div>
-          <div class="stat burst-stat" title="burst/pause. 0/0이면 연속"><div class="k">burst / pause</div><div class="v" id="np_burst">--</div></div>
+          <div class="stat"><div class="k">입력</div><div class="v" id="nmInput">880</div></div>
+          <div class="stat"><div class="k">토크</div><div class="v" id="nmPattern">±1.80Nm</div></div>
+          <div class="stat"><div class="k">타이밍</div><div class="v" id="nmTiming">상태별</div></div>
+          <div class="stat"><div class="k">조건</div><div class="v" id="nmContext">DAS+297</div></div>
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:5px;margin-top:6px">
           <div class="stat" title="DAS_autopilotState (ID 921/923 후보). 값 뒤 @923은 921이 아니라 923에서 읽은 상태"><div class="k">AP state</div><div class="v" id="ns_apst">--</div></div>
           <div class="stat" title="SCCM 조향각도 (ID 297). 방향 결정에 사용"><div class="k">steer angle</div><div class="v" id="ns_angle">--</div></div>
           <div class="stat" title="주입 페이즈: 0=idle 1=grace 2=delay 3=mild 4=sDelay 5=ramp 6=hold"><div class="k">phase</div><div class="v" id="ns_mbphase">--</div></div>
-          <div class="stat" title="Mode B 누적 토크 주입 횟수"><div class="k">주입 횟수</div><div class="v" id="ns_mbinject">0</div></div>
-          <div class="stat" title="Mode B 가장 최근 주입 토크 (Nm). 양수=우, 음수=좌"><div class="k">마지막 Nm</div><div class="v" id="ns_mbnm">--</div></div>
+          <div class="stat" title="Nag 누적 토크 주입 횟수"><div class="k">주입 횟수</div><div class="v" id="ns_mbinject">0</div></div>
+          <div class="stat" title="Nag 가장 최근 주입 토크"><div class="k">마지막 Nm</div><div class="v" id="ns_mbnm">--</div></div>
           <div class="stat" title="ID 297 SCCM 수신 프레임 수"><div class="k">rx (297)</div><div class="v" id="ns_rx297">0</div></div>
         </div>
       </div>
@@ -685,6 +744,11 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
         <span class="chip ok" id="d-a-rxovr"  title="RX 버퍼 오버런 누적. clear 후 재발 시 폴링 부족">RX-OVR 0</span>
         <span class="chip ok" id="d-a-rec"    title="REC 현재/피크. ↑ = 수신 에러(배선/종단 문제)">REC 0/0</span>
         <span class="chip ok" id="d-a-eflgev" title="EFLG 0→비제로 전환 횟수. 에러 발생 이벤트 빈도">EFLG-EV 0</span>
+        <span class="chip ok" id="d-a-eflg-now" title="현재 MCP2515 EFLG와 해석된 상태">EFLG 0x00</span>
+        <span class="chip ok" id="d-a-eflg-peak" title="부팅 이후 관측한 EFLG 비트 누적 OR">EFLG-PEAK 0x00</span>
+        <span class="chip ok" id="d-a-guard" title="A채널 TX Guard 활성 상태와 원인">GUARD OFF</span>
+        <span class="chip ok" id="d-a-age" title="A채널 마지막 프레임/루프 경과시간">AGE --</span>
+        <span class="chip ok" id="d-a-wake" title="2초 이상 수신 공백 뒤 재수신 시작부터 첫 Summon TX 성공까지">WAKE→TX --</span>
       </div>
       <div class="diag-help"><b>TX</b>: 송신 성공/실패 · <b>TEC/REC</b>: CAN 에러 카운터 · <b>MERRF/RX-OVR</b>: MCP2515 오류/수신 오버런 · <b>EFLG-EV</b>: EFLG 비정상 전환 횟수</div>
     </div>
@@ -695,6 +759,12 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
         <span class="chip ok" id="d-b-err"    title="Bus Error 누적. ↑ = 배선/ACK 부재">BUS-ERR 0</span>
         <span class="chip ok" id="d-b-txf"    title="TX-FAILED 누적. Single-shot 충돌 회피 동작 검증">TX-FAIL 0</span>
         <span class="chip ok" id="d-b-rxm"    title="RX-MISSED 누적. ↑ = nagKillerTask 폴링 부족">RX-MISS 0</span>
+        <span class="chip ok" id="d-b-state"  title="TWAI 현재 상태">TWAI --</span>
+        <span class="chip ok" id="d-b-tec"    title="TWAI TX 에러 카운터 현재/피크">TEC 0/0</span>
+        <span class="chip ok" id="d-b-rec"    title="TWAI RX 에러 카운터 현재/피크">REC 0/0</span>
+        <span class="chip ok" id="d-b-task"   title="통합 CAN 태스크와 B채널 루프 생존 상태">TASK --</span>
+        <span class="chip ok" id="d-b-age"    title="B채널 마지막 프레임/루프 경과시간">AGE --</span>
+        <span class="chip ok" id="d-b-recovery" title="BUS-OFF 복구 시도/성공/실패">RECOVERY 0/0/0</span>
       </div>
       <div class="diag-help"><b>ARB</b>: 중재 손실 · <b>BUS-ERR</b>: 버스 에러 누적 · <b>TX-FAIL</b>: TWAI 송신 실패 · <b>RX-MISS</b>: 수신 큐 누락</div>
     </div>
@@ -794,26 +864,6 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
     </div>
     <span class="chip ok">FIXED</span>
   </div>
-  <!-- [v4.4 실험 토글] Single Shot TX -->
-  <div class="row" style="display:none;border-top:1px solid var(--bd);margin-top:4px;padding-top:6px"
-       title="ON: echo TX 충돌 시 자동 재전송 금지(TEC 억제 기대) | OFF: 기본(TWAI 자동 재전송)">
-    <div class="labelWrap">
-      <span class="label">&#9889; Single Shot TX</span>
-      <span class="meta">ON=충돌 시 재전송 금지(TEC억제 실험) | OFF=기본(자동재전송)</span>
-      <span class="meta" id="metaSsTxCurrent">현재: OFF(기본)</span>
-    </div>
-    <label class="sw"><input type="checkbox" id="tSsTx" onchange="toggleSsTx(this)"><span class="sl"></span></label>
-  </div>
-  <!-- [v4.4 실험 토글] BUS-OFF stop skip -->
-  <div class="row" style="display:none;border-top:1px solid var(--bd);margin-top:4px;padding-top:6px"
-       title="ON: BUS-OFF 상태에서 twai_stop() 생략(v4.4 state machine 준수) | OFF: 기본">
-    <div class="labelWrap">
-      <span class="label">&#128683; BUS-OFF stop skip</span>
-      <span class="meta">ON=BUS-OFF 시 stop() 생략(v4.4준수 실험) | OFF=기본</span>
-      <span class="meta" id="metaBoStopCurrent">현재: OFF(기본)</span>
-    </div>
-    <label class="sw"><input type="checkbox" id="tBoStop" onchange="toggleBoStop(this)"><span class="sl"></span></label>
-  </div>
 </div>
 </div>
 <div class="card no-collapse busoff-card">
@@ -854,9 +904,14 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
     <button class="btn" onclick="resetTimeseries()">🗑 로그 초기화</button>
     <button class="btn" id="recBtn" onclick="toggleTimeseriesRec()">⏺ 기록 시작</button>
     <button class="btn user-mark-btn" id="markBtn" onclick="markApWarning()">USER_MARK</button>
-    <a class="btn" href="/api/logs-bundle" data-download-url="/api/logs-bundle" download="canmod_logs.txt" onclick="return handleDownloadAction(event,this)" style="text-decoration:none;display:inline-flex;align-items:center">💾 전체 저장</a>
     <span id="recStatus" style="font-size:12px;color:var(--muted)"></span>
     <span id="diagStatus" style="font-size:12px;color:var(--muted)"></span>
+  </div>
+  <div class="diag-download-grid">
+    <a class="btn" href="/api/can-diag/log-dl" download="can_diag.csv">자가 진단 CSV</a>
+    <a class="btn" href="/api/timeseries.csv" download="timeseries.csv">A/B 시계열 CSV</a>
+    <a class="btn" href="/api/events.csv" download="can_events.csv">밀리초 이벤트 CSV</a>
+    <a class="btn" href="/api/logs-bundle" data-download-url="/api/logs-bundle" download="canmod_logs.txt" onclick="return handleDownloadAction(event,this)">전체 로그 저장</a>
   </div>
   <div id="diagLogWrap" style="display:none">
     <div id="diagLogEl" style="background:#0d1117;border:1px solid var(--border);border-radius:4px;padding:10px;max-height:340px;overflow-y:auto;font-family:monospace;font-size:11px;line-height:1.7;white-space:pre-wrap;color:#c9d1d9"></div>
@@ -880,6 +935,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
     <div class="stat"><div class="stat-lbl">확인 상태</div><div class="stat-val v-dim" id="otaPanelState">--</div></div>
     <div class="stat"><div class="stat-lbl">복구 모드</div><div class="stat-val v-dim" id="otaPanelRecovery">--</div></div>
   </div>
+  <div class="hint">업로드를 시작하면 A/B 수정 송신을 OFF로 저장하고, 진행 중인 소프트웨어 송신 호출이 끝난 것을 확인한 뒤 B 송신 큐를 비우고 업로드합니다. 업로드 후에는 차량 기능이 모두 OFF 상태이므로 정차 상태에서 수신·오류 상태를 확인한 다음 필요한 기능만 다시 켜십시오.</div>
   <input class="file" type="file" id="otaFile" accept=".bin">
   <progress id="otaProgress" value="0" max="100" style="width:100%;height:8px;margin-top:10px;display:block"></progress>
   <div class="ota-actions">
@@ -1119,59 +1175,33 @@ function toggleTheme(){
   if(btn)btn.textContent=next==='dark'?'\u2600 Light':'\ud83c\udf19 Dark';
   fetch('/api/set-theme',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({theme:next})}).catch(function(){});
 }
-var _nagProfile=0;
-var _nagModePhaseLabels=['idle','grace','s2지연','s2mild','s3지연','ramp','hold'];
-var _nagProfileFallback=[
-  {label:'기본',summary:'현재 검증 기준. 700/400ms 타이밍을 유지하고 조건이 맞는 동안 연속 관찰 주입.',s1:500,s2:700,s3:400,mildMin:0.5,mildMax:1.5,s2b:0,s2p:0,s3b:0,s3p:0},
-  {label:'A안',summary:'초기 grace를 줄이고 짧은 burst 후 쉬는 구간을 둔다.',s1:150,s2:700,s3:400,mildMin:0.5,mildMax:1.5,s2b:250,s2p:750,s3b:500,s3p:1000},
-  {label:'B안',summary:'가장 보수적. state1 주입을 없애고 더 짧게 반응한 뒤 길게 관찰한다.',s1:0,s2:900,s3:600,mildMin:0.5,mildMax:1.5,s2b:150,s2p:1350,s3b:300,s3p:1700},
-  {label:'C안',summary:'1차 delay+torque 후보. state2는 600ms로 앞당기고 mild 상한을 1.7Nm까지 올리며 strong은 400ms/2.10Nm 유지.',s1:500,s2:600,s3:400,mildMin:0.5,mildMax:1.7,s2b:0,s2p:0,s3b:0,s3p:0},
-  {label:'D안',summary:'C안 + 직선 저조향각 sign hold 후보. 토크와 timing은 C안과 같고 방향만 1.5초 유지.',s1:500,s2:600,s3:400,mildMin:0.5,mildMax:1.7,s2b:0,s2p:0,s3b:0,s3p:0}
-];
-function msText(v){return (v===0||v>0)?(v+'ms'):'--';}
-function nmRangeText(min,max){
-  min=Number(min);max=Number(max);
-  if(!isFinite(min)||!isFinite(max))return '--';
-  return '±'+min.toFixed(1)+'-'+max.toFixed(1)+'Nm';
+var _nagMode=3;
+var _nagModePhaseLabels=['idle','fixed','cycle','state2 대기','state2 walk','state3 대기','state3 wave'];
+var _nagModeFallback={
+  1:{label:'MODE 1',summary:'고정 +1.80Nm 에코. DAS/조향각 조건을 사용하지 않습니다.',input:'880',pattern:'+1.80Nm',timing:'연속',context:'없음'},
+  2:{label:'MODE 2',summary:'4개 토크를 200ms 간격으로 1초 순환한 뒤 1.5초 쉬었다가 반복합니다.',input:'880',pattern:'4-step',timing:'1.0/1.5초',context:'없음'},
+  3:{label:'MODE 3',summary:'AP 3~6, 921/923·297 최근 수신 상태(1초 이내), 조향각 ±5°를 확인하는 조건부 상태기계입니다.',input:'880+921/923+297',pattern:'walk / wave',timing:'2.0/1.0초',context:'AP·DAS·297'}
+};
+function updateNagModeUi(d){
+  var mode=(d&&d.mode!==undefined)?Number(d.mode):_nagMode;
+  if(!(mode>=1&&mode<=3))mode=3;
+  _nagMode=mode;
+  var info=_nagModeFallback[mode];
+  var radios=document.querySelectorAll('input[name="nagMode"]');
+  for(var i=0;i<radios.length;i++)radios[i].checked=Number(radios[i].value)===mode;
+  var badge=document.getElementById('nagModeLabel');if(badge)badge.textContent=info.label+(mode===3?' · 기본':'');
+  var meta=document.getElementById('metaNag');if(meta)meta.textContent=info.label+' · '+(mode===3?'DAS/297 조건부':'880 원본 규칙');
+  var mainMode=document.getElementById('s-main-profile');if(mainMode){mainMode.textContent=info.label;mainMode.className='stat-val v-acc';fitMainStat(mainMode,info.label);}
+  var desc=document.getElementById('nagModeDesc');if(desc)desc.textContent=(d&&d.modeSummary)||info.summary;
+  var e=document.getElementById('nmInput');if(e)e.textContent=info.input;
+  e=document.getElementById('nmPattern');if(e)e.textContent=info.pattern;
+  e=document.getElementById('nmTiming');if(e)e.textContent=info.timing;
+  e=document.getElementById('nmContext');if(e)e.textContent=info.context;
 }
-function formatProfileBadge(label){
-  if(label==='기본')return '[기본]';
-  if(label==='A안')return '[A모드]';
-  if(label==='B안')return '[B모드]';
-  if(label==='C안')return '[C모드]';
-  if(label==='D안')return '[D모드]';
-  return '['+label+']';
-}
-function updateNagProfileUi(d){
-  var p=(d&&d.smartProfile!==undefined)?Number(d.smartProfile):_nagProfile;
-  if(!(p>=0&&p<=4))p=0;
-  _nagProfile=p;
-  var fb=_nagProfileFallback[p];
-  var radios=document.querySelectorAll('input[name="nagProfile"]');
-  for(var i=0;i<radios.length;i++)radios[i].checked=Number(radios[i].value)===p;
-  var profileRaw=(d&&d.profileLabel)||fb.label;
-  var lbl=document.getElementById('nagProfileLabel');if(lbl)lbl.textContent=formatProfileBadge(profileRaw);
-  var mainProfile=document.getElementById('s-main-profile');if(mainProfile){var profileText=(d&&d.profileLabel)||fb.label;mainProfile.textContent=profileText;mainProfile.className='stat-val v-acc';fitMainStat(mainProfile,profileText);}
-  var desc=document.getElementById('nagProfileDesc');if(desc)desc.textContent=(d&&d.profileSummary)||fb.summary;
-  var s1=(d&&d.state1GraceMs!==undefined)?d.state1GraceMs:fb.s1;
-  var s2=(d&&d.state2DelayMs!==undefined)?d.state2DelayMs:fb.s2;
-  var s3=(d&&d.strongDelayMs!==undefined)?d.strongDelayMs:fb.s3;
-  var s2b=(d&&d.state2BurstMs!==undefined)?d.state2BurstMs:fb.s2b;
-  var s2p=(d&&d.state2PauseMs!==undefined)?d.state2PauseMs:fb.s2p;
-  var s3b=(d&&d.strongBurstMs!==undefined)?d.strongBurstMs:fb.s3b;
-  var s3p=(d&&d.strongPauseMs!==undefined)?d.strongPauseMs:fb.s3p;
-  var mildMin=(d&&d.state2MildMinNm!==undefined)?d.state2MildMinNm:fb.mildMin;
-  var mildMax=(d&&d.state2MildMaxNm!==undefined)?d.state2MildMaxNm:fb.mildMax;
-  var e=document.getElementById('np_s1');if(e)e.textContent=msText(s1);
-  e=document.getElementById('np_s2');if(e)e.textContent=msText(s2);
-  e=document.getElementById('np_mild');if(e)e.textContent=nmRangeText(mildMin,mildMax);
-  e=document.getElementById('np_s3');if(e)e.textContent=msText(s3);
-  e=document.getElementById('np_burst');if(e)e.innerHTML=(s2b||s3b)?('<span class="burst-lines"><span>S2 '+s2b+'/'+s2p+'ms</span><span>S3 '+s3b+'/'+s3p+'ms</span></span>'):'연속';
-}
-function setNagProfile(p){
-  fetch('/api/nag-profile?p='+p,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
-    updateNagProfileUi(d);
-  }).catch(function(){alert('프로파일 변경 실패');});
+function setNagMode(mode){
+  fetch('/api/nag-mode?m='+mode,{method:'POST'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(function(d){
+    updateNagModeUi(d);
+  }).catch(function(){alert('Nag 모드 변경 실패');updateNagModeUi({mode:_nagMode});});
 }
 function tickNagStats(){
   if(isBackgroundNetworkPaused())return;
@@ -1185,13 +1215,11 @@ function tickNagStats(){
     var bBusOff=document.getElementById('bBusOff');if(bBusOff)bBusOff.textContent=d.busoffCount||0;
     if(d.boSoftMode!==undefined&&_boSoftMode!==!!d.boSoftMode){_boSoftMode=!!d.boSoftMode;updateBoModeUi();}
     var boFallbackInfo=document.getElementById('boFallbackInfo');if(boFallbackInfo)boFallbackInfo.textContent='Hard fallback '+(d.boSoftFallback||0)+'회';
-    if(d.singleShotTx!==undefined&&_singleShotTx!==!!d.singleShotTx){_singleShotTx=!!d.singleShotTx;updateSsTxUi();}
-    if(d.busOffStopSkip!==undefined&&_busOffStopSkip!==!!d.busOffStopSkip){_busOffStopSkip=!!d.busOffStopSkip;updateBoStopUi();}
-    if(d.smartProfile!==undefined)updateNagProfileUi(d);
-    // Smart Torque 상태 업데이트
+    if(d.mode!==undefined)updateNagModeUi(d);
+    // Nag MODE 1/2/3 상태 업데이트
     var eApst=document.getElementById('ns_apst');if(eApst){eApst.textContent=nagApStateText(d);eApst.title=nagApStateTitle(d)+' · 921='+n(d.frames921)+' 923='+n(d.frames923)+' last='+n(d.lastDasStatusAgeMs)+'ms';}
     var mainAp=document.getElementById('s-main-ap');if(mainAp){var mainApText=nagApStateMainText(d);mainAp.textContent=mainApText;mainAp.className=statusClass(apStateAllowsInject(d.dasApState)?'ok':'warn');mainAp.title=nagApStateMainTitle(d)+' · 921='+n(d.frames921)+' 923='+n(d.frames923)+' last='+n(d.lastDasStatusAgeMs)+'ms';fitMainStat(mainAp,mainApText);}
-    var eAngle=document.getElementById('ns_angle');if(eAngle)eAngle.textContent=d.steerAngleDeg!==undefined?d.steerAngleDeg.toFixed(1)+'°':'--';
+    var eAngle=document.getElementById('ns_angle');if(eAngle)eAngle.textContent=d.steerAngleDeg!==undefined?d.steerAngleDeg.toFixed(1)+'°'+(d.steeringValid===false?' · invalid':''):'--';
     var mainAngle=document.getElementById('s-main-angle');if(mainAngle){var mainAngleText=d.steerAngleDeg!==undefined?d.steerAngleDeg.toFixed(1)+'°':'--';mainAngle.textContent=mainAngleText;mainAngle.className='stat-val v-acc';fitMainStat(mainAngle,mainAngleText);}
     var eMbph=document.getElementById('ns_mbphase');
     if(eMbph){var ph=d.modeBPhase||0;eMbph.textContent=d.nagLastDecisionText==='AP_BLOCK'?'ap_block':(_nagModePhaseLabels[ph]||ph);}
@@ -1235,6 +1263,20 @@ function loadBusOffLog(){
   }).catch(function(){});
 }
 function n(v){v=Number(v);return isFinite(v)?v:0;}
+function hex2(v){return ('0'+n(v).toString(16).toUpperCase()).slice(-2);}
+function aEflgBits(v){
+  v=n(v);if(!v)return 'OK';
+  var bits=[];
+  if(v&0x80)bits.push('RX1OVR');
+  if(v&0x40)bits.push('RX0OVR');
+  if(v&0x20)bits.push('TXBO');
+  if(v&0x10)bits.push('TXEP');
+  if(v&0x08)bits.push('RXEP');
+  if(v&0x04)bits.push('TXWAR');
+  if(v&0x02)bits.push('RXWAR');
+  if(v&0x01)bits.push('EWARN');
+  return bits.join('+');
+}
 function fitMainStat(el,text){
   if(!el)return;
   var len=String(text).length;
@@ -1248,11 +1290,6 @@ function setTxt(id,text,cls){
   if(id.indexOf('s-main-')===0)fitMainStat(el,text);
 }
 function setColor(id,color){var el=document.getElementById(id);if(el)el.style.color=color||'';}
-function setFill(id,hz){
-  var el=document.getElementById(id);if(!el)return;
-  var pct=Math.max(0,Math.min(100,n(hz)));
-  el.style.width=pct+'%';
-}
 function setChip(id,text,level){
   var el=document.getElementById(id);if(!el)return;
   el.textContent=text;
@@ -1265,12 +1302,19 @@ function twaiName(code){
   if(code===3)return 'RECOVERING';
   return 'INIT';
 }
+function healthStateKo(state){
+  var map={OK:'정상',RUNNING:'정상',INIT_FAILED:'초기화 실패',LOOP_STALLED:'루프 지연',BUS_OFF:'BUS-OFF',
+    NO_FRAMES:'수신 대기',RX_OVERRUN:'수신 오버런',ERROR_WARNING:'오류 경고',
+    ERROR_PASSIVE:'에러 패시브',TASK_OFF:'태스크 중지',DRIVER_FAILED:'드라이버 오류',
+    RECOVERING:'복구 중'};
+  return map[state]||state||'확인 중';
+}
 function bCardTitleText(b){
-  var code=n(b.twai_state_code);
+  var state=channelBState(b);
   var icon='\ud83d\udd35';
-  if(!b.can_task_created||!b.driver_ok||code===2)icon='\ud83d\udd34';
-  else if(code===3)icon='\ud83d\udfe1';
-  else if(code===1)icon='\ud83d\udfe2';
+  if(state.level==='err')icon='\ud83d\udd34';
+  else if(state.level==='warn')icon='\ud83d\udfe1';
+  else if(state.level==='ok')icon='\ud83d\udfe2';
   return icon+' B 채널 (TWAI · Nag Killer)';
 }
 function aCardTitleText(a,aState){
@@ -1436,13 +1480,16 @@ function shortBuildId(id){
   return p.length>=2?p[0]+'-'+p[1]:id;
 }
 function channelAState(a){
-  if(!a.driver_ok)return {text:'INIT',level:'err'};
-  if(n(a.mcp_eflg)&0x20)return {text:'BUS-OFF',level:'err'};
-  if(!a.fresh)return {text:'NO FRAMES',level:'warn'};
-  if(n(a.mcp_eflg)!==0)return {text:'WARN',level:'warn'};
+  if(a.health_state)return {text:String(a.health_state),level:n(a.health_level)>=2?'err':n(a.health_level)===1?'warn':'ok',reason:a.health_reason||''};
+  if(!a.driver_ok)return {text:'INIT_FAILED',level:'err',reason:'MCP2515 초기화 실패'};
+  if(!a.task_alive)return {text:'LOOP_STALLED',level:'err',reason:'A채널 폴링 루프 지연'};
+  if(n(a.mcp_eflg)&0x20)return {text:'BUS_OFF',level:'err',reason:'MCP2515 BUS-OFF'};
+  if(!a.fresh)return {text:'NO_FRAMES',level:'warn',reason:'최근 2초간 수신 프레임 없음'};
+  if(n(a.mcp_eflg)!==0)return {text:'EFLG 0x'+hex2(a.mcp_eflg),level:'warn',reason:'MCP2515 오류 플래그 감지'};
   return {text:'OK',level:'ok'};
 }
 function channelBState(b){
+  if(b.health_state)return {text:String(b.health_state),level:n(b.health_level)>=2?'err':n(b.health_level)===1?'warn':'ok',reason:b.health_reason||''};
   var code=n(b.twai_state_code);
   if(!b.can_task_created)return {text:'TASK OFF',level:'err'};
   if(!b.driver_ok)return {text:'DRIVER FAIL',level:'err'};
@@ -1467,26 +1514,19 @@ function updateChannelStatus(d){
   var aState=channelAState(a),bState=channelBState(b);
   var aHz=n(a.frame_hz);
   var bHz=n(b.frame_hz);
-  var aMainLevel=aState.level==='ok'?aRateLevel(aHz):aState.level;
+  var aMainLevel=aState.level;
   var bTwai=twaiName(b.twai_state_code);
-  var bMainLevel=bState.level==='ok'?b880RateLevel(bHz):bState.level;
-  setTxt('s-main-a',aHz.toFixed(1)+'Hz',statusClass(aMainLevel));
-  setTxt('s-main-b',bHz.toFixed(1)+'Hz',statusClass(bMainLevel));
-  setTxt('s-main-busoff',n(b.busoff_count),statusClass(n(b.busoff_count)?'err':'ok'));
-  setTxt('s-can',aState.text,statusClass(aState.level));
-  setTxt('s-bcan',bState.text,statusClass(bState.level));
-  setTxt('s-a-eflg','0x'+('0'+n(a.mcp_eflg).toString(16).toUpperCase()).slice(-2),statusClass(n(a.mcp_eflg)?'warn':'ok'));
-  setTxt('s-ahz',aHz.toFixed(1)+' Hz',statusClass(aRateLevel(aHz)));
-  setTxt('s-arx',n(a.frames_received),'stat-val v-acc');
-  setTxt('s-atx',n(a.summon_unlock_modified),'stat-val v-acc');
-  setTxt('s-bhz',bHz.toFixed(1)+' Hz',statusClass(b880RateLevel(bHz)));
-  setTxt('s-brx',n(b.frames_received),'stat-val v-acc');
-  setTxt('s-btx',n(b.echo_count),'stat-val v-acc');
-  setTxt('s-bdrop',n(b.echo_drop_late),'stat-val v-dim');
-  setTxt('s-twai',twaiName(b.twai_state_code),statusClass(b.driver_ok?(n(b.twai_state_code)===2?'err':n(b.twai_state_code)===3?'warn':'ok'):'err'));
-  setTxt('s-busoff',n(b.busoff_count),statusClass(n(b.busoff_count)?'err':'ok'));
-  setFill('fps-fill-a',aHz);
-  setFill('fps-fill-b',bHz);
+  var bMainLevel=bState.level;
+  setTxt('s-main-a',aHz.toFixed(1)+'Hz','health-rate '+(aMainLevel==='ok'?'v-ok':aMainLevel==='warn'?'v-warn':'v-err'));
+  setTxt('s-main-b',bHz.toFixed(1)+'Hz','health-rate '+(bMainLevel==='ok'?'v-ok':bMainLevel==='warn'?'v-warn':'v-err'));
+  setTxt('s-main-busoff',n(b.busoff_count),'v '+(n(b.busoff_count)?'v-err':'v-ok'));
+  setTxt('s-main-a-reason',aState.reason||a.health_reason||'정상 수신 중','health-reason');
+  setTxt('s-main-a-eflg','0x'+hex2(a.mcp_eflg)+' · '+aEflgBits(a.mcp_eflg),'v');
+  setTxt('s-main-a-age',n(a.frame_age_ms)+' ms','v');
+  setTxt('s-main-a-tx',n(a.tx_ok)+' / '+n(a.tx_fail),'v');
+  setTxt('s-main-b-reason',bState.reason||b.health_reason||'정상 수신 중','health-reason');
+  setTxt('s-main-b-twai',twaiName(b.twai_state_code),'v');
+  setTxt('s-main-b-age',n(b.frame_age_ms)+' ms','v');
   var sdotA=document.getElementById('sdot-a'),sdotB=document.getElementById('sdot-b');
   var hdrA=document.getElementById('hdr-a'),hdrB=document.getElementById('hdr-b');
   var aChTitle=document.getElementById('aChTitle');
@@ -1494,8 +1534,11 @@ function updateChannelStatus(d){
   var bHdrText=bState.text==='OK'?bTwai:bState.text;
   if(sdotA)sdotA.className='sdot '+dotStatusClass(aMainLevel);
   if(sdotB)sdotB.className='sdot '+dotStatusClass(bMainLevel);
-  if(hdrA)hdrA.textContent='A '+aState.text;
-  if(hdrB)hdrB.textContent='B '+bHdrText;
+  if(hdrA)hdrA.textContent=healthStateKo(aState.text);
+  if(hdrB)hdrB.textContent=healthStateKo(bHdrText);
+  var mainACard=document.getElementById('main-a-health'),mainBCard=document.getElementById('main-b-health');
+  if(mainACard)mainACard.className='health-card '+aMainLevel;
+  if(mainBCard)mainBCard.className='health-card '+bMainLevel;
   if(aChTitle)aChTitle.textContent=aCardTitleText(a,aState);
   if(bChTitle)bChTitle.textContent=bCardTitleText(b);
   setTxt('aHz',aHz.toFixed(1)+' Hz','val '+(aRateLevel(aHz)==='ok'?'on':'off'));
@@ -1527,11 +1570,24 @@ function updateChannelStatus(d){
   setChip('d-a-rxovr','RX-OVR '+n(a.rx_ovr),n(a.rx_ovr)?'warn':'ok');
   setChip('d-a-rec','REC '+n(a.rec)+'/'+n(a.rec_peak),n(a.rec)>=128||n(a.rec_peak)>=128?'err':n(a.rec)||n(a.rec_peak)?'warn':'ok');
   setChip('d-a-eflgev','EFLG-EV '+n(a.eflg_event_count),n(a.eflg_event_count)?'warn':'ok');
+  var aEflg=n(a.mcp_eflg),aEflgPeak=n(a.mcp_eflg_peak);
+  setChip('d-a-eflg-now','EFLG 0x'+hex2(aEflg)+' '+aEflgBits(aEflg),aState.level);
+  setChip('d-a-eflg-peak','EFLG-PEAK 0x'+hex2(aEflgPeak),aEflgPeak?'warn':'ok');
+  setChip('d-a-guard',a.tx_guard_active?('GUARD '+(a.tx_guard_reason||'ON')+' '+n(a.tx_guard_remaining_ms)+'ms'):'GUARD OFF',a.tx_guard_active?'warn':'ok');
+  setChip('d-a-age','AGE RX '+n(a.frame_age_ms)+' / LOOP '+n(a.loop_age_ms)+'ms',a.task_alive&&a.fresh?'ok':a.task_alive?'warn':'err');
+  setChip('d-a-wake',a.wake_waiting_summon_tx?'WAKE→TX 대기':('WAKE→TX '+(n(a.wake_count)?n(a.wake_to_summon_tx_ms)+'ms':'--')),a.wake_waiting_summon_tx?'warn':'ok');
   setChip('d-b-arb','ARB '+n(b.arb_lost),n(b.arb_lost)?'warn':'ok');
   setChip('d-b-err','BUS-ERR '+n(b.bus_error),n(b.bus_error)?'warn':'ok');
   setChip('d-b-txf','TX-FAIL '+n(b.tx_failed),n(b.tx_failed)?'warn':'ok');
   setChip('d-b-rxm','RX-MISS '+n(b.rx_missed),n(b.rx_missed)?'warn':'ok');
-  var issues=[];if(aState.level!=='ok')issues.push('A '+aState.text);if(bState.level!=='ok')issues.push('B '+bState.text);if(a.fresh&&!a.task_alive)issues.push('A LOOP LAG');if(b.fresh&&!b.task_alive)issues.push('B LOOP LAG');
+  setChip('d-b-state','TWAI '+twaiName(b.twai_state_code),bState.level);
+  var bTecNow=n(b.twai_tx_err_now),bTecPeak=n(b.twai_tx_err_peak),bRecNow=n(b.twai_rx_err_now),bRecPeak=n(b.twai_rx_err_peak);
+  setChip('d-b-tec','TEC '+bTecNow+'/'+bTecPeak,bTecNow>=128||bTecPeak>=128?'err':bTecNow>=96||bTecPeak>=96?'warn':'ok');
+  setChip('d-b-rec','REC '+bRecNow+'/'+bRecPeak,bRecNow>=128||bRecPeak>=128?'err':bRecNow>=96||bRecPeak>=96?'warn':'ok');
+  setChip('d-b-task','TASK '+(b.can_task_created&&b.task_alive?'OK':'FAIL'),b.can_task_created&&b.task_alive?'ok':'err');
+  setChip('d-b-age','AGE RX '+n(b.frame_age_ms)+' / LOOP '+n(b.loop_age_ms)+'ms',b.task_alive&&b.fresh?'ok':b.task_alive?'warn':'err');
+  setChip('d-b-recovery','RECOVERY '+n(b.recovery_attempt_count)+'/'+n(b.recovery_success_count)+'/'+n(b.recovery_fail_count),n(b.recovery_fail_count)?'err':n(b.recovery_attempt_count)?'warn':'ok');
+  var issues=[];if(aState.level!=='ok')issues.push('A '+aState.text);if(bState.level!=='ok')issues.push('B '+bState.text);
   var ds=document.getElementById('diag-sum');
   if(ds){ds.textContent=issues.length?issues.join(' · '):'A/B 정상';ds.className='diag-sum '+(issues.some(function(x){return x.indexOf('FAIL')>=0||x.indexOf('OFF')>=0;})?'err':issues.length?'warn':'ok');}
 }
@@ -1541,14 +1597,10 @@ async function poll(){
     var r=await fetch('/api/status?log_since='+logSince);
     if(!r.ok)throw new Error('status');
     var d=await r.json();
-    var elFsd=document.getElementById('fsd');
-    if(elFsd){elFsd.textContent=d.fsd_enabled?'활성':'비활성';elFsd.className='val '+(d.fsd_enabled?'on':'off');}
     var elSummon=document.getElementById('summonUnlock');
     if(elSummon){elSummon.textContent=d.summon_unlock_enabled?'활성':'비활성';elSummon.className='val '+(d.summon_unlock_enabled?'on':'off');}
     var elNag=document.getElementById('nag');
     if(elNag){elNag.textContent=d.nag_killer?'활성':'비활성';elNag.className='val '+(d.nag_killer?'on':'off');}
-    var sNag=document.getElementById('s-nag');
-    if(sNag){sNag.textContent=d.nag_killer?'ON':'OFF';sNag.className='stat-val '+(d.nag_killer?'v-ok':'v-err');}
     var tSummon=document.getElementById('tSummon');if(tSummon)tSummon.checked=!!d.summon_unlock_enabled;
     var su=d.summon_unlock||{};
     var suMainText=!su.enabled?'OFF':!su.tx_master?'TX OFF':su.gate?'OPEN':'BLOCKED';
@@ -1564,6 +1616,7 @@ async function poll(){
     suBool('suAp',!!su.ap);
     setTxt('suCanState',twaiName(su.canState),'v '+(n(su.canState)===1?'on':'off'));
     setTxt('su280Age',su.last_280_age_ms?n(su.last_280_age_ms)+' ms':'--','v');
+    setTxt('suWakeDelay',su.wake_waiting_tx?'측정 중':n(su.wake_count)?n(su.wake_to_tx_ms)+' ms':'--','v '+(su.wake_waiting_tx?'warn':''));
     setTxt('s-main-summon-state',su.summon?'SUMMONING':su.parked?'PARKED':'DRIVING','stat-val '+(su.summon||su.parked?'v-ok':'v-warn'));
     setTxt('s-main-summon-tx',n(su.txOk)+' / '+n(su.txFail),'stat-val '+(n(su.txFail)?'v-err':'v-acc'));
     setTxt('aSummonGearRx',n(su.rx280)+' / '+n(su.rx390),'val');
@@ -1637,46 +1690,8 @@ function applyBusCooldown(){
 // BUS-OFF 복구 모드: Soft recovery 우선 + Hard fallback 고정
 var _boSoftMode=true;
 function updateBoModeUi(){
-  var sw=document.getElementById('tBoMode');
-  if(sw){sw.checked=true;sw.disabled=true;}
   var meta=document.getElementById('metaBoModeCurrent');
   if(meta)meta.textContent='현재: Soft + Hard fallback (고정)';
-}
-function toggleBoMode(el){
-  if(el)el.checked=true;
-  updateBoModeUi();
-}
-// [v4.4 실험] Single Shot TX 토글
-var _singleShotTx=false;
-function updateSsTxUi(){
-  var sw=document.getElementById('tSsTx');
-  if(sw)sw.checked=!!_singleShotTx;
-  var meta=document.getElementById('metaSsTxCurrent');
-  if(meta)meta.textContent='현재: '+(_singleShotTx?'ON(재전송금지)':'OFF(기본)');
-}
-function toggleSsTx(el){
-  var next=!!el.checked;
-  fetch('/api/twai-ss-tx?v='+(next?1:0),{method:'POST'})
-    .then(function(r){if(!r.ok)throw new Error('ss');return r.text();}).then(function(){
-      _singleShotTx=next;
-      updateSsTxUi();
-    }).catch(function(){el.checked=!next;alert('전환 실패');});
-}
-// [v4.4 실험] BUS-OFF stop skip 토글
-var _busOffStopSkip=false;
-function updateBoStopUi(){
-  var sw=document.getElementById('tBoStop');
-  if(sw)sw.checked=!!_busOffStopSkip;
-  var meta=document.getElementById('metaBoStopCurrent');
-  if(meta)meta.textContent='현재: '+(_busOffStopSkip?'ON(v4.4준수)':'OFF(기본)');
-}
-function toggleBoStop(el){
-  var next=!!el.checked;
-  fetch('/api/twai-busoff-stop?v='+(next?1:0),{method:'POST'})
-    .then(function(r){if(!r.ok)throw new Error('stop');return r.text();}).then(function(){
-      _busOffStopSkip=next;
-      updateBoStopUi();
-    }).catch(function(){el.checked=!next;alert('전환 실패');});
 }
 
 // ── CAN 자가 진단 ──────────────────────────────────────────────────────────
@@ -1782,7 +1797,7 @@ async function pollDiagLog(){
       logEl.scrollTop=logEl.scrollHeight;
       diagLogSince=d.head;
     }
-    if(d.state===2){
+    if(d.state===2&&n(d.head)>=n(d.complete_head)){
       clearInterval(diagPollTimer);diagPollTimer=null;
       var btn=document.getElementById('diagBtn');
       btn.disabled=false;btn.textContent='다시 진단';
@@ -1808,8 +1823,6 @@ function renderUptimeTick(){
   var seconds=Math.floor((baseUptimeMs+elapsed)/1000);
   var s=fmt(seconds);
   document.getElementById('up').textContent=s;
-  var sUpEl=document.getElementById('s-up');
-  if(sUpEl)sUpEl.textContent=s;
 }
 
 // ── OTA 확인/롤백 JS ──────────────────────────────────────────────────────────
@@ -1929,10 +1942,10 @@ function uploadOta(){
   var btn=document.getElementById('otaBtn');
   var prog=document.getElementById('otaProgress');
   if(!file){if(st)st.textContent='펌웨어 파일을 선택하세요';return;}
-  if(!confirm('펌웨어를 업로드합니다. 업로드 중 전원을 끄지 마세요.'))return;
+  if(!confirm('펌웨어를 업로드하면 A/B 수정 송신이 OFF로 저장됩니다. 업로드 중 전원을 끄지 마세요.'))return;
   if(btn)btn.disabled=true;
   _otaUploadInProgress=true;
-  if(st)st.textContent='업로드 중...';
+  if(st)st.textContent='차량 CAN 송신 종료 확인 후 업로드 중...';
   if(prog)prog.value=0;
   var xhr=new XMLHttpRequest();
   xhr.timeout=300000;

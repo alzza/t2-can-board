@@ -57,6 +57,8 @@ void setUp()
     tsllcRuntime = true;
     aChannelTxRuntime = true;
     aTxGuardRuntime = false;
+    canTxInFlight = 0;
+    canTxQuiesceCancel();
     resetSummonState();
 }
 
@@ -211,6 +213,18 @@ void test_a_channel_tx_master_blocks_tsllc_and_summon()
     TEST_ASSERT_EQUAL_UINT32(0, summonGateDiag.txOk);
 }
 
+void test_ota_quiesce_blocks_new_a_channel_modification_tx()
+{
+    canTxQuiesceBegin();
+    CanFrame tsllc = mux0Frame();
+    handler.handleMessage(tsllc, mock);
+    CanFrame summon = mux1Frame();
+    handler.handleMessage(summon, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_TRUE(canTxQuiesceIdle());
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -225,5 +239,6 @@ int main()
     RUN_TEST(test_removed_id_659_is_ignored);
     RUN_TEST(test_tsllc_mux0_remains_active_when_summon_gate_is_closed);
     RUN_TEST(test_a_channel_tx_master_blocks_tsllc_and_summon);
+    RUN_TEST(test_ota_quiesce_blocks_new_a_channel_modification_tx);
     return UNITY_END();
 }

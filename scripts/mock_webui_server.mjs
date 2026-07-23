@@ -8,95 +8,13 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '..');
 const webUiPath = path.join(repoRoot, 'web', 'web_ui.html');
 
-const profiles = [
-  {
-    smartProfile: 0,
-    profileLabel: '기본',
-    profileSummary: '현재 검증 기준. 700/400ms 타이밍을 유지하고 조건이 맞는 동안 연속 관찰 주입.',
-    state1GraceMs: 500,
-    state2DelayMs: 700,
-    strongDelayMs: 400,
-    strongRampMs: 500,
-    state2MildMinRawDelta: 50,
-    state2MildMaxRawDelta: 150,
-    state2MildMinNm: 0.5,
-    state2MildMaxNm: 1.5,
-    state2BurstMs: 0,
-    state2PauseMs: 0,
-    strongBurstMs: 0,
-    strongPauseMs: 0,
-  },
-  {
-    smartProfile: 1,
-    profileLabel: 'A안',
-    profileSummary: '초기 grace를 줄이고 짧은 burst 후 쉬는 구간을 둔다.',
-    state1GraceMs: 150,
-    state2DelayMs: 700,
-    strongDelayMs: 400,
-    strongRampMs: 500,
-    state2MildMinRawDelta: 50,
-    state2MildMaxRawDelta: 150,
-    state2MildMinNm: 0.5,
-    state2MildMaxNm: 1.5,
-    state2BurstMs: 250,
-    state2PauseMs: 750,
-    strongBurstMs: 500,
-    strongPauseMs: 1000,
-  },
-  {
-    smartProfile: 2,
-    profileLabel: 'B안',
-    profileSummary: '가장 보수적. state1 주입을 없애고 더 짧게 반응한 뒤 길게 관찰한다.',
-    state1GraceMs: 0,
-    state2DelayMs: 900,
-    strongDelayMs: 600,
-    strongRampMs: 500,
-    state2MildMinRawDelta: 50,
-    state2MildMaxRawDelta: 150,
-    state2MildMinNm: 0.5,
-    state2MildMaxNm: 1.5,
-    state2BurstMs: 150,
-    state2PauseMs: 1350,
-    strongBurstMs: 300,
-    strongPauseMs: 1700,
-  },
-  {
-    smartProfile: 3,
-    profileLabel: 'C안',
-    profileSummary: '1차 delay+torque 후보. state2는 600ms로 앞당기고 mild 상한을 1.7Nm까지 올리며 strong은 400ms/2.10Nm 유지.',
-    state1GraceMs: 500,
-    state2DelayMs: 600,
-    strongDelayMs: 400,
-    strongRampMs: 500,
-    state2MildMinRawDelta: 50,
-    state2MildMaxRawDelta: 170,
-    state2MildMinNm: 0.5,
-    state2MildMaxNm: 1.7,
-    state2BurstMs: 0,
-    state2PauseMs: 0,
-    strongBurstMs: 0,
-    strongPauseMs: 0,
-  },
-  {
-    smartProfile: 4,
-    profileLabel: 'D안',
-    profileSummary: 'C안 + 직선 저조향각 sign hold 후보. 토크와 timing은 C안과 같고 방향만 1.5초 유지.',
-    state1GraceMs: 500,
-    state2DelayMs: 600,
-    strongDelayMs: 400,
-    strongRampMs: 500,
-    state2MildMinRawDelta: 50,
-    state2MildMaxRawDelta: 170,
-    state2MildMinNm: 0.5,
-    state2MildMaxNm: 1.7,
-    state2BurstMs: 0,
-    state2PauseMs: 0,
-    strongBurstMs: 0,
-    strongPauseMs: 0,
-  },
-];
+const nagModes = {
+  1: { mode: 1, modeStr: 'MODE 1', modeSummary: '고정 +1.80Nm 에코. DAS/조향각 조건 없음.', requiresContext: false },
+  2: { mode: 2, modeStr: 'MODE 2', modeSummary: '4개 토크를 200ms 간격으로 1초 순환하고 1.5초 휴지.', requiresContext: false },
+  3: { mode: 3, modeStr: 'MODE 3', modeSummary: 'AP·DAS·조향각 최근 수신 상태를 확인하는 조건부 상태기계(기본).', requiresContext: true },
+};
 
-const scenarios = new Set(['normal', 'ap_block', 'bus_off', 'bus_err', 'no_frames']);
+const scenarios = new Set(['normal', 'a_warn', 'ap_block', 'bus_off', 'bus_err', 'no_frames']);
 const cli = parseArgs(process.argv.slice(2));
 
 function defaultSignalObserverSignals() {
@@ -113,8 +31,6 @@ function defaultToggles() {
     a_spi_8mhz: false,
     a_mcp_oneshot: false,
     a_tx_guard: false,
-    singleShotTx: false,
-    busOffStopSkip: false,
   };
 }
 
@@ -122,7 +38,7 @@ const state = {
   bootMs: Date.now(),
   scenario: scenarios.has(cli.scenario) ? cli.scenario : 'normal',
   theme: 'dark',
-  smartProfile: 0,
+  nagMode: 3,
   logHead: 0,
   logs: [],
   rec: false,
@@ -143,7 +59,7 @@ const state = {
 
 function resetMockNvsState() {
   state.theme = 'dark';
-  state.smartProfile = 0;
+  state.nagMode = 3;
   state.rec = false;
   state.recStartMs = 0;
   state.samples = 24;
@@ -171,7 +87,7 @@ function parseArgs(args) {
       out.explicitPort = true;
     } else if (arg === '--scenario' && args[i + 1]) out.scenario = args[++i];
     else if (arg === '--help' || arg === '-h') {
-      console.log('Usage: node scripts/mock_webui_server.mjs [--host 127.0.0.1] [--port 8787] [--scenario normal|ap_block|bus_off|bus_err|no_frames]');
+      console.log('Usage: node scripts/mock_webui_server.mjs [--host 127.0.0.1] [--port 8787] [--scenario normal|a_warn|ap_block|bus_off|bus_err|no_frames]');
       process.exit(0);
     }
   }
@@ -195,8 +111,8 @@ function elapsedSeconds() {
   return Math.floor(nowMs() / 1000);
 }
 
-function profile() {
-  return profiles[state.smartProfile] || profiles[0];
+function nagModeInfo() {
+  return nagModes[state.nagMode] || nagModes[3];
 }
 
 function pushLog(msg) {
@@ -205,9 +121,9 @@ function pushLog(msg) {
   if (state.logs.length > 100) state.logs.shift();
 }
 
-function clampProfile(value) {
-  const p = Number(value);
-  return p >= 0 && p <= 4 ? p : 0;
+function clampNagMode(value) {
+  const mode = Number(value);
+  return mode >= 1 && mode <= 3 ? mode : 3;
 }
 
 function send(res, status, contentType, body) {
@@ -393,7 +309,6 @@ function statusJson(url) {
   const logs = state.logs.filter((entry) => entry.head > logSince).map((entry) => ({ msg: entry.msg, ts: entry.ts }));
 
   return {
-    fsd_enabled: true,
     isa_speed_chime_suppress: false,
     emergency_vehicle_detection: false,
     summon_unlock_enabled: state.toggles.summon_unlock_enabled,
@@ -443,6 +358,10 @@ function statusJson(url) {
       txOk: c.noFrames || state.scenario === 'ap_block' ? 0 : Math.floor(c.aFrames / 3),
       txFail: 0,
       blocked: state.scenario === 'ap_block' ? Math.floor(c.aFrames / 3) : 0,
+      wake_count: c.noFrames ? 0 : 2,
+      wake_waiting_tx: false,
+      wake_to_tx_ms: c.noFrames ? 0 : 184,
+      last_wake_rx_ms: c.noFrames ? 0 : Math.max(0, uptimeMs - 5000),
       canState: 1,
       uptimeS: Math.floor(uptimeMs / 1000),
       hardware: 'HW3',
@@ -497,8 +416,6 @@ function statusJson(url) {
       a_channel: {
         frames_received: c.aFrames,
         frame_hz: c.noFrames ? 0 : 6.0,
-        frames_293: c.noFrames ? 0 : Math.floor(c.aFrames / 4),
-        id_293_period_ms: c.noFrames ? 0 : 667,
         frames_1016: c.noFrames ? 0 : Math.floor(c.aFrames / 2),
         id_1016_period_ms: c.noFrames ? 0 : 333,
         frames_1021: c.aFrames,
@@ -508,7 +425,6 @@ function statusJson(url) {
         frames_921: c.noFrames ? 0 : Math.floor(c.aFrames / 6),
         summon_unlock_modified: c.noFrames ? 0 : Math.floor(c.aFrames / 3),
         last_frame_id: c.noFrames ? 0 : 1021,
-        last_update_ms: uptimeMs,
         last_loop_ms: uptimeMs,
         core_id: 0,
         spi_freq_hz: state.toggles.a_spi_8mhz ? 8000000 : 10000000,
@@ -517,7 +433,7 @@ function statusJson(url) {
         mcp_one_shot: state.toggles.a_mcp_oneshot,
         channel_tx_enabled: state.toggles.a_channel_tx,
         tx_guard_enabled: state.toggles.a_tx_guard,
-        mcp_eflg: 0,
+        mcp_eflg: state.scenario === 'a_warn' ? 0x40 : 0,
         mcp_eflg_peak: 0x40,
         mcp_txbo_count: 0,
         mcp_recovery_attempt: 0,
@@ -535,18 +451,34 @@ function statusJson(url) {
         rec_peak: 0,
         last_frame_rx_ms: uptimeMs,
         last_tx_ms: uptimeMs,
-        eflg_event_count: 0,
+        eflg_event_count: state.scenario === 'a_warn' ? 1 : 0,
+        wake_count: c.noFrames ? 0 : 2,
+        last_wake_rx_ms: c.noFrames ? 0 : Math.max(0, uptimeMs - 5000),
+        wake_waiting_summon_tx: false,
+        wake_to_summon_tx_ms: c.noFrames ? 0 : 184,
         tx_guard_active: false,
         tx_guard_remaining_ms: 0,
         tx_guard_count: 0,
         tx_guard_skip: 0,
         tx_guard_reason: 'NONE',
+        driver_initialized: true,
         driver_ok: true,
         connected: fresh,
         fresh,
         task_alive: true,
         frame_age_ms: fresh ? 20 : 9000,
         loop_age_ms: 10,
+        health_state: state.scenario === 'a_warn' ? 'RX_OVERRUN' : c.noFrames ? 'NO_FRAMES' : 'OK',
+        health_reason: state.scenario === 'a_warn' ? 'MCP2515 수신 버퍼 오버런' : c.noFrames ? '최근 2초간 수신 프레임 없음' : '정상 수신 중',
+        health_level: state.scenario === 'a_warn' || c.noFrames ? 1 : 0,
+        eflg_rx1_overrun: false,
+        eflg_rx0_overrun: state.scenario === 'a_warn',
+        eflg_tx_bus_off: false,
+        eflg_tx_passive: false,
+        eflg_rx_passive: false,
+        eflg_tx_warning: false,
+        eflg_rx_warning: false,
+        eflg_warning: false,
       },
       b_channel: {
         frames_received: c.bFrames,
@@ -566,8 +498,8 @@ function statusJson(url) {
         das_hands_state: state.scenario === 'normal' ? 3 : 2,
         das_source_id: c.noFrames ? 0 : 923,
         last_das_status_rx_ms: uptimeMs,
-        nag_mode: 1,
-        smart_profile: state.smartProfile,
+        nag_mode: state.nagMode,
+        nag_mode_name: nagModeInfo().modeStr,
         echo_count: c.echo,
         echo_drop_late: 0,
         skip_runtime_or_inactive: 0,
@@ -576,7 +508,6 @@ function statusJson(url) {
         skip_das_state: 0,
         twai_state_code: twaiStateCode,
         last_frame_id: c.noFrames ? 0 : 880,
-        last_update_ms: uptimeMs,
         last_frame_rx_ms: uptimeMs,
         last_loop_ms: uptimeMs,
         core_id: 1,
@@ -590,6 +521,8 @@ function statusJson(url) {
         last_recovery_duration_ms: 0,
         twai_rx_err_peak: 0,
         twai_tx_err_peak: c.bBusOff ? 255 : 0,
+        twai_rx_err_now: 0,
+        twai_tx_err_now: c.bBusOff ? 255 : 0,
         arb_lost: c.noFrames ? 0 : 120 + c.t,
         bus_error: c.bBusErr ? 21 : 0,
         tx_failed: c.bBusOff ? 3 : 0,
@@ -604,11 +537,15 @@ function statusJson(url) {
         task_alive: true,
         frame_age_ms: fresh ? 8 : 9000,
         loop_age_ms: 8,
+        health_state: c.bBusOff ? 'BUS_OFF' : c.noFrames ? 'NO_FRAMES' : c.bBusErr ? 'ERROR_WARNING' : 'RUNNING',
+        health_reason: c.bBusOff ? 'TWAI BUS-OFF' : c.noFrames ? '최근 2초간 수신 프레임 없음' : c.bBusErr ? 'TWAI 버스 오류 증가' : '정상 수신 중',
+        health_level: c.bBusOff ? 2 : c.noFrames || c.bBusErr ? 1 : 0,
       },
     },
     signal_observer: observerStatusJson(c, uptimeMs),
     can: {
       state: c.bBusOff ? 'BUS_OFF' : 'RUNNING',
+      state_channel: 'B',
       rx_errors: 0,
       tx_errors: c.bBusOff ? 255 : 0,
       bus_errors: c.bBusErr ? 21 : 0,
@@ -618,29 +555,26 @@ function statusJson(url) {
       frames_received_a: c.aFrames,
       frames_received_b: c.bFrames,
       frames_sent: Math.floor(c.aFrames / 3) + c.echo,
+      frames_sent_a: Math.floor(c.aFrames / 3),
+      frames_sent_b: c.echo,
     },
   };
 }
 
 function nagConfigJson() {
   return {
-    mode: 1,
-    modeStr: 'SMART',
-    ...profile(),
+    ...nagModeInfo(),
+    defaultMode: state.nagMode === 3,
     targetId: 880,
-    hoRatePct: 100,
-    torque: [
-      { b2: 8, b3: 0xB6, nm: 1.8 },
-      { b2: 8, b3: 0x98, nm: 1.5 },
-      { b2: 7, b3: 0x6C, nm: -1.5 },
-      { b2: 7, b3: 0x4E, nm: -1.8 },
-    ],
+    torqueMinNm: -1.8,
+    torqueMaxNm: 1.8,
+    contextFreshMs: 1000,
+    steeringMaxAbsDeg: 5.0,
   };
 }
 
 function nagStatsJson() {
   const c = tickCounts();
-  const p = profile();
   const apBlocked = state.scenario === 'ap_block';
   const busOff = state.scenario === 'bus_off';
   const noFrames = state.scenario === 'no_frames';
@@ -662,19 +596,18 @@ function nagStatsJson() {
     tecPeak: busOff ? 255 : 0,
     canState,
     uptimeS: elapsedSeconds(),
-    mode: 1,
-    modeStr: 'SMART',
-    ...p,
+    ...nagModeInfo(),
     targetId: 880,
     dasApState: apBlocked ? 1 : 3,
     steerAngleDeg: apBlocked ? -0.6 : 1.4,
+    steeringValid: !noFrames,
     frames297: c.b297,
     modeBPhase: apBlocked ? 0 : 6,
     modeBInjects: c.injects,
     modeBLastNm: apBlocked ? 0 : 1.05,
     modeBStateAgeMs: apBlocked ? 65535 : 420,
     modeBPhaseAgeMs: apBlocked ? 65535 : 180,
-    modeBFirstEchoDelayMs: apBlocked ? 0 : p.state2DelayMs,
+    modeBFirstEchoDelayMs: apBlocked ? 0 : (state.nagMode === 3 ? 1000 : 1),
     boSoftMode: true,
     boSoftFallback: 0,
     singleShotTx: state.toggles.singleShotTx,
@@ -713,19 +646,24 @@ function timeseriesStatusJson() {
 }
 
 function canDiagLogJson() {
-  if (!state.diagStartedMs) return { state: 0, head: state.diagLogHead, lines: [] };
+  if (!state.diagStartedMs) return { state: 0, head: state.diagLogHead, complete_head: 0, lines: [] };
   const age = Date.now() - state.diagStartedMs;
   const lines = [
     'mock: A채널 MCP2515 프레임 수신 정상',
     `mock: B채널 TWAI 상태 ${state.scenario === 'bus_off' ? 'BUS-OFF' : 'RUNNING'}`,
-    `mock: Smart profile ${profile().profileLabel}`,
+    `mock: Nag mode ${nagModeInfo().modeStr}`,
     `mock: scenario=${state.scenario}`,
   ];
   const visible = Math.min(lines.length, Math.floor(age / 500) + 1);
   const since = state.diagLogHead;
   const nextLines = lines.slice(since, visible).map((msg, idx) => ({ msg, ts: nowMs() + idx }));
   state.diagLogHead = Math.max(state.diagLogHead, visible);
-  return { state: visible >= lines.length ? 2 : 1, head: state.diagLogHead, lines: nextLines };
+  return {
+    state: visible >= lines.length ? 2 : 1,
+    head: state.diagLogHead,
+    complete_head: visible >= lines.length ? lines.length : state.diagLogHead,
+    lines: nextLines,
+  };
 }
 
 function logsBundleText() {
@@ -736,7 +674,7 @@ function logsBundleText() {
     `Generated: ${new Date().toISOString()}`,
     'Firmware: mock-1.2.0',
     `Scenario: ${state.scenario}`,
-    `SmartProfile: ${profile().profileLabel}`,
+    `NagMode: ${nagModeInfo().modeStr}`,
     '',
     '=== [1] 런타임 로그 ===',
     `[mock] A RX=${c.aFrames} B RX=${c.bFrames} Echo=${c.echo}`,
@@ -832,14 +770,14 @@ async function handlePost(req, res, url) {
     return;
   }
 
-  if (url.pathname === '/api/nag-profile') {
-    state.smartProfile = clampProfile(url.searchParams.get('p'));
-    pushLog(`[mock] 스마트 프로파일 -> ${profile().profileLabel}`);
+  if (url.pathname === '/api/nag-mode') {
+    state.nagMode = clampNagMode(url.searchParams.get('m'));
+    pushLog(`[mock] Nag 모드 -> ${nagModeInfo().modeStr}`);
     sendJson(res, nagConfigJson());
     return;
   }
 
-  if (url.pathname === '/api/nag-mode' || url.pathname === '/api/nag-update') {
+  if (url.pathname === '/api/nag-update') {
     sendJson(res, nagConfigJson());
     return;
   }

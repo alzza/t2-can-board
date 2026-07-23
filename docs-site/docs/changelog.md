@@ -2,85 +2,66 @@
 sidebar_position: 99
 ---
 
-# Changelog
+# 변경 이력
 
-All notable changes to Tesla Open CAN Mod are documented here.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
----
+Tesla Open CAN Mod의 주요 변경 사항을 기록합니다. 형식은 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)을 따르며 버전은 [Semantic Versioning](https://semver.org/spec/v2.0.0.html)을 사용합니다.
 
 ## [Unreleased]
 
+### 변경
+
+- 새 NVS, NVS 초기화, OTA 안전 초기화에서 Nag Killer는 OFF, 선택은 MODE 3(기본)으로 시작.
+- `[기본]/A~D` 실험 프로파일을 폐기하고 검증된 MODE 1/2/3 UI/API로 교체.
+- 메인 화면을 A채널 Summon/TSLLC와 B채널 Nag Killer 상태 카드 중심으로 재배치.
+- CAN 자가 진단을 A/B 동시 검사와 HW3 DAS 921/923 경로 기준으로 개편.
+
+### 수정
+
+- OTA 시작 시 A/B 수정 송신 호출을 원자적으로 차단하고, 진행 중 호출 종료 확인 후 B TX 큐를 비우도록 보강.
+- 모든 Nag 모드에 -1.80~+1.80 Nm 최종 토크 상한 적용.
+- MODE 3에만 921/923·297 마지막 수신 후 1초 이내 조건, AP 3~6, validity=1, 조향각 ±5° 게이트 적용.
+- `twai_transmit()` 송신 요청 성공만 성공 카운터에 반영하고 자체 echo 재처리 차단.
+- A채널 일반 `WARN`을 RX 오버런·오류 경고·에러 패시브·BUS-OFF로 구분.
+- A/B 시계열·CAN 자가 진단·밀리초 이벤트 CSV와 재수신→첫 Summon TX 지연 계측 추가.
+- 실제 MCP2515 초기화 결과를 A채널 드라이버 상태에 반영하고 삭제된 실험 플래그·UI 참조 제거.
+
 ## [1.3.4] - 2026-07-22
 
-### Added
+### 추가
 
-- HW3 Conditional Summon Unlock with a Parked-or-Summoning transmission gate and Web UI diagnostics.
-- OTA boot-policy coverage and CAN-disabled recovery diagnostics.
+- Parked 또는 Summoning 상태 게이트와 Web UI 진단을 갖춘 HW3 조건부 Summon Unlock.
+- OTA 부팅 정책 테스트와 CAN을 시작하지 않는 복구 진단.
 
-### Changed
+### 변경
 
-- CAN-A is used for Summon Unlock and TSLLC; CAN-B is used for Nag Killer.
-- The normal Web UI is maintained as `web/web_ui.html` and synchronized into the firmware.
+- CAN-A는 Summon Unlock·TSLLC, CAN-B는 Nag Killer를 담당.
+- 일반 Web UI 원본을 `web/web_ui.html`로 유지하고 펌웨어에 동기화.
 
-### Fixed
+### 수정
 
-- Vehicle-impacting NVS values are loaded before CAN startup.
-- OTA and rollback failures now fail closed into a recovery UI with CAN disabled.
+- 차량 영향 NVS 값을 CAN 시작 전에 로드.
+- OTA와 rollback 오류 시 CAN을 비활성화한 복구 UI로 fail-closed 처리.
 
-## [1.1.0] - 2026-04-06
 
-### Added
+### 추가
 
-- Added m5stack-atoms3-mini-can-base as new ESP32 board
-- Added enhanced autopilot to enable summon related features and surpress some nags
+- M5Stack AtomS3 Mini CAN Base 지원과 Summon 관련 확장 오토파일럿 기능.
 
-### Fixed
+### 수정
 
-- HW3Handler: removed obsolete speed-offset-to-profile mapping that overwrote stalk-derived `speedProfile`
-- NagHandler: fixed incomplete torque override in echo frame — `data[2]` lower nibble now set to `0x08` to match fixed torque raw value `0x08B6` (1.80 Nm)
-- Fixed webui with the new features
+- HW3Handler의 오래된 speed-profile 매핑, NagHandler 토크 프레임, Web UI 기능 처리.
 
 ## [1.0.0] - 2026-04-05
 
-### Added
+### 추가
 
-- FSD activation bypass for HW3 and HW4 vehicles
-- `BYPASS_TLSSC_REQUIREMENT` build flag to bypass Tesla Live Service SC requirement for regions without traffic light toggle
-- Autosteer nag suppression via CAN frame interception
-- Autosteer Nag Killer hardware mode: echoes CAN frame 0x370 with counter+1 to suppress nag at hardware level (X179 connector, CAN bus 4)
-- ISA speed chime suppression for HW3 and HW4
-- Emergency vehicle detection and response
-- Speed profiles support (distance control stalk mapped)
-- Smart Summon support (EU region restriction removed)
-- ESP32 web dashboard for live CAN status and runtime settings
-- OTA firmware updates via web interface for ESP32 boards
-- Hardware support: Adafruit Feather RP2040 CAN
-- Hardware support: Adafruit Feather M4 CAN Express (tested)
-- Hardware support: ESP32 with TWAI driver
-- Hardware support: Adafruit Feather ESP32 V2 with MCP2515 CAN Featherwing
-- Hardware support: M5Stack Atomic CAN Base
-- Hardware support: LILYGO T-CAN485
-- CAN driver abstraction layer (MCP2515, SAME51, TWAI)
-- TWAI driver: non-blocking TX, bus-off cooldown and recovery, driver-fail guard
-- TWAI driver: DLC clamped to 8 bytes on read and send
-- DLC validation guards on all CAN frame handlers
-- Bounds check in `setBit()` to prevent buffer overrun
-- STL case model for Feather RP2040 CAN
-- FSD subscription guide for unsupported regions (Canadian account method)
-- Wiring guide for Tesla Model 3/Y including legacy connector pinouts
-- Comprehensive NagHandler unit test suite
+- HW3/HW4 FSD 관련 CAN 기능, Nag 억제, ISA 경고음 억제, 긴급 차량 감지, 속도 프로필, Smart Summon, Web UI, OTA.
+- MCP2515, SAME51, TWAI 드라이버와 여러 보드 지원 기반.
 
-### Fixed
+### 수정
 
-- Nag handler torque value: output is now fixed at safe 1.80 Nm (0x08B6) instead of copying torque from the original frame
-- FSDEnabled variable shadowing bug in HW3 and HW4 handlers
-- TWAI TX timeout changed from 0 ms to 2 ms to avoid bus starvation
+- Nag 토크 값, CAN counter/checksum, FSDEnabled 변수 가림, TWAI TX timeout.
 
-### Changed
+### 변경
 
-- Build flag renamed from `FORCE_FSD` / `FORCE_FSC` to `BYPASS_TLSSC_REQUIREMENT` for clarity
-- Arduino sketch renamed from `canFeather.ino` to `RP2040CAN.ino` for multi-board support
-- Firmware configuration consolidated: all user-selectable options moved to `sketch_config.h`
+- 빌드 플래그와 펌웨어 설정 구조 정리.

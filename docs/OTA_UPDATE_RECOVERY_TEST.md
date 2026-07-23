@@ -7,6 +7,8 @@
 - 차량은 안전하게 정차한 상태에서 진행한다.
 - 노트북 배터리와 차량 전원이 충분한 상태에서 진행한다.
 - OTA 중에는 보드 전원, USB-C 전원, 차량 CAN 배선을 건드리지 않는다.
+- OTA 버튼을 누르면 기존 기능 설정을 보존하지 않는다. A TX, Summon Unlock, TSLLC, Nag Killer는 OFF/stock 안전값으로 저장된다.
+- 업로드 시작 전 펌웨어가 새 A/B 수정 송신을 차단하고, 이미 시작된 소프트웨어 송신 호출이 끝난 뒤 B TX 큐를 비운다. 이 확인이 250ms 안에 끝나지 않으면 업로드는 시작하지 않는다.
 - 현재 보드 AP 주소는 `http://192.168.4.1/` 이다.
 - OTA 파일은 PlatformIO 빌드 산출물 `.pio/build/lilygo_t2can/firmware.bin` 을 사용한다.
 - `ota_pending` 상태 의미는 아래와 같다.
@@ -75,6 +77,7 @@ curl -v \
 - 정상 완료 시 `{"ok":true,"restarting":true}` 응답이 온다.
 - 응답 직후 보드가 재부팅한다.
 - 재부팅 중 Wi-Fi가 잠시 끊긴다.
+- 시리얼 로그에는 `CAN TX OFF/stock 저장 + A/B 송신 종료 확인`이 남는다. `송신 종료 확인 시간 초과` 또는 `TX queue clear 실패`가 보이면 OTA를 진행하지 말고 보드를 재부팅한 뒤 원인을 확인한다.
 
 주의:
 - `curl`이 마지막에 연결 종료 또는 timeout처럼 보이더라도, 보드가 재부팅 중이면 정상일 수 있다.
@@ -101,7 +104,9 @@ curl -s http://192.168.4.1/api/status | jq '{fw:.firmware_build_id,state:.ota_pe
 
 5. 정상 사용을 확정하려면 60초 안에 웹 배너의 `이 펌웨어 사용` 버튼을 누른다.
 
-6. 다시 상태 API를 확인한다.
+6. 확인 버튼을 누르기 전에는 차량 기능이 OFF 상태여야 한다. 정차 상태에서 A/B 수신, A EFLG, B TWAI 오류·BUS-OFF가 정상인지 먼저 보고, 필요한 기능만 하나씩 다시 켠다.
+
+7. 다시 상태 API를 확인한다.
 
 ```bash
 curl -s http://192.168.4.1/api/status | jq '{state:.ota_pending_state,fallback:.ota_fallback_label}'

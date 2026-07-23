@@ -49,7 +49,7 @@ inline constexpr bool kTsllcBuildEnabled = false;
 #endif
 
 #if defined(NAG_KILLER)
-inline constexpr bool kNagKillerDefaultEnabled = true;
+inline constexpr bool kNagKillerDefaultEnabled = false;
 inline constexpr bool kNagKillerBuildEnabled = true;
 #else
 inline constexpr bool kNagKillerDefaultEnabled = false;
@@ -90,6 +90,58 @@ inline Shared<uint32_t> aMcpSpiFreqHz{kAMcpDefaultSpiFreqHz};
 inline Shared<uint32_t> aMcpRequestedSpiFreqHz{kAMcpDefaultSpiFreqHz};
 inline Shared<bool> aMcpOneShotRuntime{kAMcpOneShotDefaultEnabled};
 inline Shared<bool> aTxGuardRuntime{kATxGuardDefaultEnabled};
+
+// OTA 시작 경계에서만 쓰는 송신 차단 장치.
+// 기능 토글 OFF만으로는 다른 코어의 CAN 핸들러가 이미 sendCheck() 직전까지
+// 진행한 경우를 막지 못한다. OTA 핸들러는 먼저 quiescing을 설정하고, 이미
+// 허가된 수정 송신이 끝난 뒤에만 플래시 쓰기를 시작한다.
+inline Shared<bool> canTxQuiescing{false};
+inline Shared<uint32_t> canTxInFlight{0};
+
+#ifdef NATIVE_BUILD
+inline bool canTxPermitBegin()
+{
+    if (canTxQuiescing) return false;
+    ++canTxInFlight;
+    return true;
+}
+inline void canTxPermitEnd()
+{
+    if (canTxInFlight > 0) --canTxInFlight;
+}
+inline void canTxQuiesceBegin() { canTxQuiescing = true; }
+inline void canTxQuiesceCancel() { canTxQuiescing = false; }
+#else
+inline portMUX_TYPE canTxQuiesceMux = portMUX_INITIALIZER_UNLOCKED;
+inline bool canTxPermitBegin()
+{
+    portENTER_CRITICAL(&canTxQuiesceMux);
+    const bool allowed = !(bool)canTxQuiescing;
+    if (allowed) canTxInFlight = (uint32_t)canTxInFlight + 1;
+    portEXIT_CRITICAL(&canTxQuiesceMux);
+    return allowed;
+}
+inline void canTxPermitEnd()
+{
+    portENTER_CRITICAL(&canTxQuiesceMux);
+    if ((uint32_t)canTxInFlight > 0) canTxInFlight = (uint32_t)canTxInFlight - 1;
+    portEXIT_CRITICAL(&canTxQuiesceMux);
+}
+inline void canTxQuiesceBegin()
+{
+    portENTER_CRITICAL(&canTxQuiesceMux);
+    canTxQuiescing = true;
+    portEXIT_CRITICAL(&canTxQuiesceMux);
+}
+inline void canTxQuiesceCancel()
+{
+    portENTER_CRITICAL(&canTxQuiesceMux);
+    canTxQuiescing = false;
+    portEXIT_CRITICAL(&canTxQuiesceMux);
+}
+#endif
+
+inline bool canTxQuiesceIdle() { return (uint32_t)canTxInFlight == 0; }
 
 // Validated SummonUnlock gate state (HW3): inject only while parked or summoning.
 inline constexpr uint32_t kSummonParkedTimeoutMs = 5000;
@@ -495,6 +547,7 @@ inline constexpr uint8_t kATxGuardReasonEflg = 2;
 inline constexpr uint8_t kATxGuardReasonTxFail = 3;
 inline constexpr uint32_t kATxGuardDurationMs = 15000;
 inline constexpr uint8_t kATxGuardTecThreshold = 24;
+inline constexpr uint32_t kAChannelWakeGapMs = 2000;
 inline constexpr uint32_t kAMcpBusOffRecoverIntervalMs = 1000;
 inline constexpr uint32_t kAMcpBusOffRestartFallbackMs = 10000;
 
@@ -629,8 +682,6 @@ inline uint8_t nagIntervalDecision(uint32_t d880, uint32_t dDasStatus, uint32_t 
 struct BChannelDiagnostics {
     Shared<bool> driverBInitialized{false};      // driverB->init() 성공 여부
     Shared<bool> nagTaskCreated{false};          // xTaskCreatePinnedToCore 성공 여부
-    Shared<bool> twaiConnected{false};           // TWAI 연결 상태
-    Shared<bool> lastTwaiOk{false};              // 마지막 read() 성공 여부
     Shared<uint32_t> frameIdReceived{0};         // 마지막 수신 프레임 ID
     Shared<uint32_t> framesReceivedTotal{0};     // 총 수신 프레임 수
     Shared<float>    frameHz{0.0f};              // B채널 ID 880 수신 속도 (Hz)
@@ -685,10 +736,10 @@ struct BChannelDiagnostics {
     Shared<uint32_t> nagFiredNoDas{0};           // DAS_status 미수신 상태에서 에코 발사 누적
     Shared<uint32_t> echoDroppedLate{0};         // 수신→에코 6ms 초과로 드롭된 에코 수 (ECU TX 충돌 방지)
     // ── Mode B (스마트 상태머신) 진단 필드 ──────────────────────────────────
-    Shared<uint8_t>  nagMode{1};                     // 호환용 모드 값 (현재는 스마트 토크 고정)
-    Shared<uint8_t>  smartProfile{0};                // 스마트 토크 실험 프로파일 (0=기본, 1=A안, 2=B안, 3=C안, 4=D안)
+    Shared<uint8_t>  nagMode{3};                     // 1=고정, 2=순환, 3=조건부 상태기계(기본)
     Shared<uint8_t>  dasAutopilotStateRx{0};         // DAS_status DAS_autopilotState (0|4@1+)
     Shared<float>    steeringAngleDeg{0.0f};         // ID 297 SCCM_steeringAngle (deg)
+    Shared<bool>     steeringAngleValid{false};      // ID 297 validity == 1
     Shared<uint32_t> frames297{0};                   // ID 297 수신 프레임 수
     Shared<uint32_t> last297RxMs{0};                 // 마지막 297 수신 시각
     // Mode B 상태머신 페이즈 (0=idle 1=grace 2=state2_delay 3=state2_mild 4=strong_delay 5=strong_ramp 6=strong_hold)
@@ -701,7 +752,6 @@ struct BChannelDiagnostics {
     // BUS-OFF 복구 쿨다운 (ms): 웹 UI /api/busoff-cooldown으로 런타임 조정 가능
     // 300~10000ms 범위, 기본 1000ms. nagKillerTask → driverB->setCooldownMs() 경로로 적용
     Shared<uint32_t> busoffCooldownMs{1000};
-    Shared<uint32_t> lastStatusUpdateMs{0};      // 마지막 상태 업데이트 시각
     Shared<uint32_t> lastFrameRxMs{0};           // 마지막 B채널 프레임 수신 시각
     Shared<uint32_t> lastLoopMs{0};              // 마지막 B태스크 루프 시각
     Shared<int32_t> taskCoreId{-1};              // B채널 태스크가 실행 중인 코어 ID
@@ -713,6 +763,7 @@ inline BChannelDiagnostics bChannelDiag;
 // 👇 [추가] A채널 상태 추적 변수
 // ===================================================================
 struct AChannelDiagnostics {
+    Shared<bool>     driverInitialized{false};  // MCP2515 init() 실제 성공 여부
     Shared<uint32_t> framesReceivedTotal{0};     // 총 수신 프레임 수
     Shared<float>    frameHz{0.0f};              // A채널 수신 프레임레이트 (Hz)
     Shared<uint32_t> frames280{0};               // DI_systemStatus 프레임 수
@@ -723,7 +774,6 @@ struct AChannelDiagnostics {
     Shared<uint32_t> summonUnlockModifiedCount{0}; // 조건부 Summon Unlock 적용 횟수
     Shared<uint32_t> tsllcModifiedCount{0};       // TSLLC 주입 횟수 (스톱/초록불 비트 세팅)
     Shared<uint32_t> lastFrameIdReceived{0};     // 마지막 수신 프레임 ID
-    Shared<uint32_t> lastStatusUpdateMs{0};      // 마지막 상태 업데이트 시각
     Shared<uint32_t> lastLoopMs{0};              // 마지막 A루프 실행 시각
     Shared<int32_t> loopCoreId{-1};              // A채널 루프가 실행 중인 코어 ID
     // MCP2515 EFLG 에러 상태 (5초 주기 폴링, Normal Mode 유지)
@@ -732,7 +782,7 @@ struct AChannelDiagnostics {
     Shared<uint8_t>  mcpEflg{0};                // 현재 EFLG 레지스터 값
     Shared<uint8_t>  mcpEflgPeak{0};            // 세션 내 최악 EFLG (누적 OR)
     Shared<uint32_t> mcpTxBoCount{0};           // BUS-OFF 진입 횟수 (TXBO 비트 감지)
-    // ── A채널 송수신 진단 카운터 (5초 폴링 + handler 호출 경로) ──────────────
+    // ── A채널 송수신 진단 카운터 (1초 EFLG 폴링 + handler 호출 경로) ─────────
     // 가설 분리용 핵심 신호:
     //  · aTxOk/aTxFail : sendCheck() 결과. Fail↑ + MERRF↑ → ALLTXBUSY 또는 ACK부재
     //  · aTec/aRec     : 0~255 실시간 카운터. Peak로 BUS-OFF 임박 추적
@@ -758,9 +808,29 @@ struct AChannelDiagnostics {
     Shared<uint32_t> aTxGuardCount{0};         // 보호모드 진입 횟수
     Shared<uint32_t> aTxGuardSkipCount{0};     // 보호모드로 TSLLC/Summon 송신을 건너뛴 횟수
     Shared<uint8_t>  aTxGuardLastReason{0};    // kATxGuardReason*
+    Shared<uint32_t> wakeCount{0};             // 2초 이상 수신 공백 뒤 A채널 재수신 횟수
+    Shared<uint32_t> lastWakeRxMs{0};          // 최근 A채널 재수신 시작 시각
+    Shared<bool>     wakeAwaitingSummonTx{false}; // 재수신 뒤 첫 Summon TX 대기
+    Shared<uint32_t> wakeToSummonTxMs{0};      // 최근 재수신 시작→첫 Summon TX 성공 지연
 };
 
 inline AChannelDiagnostics aChannelDiag;
+
+inline const char* aMcpEflgStateName(uint8_t eflg)
+{
+    if (eflg & 0x20U) return "BUS_OFF";
+    if (eflg & 0x18U) return "ERROR_PASSIVE";
+    if (eflg & 0xC0U) return "RX_OVERRUN";
+    if (eflg & 0x07U) return "ERROR_WARNING";
+    return "OK";
+}
+
+inline uint8_t aMcpEflgSeverity(uint8_t eflg)
+{
+    if (eflg & 0x20U) return 2;  // error
+    if (eflg != 0) return 1;     // warning
+    return 0;
+}
 
 inline bool aTxGuardActive(uint32_t nowMs)
 {
@@ -888,8 +958,7 @@ inline void setBit(CanFrame &frame, int bit, bool value)
 }
 
 // ===================================================================
-// [B채널] Nag Killer 런타임 설정 구조체
-// 현재 실차 기준은 스마트 토크 / ID 880 고정이다. 일부 필드는 NVS/API 호환용으로 유지한다.
+// [B채널] HW3 Nag Killer MODE 1/2/3 런타임 설정
 // ===================================================================
 
 // 토크 하드 캡 (펌웨어에서 강제, 대시보드에서 초과 불가)
@@ -897,177 +966,37 @@ inline void setBit(CanFrame &frame, int bit, bool value)
 //   -1.80 Nm = raw 1870 = 0x74E
 inline constexpr uint16_t kNagTorqueRawMax = 0x8B6;
 inline constexpr uint16_t kNagTorqueRawMin = 0x74E;
-inline constexpr uint8_t  kNagMaxTorqueEntries = 8;
+inline constexpr uint8_t kNagMode1 = 1;
+inline constexpr uint8_t kNagMode2 = 2;
+inline constexpr uint8_t kNagMode3 = 3;
+inline constexpr uint8_t kNagModeDefault = kNagMode3;
 
-// legacy NVS/API mode 값은 읽지 않고 스마트 상태머신 값만 기록한다.
-inline constexpr uint8_t kNagModeB      = 1;
-
-inline constexpr uint8_t kNagSmartProfileDefault = 0;
-inline constexpr uint8_t kNagSmartProfileA       = 1;
-inline constexpr uint8_t kNagSmartProfileB       = 2;
-inline constexpr uint8_t kNagSmartProfileC       = 3;
-inline constexpr uint8_t kNagSmartProfileD       = 4;
-
-struct NagSmartProfileSettings {
-    uint8_t id;
-    const char *label;
-    const char *summary;
-    uint16_t state1GraceMs;
-    uint16_t state2DelayMs;
-    uint16_t strongDelayMs;
-    uint16_t strongRampMs;
-    uint16_t state2MildMinRawDelta;
-    uint16_t state2MildMaxRawDelta;
-    uint16_t state2BurstMs;
-    uint16_t state2PauseMs;
-    uint16_t strongBurstMs;
-    uint16_t strongPauseMs;
-};
-
-// 2026-05-09 실차 로그 canmod_20260509_165201 기준 1차 조정.
-// AP=3 허용 구간 첫 echo가 2000/1000ms로 늦어 state2/strong 지연만 줄이고 AP gate는 유지한다.
-inline constexpr uint16_t kNagModeBState1GraceMs = 500;
-inline constexpr uint16_t kNagModeBState2DelayMs = 700;
-inline constexpr uint16_t kNagModeBStrongDelayMs = 400;
-inline constexpr uint16_t kNagModeBStrongRampMs = 500;
-inline constexpr uint16_t kNagModeBState2MildMinRawDelta = 50;   // 0.50 Nm
-inline constexpr uint16_t kNagModeBState2MildMaxRawDelta = 150;  // 1.50 Nm
-
-inline constexpr NagSmartProfileSettings kNagSmartProfileDefaultSettings = {
-    kNagSmartProfileDefault,
-    "기본",
-    "현재 검증 기준. 700/400ms 타이밍을 유지하고 조건이 맞는 동안 연속 관찰 주입.",
-    kNagModeBState1GraceMs,
-    kNagModeBState2DelayMs,
-    kNagModeBStrongDelayMs,
-    kNagModeBStrongRampMs,
-    kNagModeBState2MildMinRawDelta,
-    kNagModeBState2MildMaxRawDelta,
-    0,
-    0,
-    0,
-    0,
-};
-
-inline constexpr NagSmartProfileSettings kNagSmartProfileASettings = {
-    kNagSmartProfileA,
-    "A안",
-    "초기 grace를 줄이고 짧은 burst 후 쉬는 구간을 둔다.",
-    150,
-    kNagModeBState2DelayMs,
-    kNagModeBStrongDelayMs,
-    kNagModeBStrongRampMs,
-    kNagModeBState2MildMinRawDelta,
-    kNagModeBState2MildMaxRawDelta,
-    250,
-    750,
-    500,
-    1000,
-};
-
-inline constexpr NagSmartProfileSettings kNagSmartProfileBSettings = {
-    kNagSmartProfileB,
-    "B안",
-    "가장 보수적. state1 주입을 없애고 더 짧게 반응한 뒤 길게 관찰한다.",
-    0,
-    900,
-    600,
-    kNagModeBStrongRampMs,
-    kNagModeBState2MildMinRawDelta,
-    kNagModeBState2MildMaxRawDelta,
-    150,
-    1350,
-    300,
-    1700,
-};
-
-inline constexpr NagSmartProfileSettings kNagSmartProfileCSettings = {
-    kNagSmartProfileC,
-    "C안",
-    "1차 delay+torque 후보. state2는 600ms로 앞당기고 mild 상한을 1.7Nm까지 올리며 strong은 400ms/2.10Nm 유지.",
-    kNagModeBState1GraceMs,
-    600,
-    kNagModeBStrongDelayMs,
-    kNagModeBStrongRampMs,
-    kNagModeBState2MildMinRawDelta,
-    170,
-    0,
-    0,
-    0,
-    0,
-};
-
-inline constexpr NagSmartProfileSettings kNagSmartProfileDSettings = {
-    kNagSmartProfileD,
-    "D안",
-    "C안 + 직선 저조향각 sign hold 후보. 토크와 timing은 C안과 같고 방향만 1.5초 유지.",
-    kNagModeBState1GraceMs,
-    600,
-    kNagModeBStrongDelayMs,
-    kNagModeBStrongRampMs,
-    kNagModeBState2MildMinRawDelta,
-    170,
-    0,
-    0,
-    0,
-    0,
-};
-
-inline uint8_t nagSmartProfileClamp(uint8_t profile) {
-    return (profile <= kNagSmartProfileD) ? profile : kNagSmartProfileDefault;
+inline uint8_t nagModeClamp(uint8_t mode) {
+    return (mode >= kNagMode1 && mode <= kNagMode3) ? mode : kNagModeDefault;
 }
 
-inline const NagSmartProfileSettings& nagSmartProfileSettings(uint8_t profile) {
-    switch (nagSmartProfileClamp(profile)) {
-    case kNagSmartProfileA: return kNagSmartProfileASettings;
-    case kNagSmartProfileB: return kNagSmartProfileBSettings;
-    case kNagSmartProfileC: return kNagSmartProfileCSettings;
-    case kNagSmartProfileD: return kNagSmartProfileDSettings;
-    default: return kNagSmartProfileDefaultSettings;
+inline const char *nagModeName(uint8_t mode) {
+    switch (nagModeClamp(mode)) {
+    case kNagMode1: return "MODE 1";
+    case kNagMode2: return "MODE 2";
+    default: return "MODE 3";
+    }
+}
+
+inline const char *nagModeSummary(uint8_t mode) {
+    switch (nagModeClamp(mode)) {
+    case kNagMode1: return "고정 +1.80Nm 에코. DAS/조향각 조건 없음.";
+    case kNagMode2: return "4개 토크를 200ms 간격으로 1초 순환하고 1.5초 휴지.";
+    default: return "AP·DAS·조향각 최근 수신 상태를 확인하는 조건부 상태기계(기본).";
     }
 }
 
 struct NagConfig {
-    uint8_t  mode;                              // 호환용: 현재 항상 kNagModeB
-    uint8_t  smartProfile;                      // 스마트 토크 실험 프로파일
-    uint16_t targetId;                          // 현재 항상 kNagFixedTargetId(880)
-    uint8_t  torqueCount;                       // 호환용
-    uint8_t  torqueB2[kNagMaxTorqueEntries];    // 호환용
-    uint8_t  torqueB3[kNagMaxTorqueEntries];    // 호환용
-    uint8_t  hoRatePct;                         // 호환용
+    uint8_t mode;
 };
 
-inline void nagCfgDefaultsSmart(NagConfig &c) {
-    c.mode         = kNagModeB;
-    c.smartProfile = kNagSmartProfileDefault;
-    c.targetId     = kNagFixedTargetId;
-    c.torqueCount  = 1;
-    for (uint8_t i = 0; i < kNagMaxTorqueEntries; ++i) {
-        c.torqueB2[i] = 0;
-        c.torqueB3[i] = 0;
-    }
-    c.torqueB2[0]  = 0x08;  // +1.80 Nm
-    c.torqueB3[0]  = 0xB6;
-    c.hoRatePct    = 100;
-}
-
-// 토크 값 하드 캡 적용 (b2 하위 니블 + b3 조합으로 raw 계산 후 클램프)
-inline void nagCfgClampTorque(uint8_t &b2, uint8_t &b3) {
-    uint16_t raw = static_cast<uint16_t>(((b2 & 0x0F) << 8) | b3);
-    if (raw > kNagTorqueRawMax) raw = kNagTorqueRawMax;
-    if (raw < kNagTorqueRawMin) raw = kNagTorqueRawMin;
-    b2 = (b2 & 0xF0) | static_cast<uint8_t>((raw >> 8) & 0x0F);
-    b3 = static_cast<uint8_t>(raw & 0xFF);
-}
-
-inline void nagCfgClampAll(NagConfig &c) {
-    c.mode = kNagModeB;
-    c.smartProfile = nagSmartProfileClamp(c.smartProfile);
-    if (c.torqueCount < 1) c.torqueCount = 1;
-    if (c.torqueCount > kNagMaxTorqueEntries) c.torqueCount = kNagMaxTorqueEntries;
-    if (c.hoRatePct > 100) c.hoRatePct = 100;
-    for (uint8_t i = 0; i < c.torqueCount; i++)
-        nagCfgClampTorque(c.torqueB2[i], c.torqueB3[i]);
+inline void nagCfgDefaults(NagConfig &c) {
+    c.mode = kNagModeDefault;
 }
 
 inline NagConfig nagConfig;

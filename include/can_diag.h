@@ -9,7 +9,7 @@
 
 enum class DiagState : uint8_t { IDLE = 0, RUNNING = 1, DONE = 2 };
 
-// 전용 진단 로그 버퍼 (기존 logRing과 분리, 32항목 — 체크리스트 전용)
+// 전용 진단 로그 버퍼 (기존 logRing과 분리, 64항목 — 체크리스트 전용)
 inline LogRingBuffer diagLog;
 inline volatile DiagState diagState = DiagState::IDLE;
 
@@ -22,28 +22,35 @@ inline volatile DiagState diagState = DiagState::IDLE;
 static portMUX_TYPE diagMux = portMUX_INITIALIZER_UNLOCKED;
 
 static void canDiagTaskFn(void* /*pv*/) {
-    char buf[128];
+    char buf[192];
     bool ok = true;
 
-    // 정상 기준: 스마트 토크 / ID 880 고정
+    // 정상 기준: 검증된 MODE 1/2/3 / ID 880 고정
     uint16_t targetId = kNagFixedTargetId;
-    uint8_t  smartProfile = nagSmartProfileClamp((uint8_t)bChannelDiag.smartProfile);
+    uint8_t  nagMode = nagModeClamp((uint8_t)bChannelDiag.nagMode);
 
     auto L = [](const char* m) { diagLog.push(m, millis()); };
 
     L("══ CAN 자가 진단 시작 ══");
 
     // ──────────────────────────────────────────────────────────
-    // [1/6] TWAI 드라이버 & 태스크 상태
+    // [1/6] A/B 드라이버 & 통합 태스크 상태
     // ──────────────────────────────────────────────────────────
-    L("[1/6] TWAI 드라이버 & NagTask 상태");
+    L("[1/6] A/B 드라이버 & 통합 CAN 태스크 상태");
     uint8_t sc = (uint8_t)bChannelDiag.twaiStateCode;
     bool nagOk = (bool)bChannelDiag.nagTaskCreated;
-    snprintf(buf, sizeof(buf), "  TWAI: %s | NagTask: %s",
+    bool aInit = (bool)aChannelDiag.driverInitialized;
+    uint32_t now1 = millis();
+    uint32_t aLoopAge = (uint32_t)aChannelDiag.lastLoopMs
+                            ? now1 - (uint32_t)aChannelDiag.lastLoopMs : UINT32_MAX;
+    snprintf(buf, sizeof(buf), "  A MCP2515:%s Loop:%s(%ums) | B TWAI:%s Task:%s",
+        aInit ? "OK" : "ERROR",
+        aLoopAge <= 2000 ? "OK" : "LAG",
+        aLoopAge == UINT32_MAX ? 0U : (unsigned)aLoopAge,
         sc==1?"running":sc==2?"BUS_OFF":"init/error",
         nagOk ? "OK" : "ERROR");
     L(buf);
-    if (sc == 0 || !nagOk) {
+    if (!aInit || aLoopAge > 2000 || sc == 0 || !nagOk) {
         L("  \u274c \ub4dc\ub77c\uc774\ubc84/\ud0dc\uc2a4\ud06c \ubbf8\ucd08\uae30\ud654 \u2192 \uc804\uc6d0\xb7\ubc30\uc120 \ud655\uc778 \ud6c4 \uc7ac\ubd80\ud305");
         ok = false;
     } else if (sc == 2) {
@@ -56,7 +63,7 @@ static void canDiagTaskFn(void* /*pv*/) {
         L("  \u26a0\ufe0f \uc8fc\uc758: Nag Killer \uae30\ub2a5\uc774 \ud604\uc7ac OFF \uc0c1\ud0dc\uc785\ub2c8\ub2e4. "
           "(\uc774\ud6c4 [4/6] \ub2e8\uacc4\uc5d0\uc11c \uc5d0\ucf54\uac00 \ubc1c\uc0dd\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4)");
     }
-    snprintf(buf, sizeof(buf), "  SmartProfile:%u | \ub300\uc0c1ID: 0x%03X", smartProfile, targetId);
+    snprintf(buf, sizeof(buf), "  NagMode:%s | \ub300\uc0c1ID: 0x%03X", nagModeName(nagMode), targetId);
     L(buf);
     vTaskDelay(pdMS_TO_TICKS(200));
 
@@ -64,9 +71,15 @@ static void canDiagTaskFn(void* /*pv*/) {
     // [2/6] 버스 트래픽 관측 (5초)
     // ──────────────────────────────────────────────────────────
     L("[2/6] \ubc84\uc2a4 \ud2b8\ub798\ud53d \uad00\uce21 (5\ucd08)...");
+    uint32_t s_a_tot = (uint32_t)aChannelDiag.framesReceivedTotal;
+    uint32_t s_a_fail = (uint32_t)aChannelDiag.aTxFail;
+    uint32_t s_a_merrf = (uint32_t)aChannelDiag.aMerrfCount;
+    uint32_t s_a_ovr = (uint32_t)aChannelDiag.aRxOvrCount;
+    uint32_t s_a_eflg_ev = (uint32_t)aChannelDiag.mcpEflgEventCount;
     uint32_t s_tot = (uint32_t)bChannelDiag.framesReceivedTotal;
     uint32_t s_tgt = (uint32_t)bChannelDiag.frames880;  // nagTargetId 기준 카운터
     uint32_t s_921 = (uint32_t)bChannelDiag.frames921;
+    uint32_t s_923 = (uint32_t)bChannelDiag.frames923;
     // (a) ArbLost/BusErr/TxFail 스냅샷
     uint32_t s_arb  = (uint32_t)bChannelDiag.bArbLost;
     uint32_t s_berr = (uint32_t)bChannelDiag.bBusError;
@@ -80,19 +93,41 @@ static void canDiagTaskFn(void* /*pv*/) {
         if (curDas != prevDas && curDas != 0xFF && prevDas != 0xFF) ++dasChanges;
         prevDas = curDas;
     }
+    uint32_t d_a_tot = (uint32_t)aChannelDiag.framesReceivedTotal - s_a_tot;
+    uint32_t d_a_fail = (uint32_t)aChannelDiag.aTxFail - s_a_fail;
+    uint32_t d_a_merrf = (uint32_t)aChannelDiag.aMerrfCount - s_a_merrf;
+    uint32_t d_a_ovr = (uint32_t)aChannelDiag.aRxOvrCount - s_a_ovr;
+    uint32_t d_a_eflg_ev = (uint32_t)aChannelDiag.mcpEflgEventCount - s_a_eflg_ev;
     uint32_t d_tot = (uint32_t)bChannelDiag.framesReceivedTotal - s_tot;
     uint32_t d_tgt = (uint32_t)bChannelDiag.frames880 - s_tgt;
     uint32_t d_921 = (uint32_t)bChannelDiag.frames921 - s_921;
+    uint32_t d_923 = (uint32_t)bChannelDiag.frames923 - s_923;
     uint32_t d_arb  = (uint32_t)bChannelDiag.bArbLost  - s_arb;
     uint32_t d_berr = (uint32_t)bChannelDiag.bBusError - s_berr;
     uint32_t d_tfail = (uint32_t)bChannelDiag.txFail   - s_tfail;
-    snprintf(buf, sizeof(buf), "  \uc804\uccb4+%u | ID0x%03X+%u | ID921+%u | Hz=%.1f",
-        d_tot, targetId, d_tgt, d_921, (float)bChannelDiag.frameHz);
+    snprintf(buf, sizeof(buf), "  A RX+%u %.1fHz EFLG=0x%02X(%s) | B RX+%u ID0x%03X+%u",
+        d_a_tot, (double)(float)aChannelDiag.frameHz,
+        (unsigned)(uint8_t)aChannelDiag.mcpEflg,
+        aMcpEflgStateName((uint8_t)aChannelDiag.mcpEflg),
+        d_tot, targetId, d_tgt);
     L(buf);
-    snprintf(buf, sizeof(buf), "  ArbLost+%u | BusErr+%u | TxFail+%u", d_arb, d_berr, d_tfail);
+    snprintf(buf, sizeof(buf), "  A Fail+%u MERRF+%u RX-OVR+%u EFLG-EV+%u | B Arb+%u BusErr+%u TxFail+%u",
+        d_a_fail, d_a_merrf, d_a_ovr, d_a_eflg_ev, d_arb, d_berr, d_tfail);
+    L(buf);
+    snprintf(buf, sizeof(buf), "  A 재수신:%u회 | 재수신→첫 Summon TX:%s%ums",
+        (unsigned)(uint32_t)aChannelDiag.wakeCount,
+        (bool)aChannelDiag.wakeAwaitingSummonTx ? "측정중/" : "",
+        (unsigned)(uint32_t)aChannelDiag.wakeToSummonTxMs);
     L(buf);
     if (d_arb > 5 || d_berr > 5) {
         L("  \u26a0\ufe0f  \ucda9\ub3cc/\ube44\ud2b8 \uc5d0\ub7ec \uc99d\uac00 \u2192 \ub3d9\uc77c ID \uacbd\uc7c1 \ub610\ub294 \ubb3c\ub9ac \uacc4\uce35 \ub178\uc774\uc988 \uc758\uc2ec");
+    }
+    if (d_a_tot == 0) {
+        L("  \u274c A\ucc44\ub110 \uc218\uc2e0 \uc5c6\uc74c \u2192 MCP2515 \ucd08\uae30\ud654\u00b7SPI\u00b7\ud544\ud130\u00b7CAN \ubc30\uc120 \ud655\uc778");
+        ok = false;
+    }
+    if (d_a_ovr > 0 || d_a_merrf > 0 || d_a_eflg_ev > 0) {
+        L("  \u26a0\ufe0f A\ucc44\ub110 \uc624\ub958 \uc774\ubca4\ud2b8 \uc99d\uac00 \u2192 CSV\uc758 A EFLG/\uc624\ubc84\ub7f0 \uc5f4 \ud655\uc778");
     }
     if (d_tot == 0) {
         L("  \u274c \uc218\uc2e0 \uc5c6\uc74c \u2192 \uba3c\uc800 \ucc28\ub7c9 \uc804\uc6d0(\uc2dc\ub3d9)\uc774 \ucf1c\uc838 \uc788\ub294\uc9c0 \ud655\uc778 "
@@ -112,19 +147,18 @@ static void canDiagTaskFn(void* /*pv*/) {
     }
 
     // ──────────────────────────────────────────────────────────
-    // [3/6] ID 921 / DAS 핸즈온 상태
+    // [3/6] ID 921/923 / DAS 핸즈온 상태
     // ──────────────────────────────────────────────────────────
-    L("[3/6] ID 921 / DAS \ud578\uc988\uc628 \uc0c1\ud0dc");
+    L("[3/6] ID 921/923 / DAS \ud578\uc988\uc628 \uc0c1\ud0dc");
     uint8_t das = (uint8_t)bChannelDiag.dasHandsOnStateRx;
-    snprintf(buf, sizeof(buf), "  921+%u | dasState=0x%02X (%s) | \ubcc0\ud654:%u\ud68c",
-        d_921, das,
+    snprintf(buf, sizeof(buf), "  921+%u 923+%u source=%u | dasState=0x%02X (%s) | \ubcc0\ud654:%u\ud68c",
+        d_921, d_923, (unsigned)(uint32_t)bChannelDiag.dasStatusSourceId, das,
         das==0xFF ? "\ubbf8\uc218\uc2e0" :
         (das==0||das==8) ? "\ud578\uc988\uc624\ud504" : "\uacbd\uace0\uc911",
         dasChanges);
     L(buf);
-    if (d_921 == 0 || das == 0xFF) {
-        L("  \u26a0\ufe0f  921 \ubbf8\uc218\uc2e0 \u2192 dasState=0xFF \uace0\ucc29 \u2192 \ud0ac\ub7ec skipDasState \uc601\uad6c \ubc1c\ub3d9");
-        L("  \uc5f0\uad6c: 921 \uc5c6\uc73c\uba74 \ud578\ub4e4\ub7ec.h DAS \uccb4\ud06c \ub85c\uc9c1 \ube44\ud65c\uc131 \uac80\ud1a0 \ud544\uc694");
+    if ((d_921 + d_923) == 0 || das == 0xFF) {
+        L("  \u26a0\ufe0f 921/923 \ubbf8\uc218\uc2e0 \u2192 MODE 3 \ucd5c\uadfc \uc218\uc2e0 \uc870\uac74\uc744 \ucda9\uc871\ud560 \uc218 \uc5c6\uc74c");
     } else if (das == 0 || das == 8) {
         L("  \u2139\ufe0f  \ud578\uc988\uc624\ud504 (\uacbd\uace0 \uc5c6\uc74c, \ud0ac\ub7ec \ub300\uae30 \uc911 - \uc815\uc0c1)");
     } else {
@@ -183,30 +217,48 @@ static void canDiagTaskFn(void* /*pv*/) {
     // ──────────────────────────────────────────────────────────
     // [5/6] TEC/REC 에러 카운터 분석 (3초)
     // ──────────────────────────────────────────────────────────
-    L("[5/6] TEC/REC \uc5d0\ub7ec \uce74\uc6b4\ud130 3\ucd08 \uad00\ucc30...");
+    L("[5/6] A/B TEC/REC \uc5d0\ub7ec \uce74\uc6b4\ud130 3\ucd08 \uad00\ucc30...");
+    uint32_t aTec0 = (uint32_t)(uint8_t)aChannelDiag.aTec;
+    uint32_t aRec0 = (uint32_t)(uint8_t)aChannelDiag.aRec;
     uint32_t tec0 = (uint32_t)bChannelDiag.twaiTxErrNow;
     uint32_t rec0 = (uint32_t)bChannelDiag.twaiRxErrNow;
     vTaskDelay(pdMS_TO_TICKS(3000));
+    uint32_t aTec1 = (uint32_t)(uint8_t)aChannelDiag.aTec;
+    uint32_t aRec1 = (uint32_t)(uint8_t)aChannelDiag.aRec;
     uint32_t tec1 = (uint32_t)bChannelDiag.twaiTxErrNow;
+    int32_t daTec = (int32_t)aTec1 - (int32_t)aTec0;
     int32_t dtec = (int32_t)tec1 - (int32_t)tec0;
-    snprintf(buf, sizeof(buf), "  TEC %u\u2192%u(\u0394%+d) | REC %u\u2192%u | Peak TX%u/RX%u",
+    snprintf(buf, sizeof(buf), "  A TEC %u\u2192%u(\u0394%+d) REC %u\u2192%u | Peak TX%u/RX%u",
+        aTec0, aTec1, daTec, aRec0, aRec1,
+        (unsigned)(uint8_t)aChannelDiag.aTecPeak, (unsigned)(uint8_t)aChannelDiag.aRecPeak);
+    L(buf);
+    snprintf(buf, sizeof(buf), "  B TEC %u\u2192%u(\u0394%+d) | REC %u\u2192%u | Peak TX%u/RX%u",
         tec0, tec1, dtec, rec0, (uint32_t)bChannelDiag.twaiRxErrNow,
         (uint32_t)bChannelDiag.twaiTxErrPeak, (uint32_t)bChannelDiag.twaiRxErrPeak);
     L(buf);
-    if (dtec > 20) {
+    if (daTec > 20 || dtec > 20) {
         L("  \u274c TEC \uae09\uc0c1\uc2b9 \u2192 GND \uc804\uc704\ucc28 \ub610\ub294 \uc885\ub2e8\uc800\ud56d \ubb38\uc81c");
         L("  \ucc98\ubc29: \ucc28\ub7c9 GND\uc5d0 \uc9c1\uc811 \uc810\ud37c\xb7\ucf00\uc774\ube14 1m \uc774\ub0b4 \ub2e8\ucd95");
         ok = false;
-    } else if (dtec > 5) {
+    } else if (daTec > 5 || dtec > 5) {
         L("  \u26a0\ufe0f  TEC \uc18c\ub7c9 \uc0c1\uc2b9 \u2192 \uac04\ud5d0\uc801 \ube44\ud2b8 \uc5d0\ub7ec (\ubb3c\ub9ac \uacc4\uce35 \uc810\uac80 \uad8c\uc7a5)");
     } else {
         L("  \u2705 PASS: TEC \uc548\uc815");
     }
 
     // ──────────────────────────────────────────────────────────
-    // [6/6] BUS-OFF 이력 분석
+    // [6/6] A/B BUS-OFF 이력 분석
     // ──────────────────────────────────────────────────────────
-    L("[6/6] BUS-OFF \uc774\ub825 \ubd84\uc11d");
+    L("[6/6] A/B BUS-OFF\u00b7\ubcf5\uad6c \uc774\ub825 \ubd84\uc11d");
+    snprintf(buf, sizeof(buf), "  A BUS-OFF:%u | \ubcf5\uad6c %u/%u/%u | EFLG\ud53c\ud06c=0x%02X RX-OVR=%u",
+        (unsigned)(uint32_t)aChannelDiag.mcpTxBoCount,
+        (unsigned)(uint32_t)aChannelDiag.mcpRecoveryAttemptCount,
+        (unsigned)(uint32_t)aChannelDiag.mcpRecoverySuccessCount,
+        (unsigned)(uint32_t)aChannelDiag.mcpRecoveryFailCount,
+        (unsigned)(uint8_t)aChannelDiag.mcpEflgPeak,
+        (unsigned)(uint32_t)aChannelDiag.aRxOvrCount);
+    L(buf);
+    if ((uint32_t)aChannelDiag.mcpRecoveryFailCount > 0) ok = false;
     uint32_t boCnt  = (uint32_t)bChannelDiag.busoffCount;
     uint32_t boSucc = (uint32_t)bChannelDiag.recoverySuccessCount;
     uint32_t boFail = (uint32_t)bChannelDiag.recoveryFailCount;

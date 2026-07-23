@@ -340,6 +340,7 @@ CAN signal 이름, frame ID, start bit, length, endian, scale, offset, enum, bit
 - 기능이 미완성인 경우에는 현재까지 확인한 사실, 남은 의문, 다음 액션을 명확히 남긴다.
 - 사용자가 수동 커밋을 선호하는 경우, 세션 로그에는 커밋을 만들었다고 쓰지 말고 커밋 후보 단위와 검증 결과만 적는다.
 - `checklist.md`, `context-notes.md`, `plan.md`, `chat_log_YYYY-MM-DD.md`는 기본적으로 한글로 작성한다.
+- 루트 `README.md`, `CHANGELOG.md`와 docs-site의 공개 기능 안내·변경 이력도 새 작성 및 갱신은 한글로 작성한다. 코드 식별자, 명령어, API 경로, 표준 고유명사는 원문을 유지한다.
 
 권장 포맷은 아래 순서를 따른다.
 

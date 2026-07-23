@@ -1,151 +1,49 @@
 ---
-title: Autosteer Nag Killer
+title: HW3 Nag Killer
 sidebar_position: 3
 ---
 
-# Autosteer Nag Killer
+# HW3 Nag Killer
 
-Suppresses the Autopilot "hands on wheel" nag on Tesla vehicles using the same method as the Chinese TSL6P commercial module (~200 EUR), replicated on a ~15 EUR ESP32 board.
+현재 LILYGO T2-CAN HW3 빌드의 Nag Killer는 CAN-B에서 EPAS 상태 프레임 ID 880을 관찰하고, Web UI에서 선택한 MODE 1/2/3 규칙에 따라 수정 echo를 전송합니다.
 
-:::info Difference from ISA Speed Chime
-- **Nag Suppression (ISA Speed Chime)**: Modifies CAN 39F message (controls speed chime alerts)
-- **Autosteer Nag Killer**: Modifies CAN 880 message (suppresses "hands on wheel" nag)
-
-These are two different features addressing different nag/chime issues.
+:::caution
+이 기능은 운전자 감시를 대신하지 않습니다. 항상 핸들을 잡고 도로에 집중하십시오. 차량 OTA 뒤에는 정차 상태에서 CAN 수신과 BUS-OFF를 먼저 확인해야 합니다.
 :::
 
-## How It Works
+## 초기 상태와 모드
 
-The module echoes CAN 880 (EPAS3P_sysStatus) frames with a modified payload:
+- 새 NVS와 NVS 초기화에서는 Nag Killer가 OFF로 시작합니다.
+- OTA 안전 초기화에서도 Nag를 OFF로 저장합니다.
+- 새 NVS, NVS 초기화, OTA 안전 초기화의 선택 모드는 MODE 3(기본)입니다.
+- 일반 재부팅에서는 사용자가 저장한 MODE 1/2/3 선택을 유지합니다.
+- 이전 `[기본]/A~D` 실험 프로파일과 NVS 값은 폐기되었습니다.
 
-1. Listens for CAN 880 frames where `handsOnLevel = 0` (driver hands not detected)
-2. Immediately retransmits the frame with:
-   - `byte 3 = 0xB6` → fixed torsionBarTorque = 1.80 Nm
-   - `byte 4 |= 0x40` → handsOnLevel = 1
-   - `byte 6 counter + 1` → next expected counter value
-   - `byte 7` → recalculated checksum: `(sum(byte0..byte6) + 0x73) & 0xFF`
-3. The real EPAS frame with the same counter arrives after ours → receiver rejects it as duplicate
-4. When driver applies real steering torque (handsOn >= 1), the module does nothing
+## 활성화 전 확인
 
-### Frame Example
+1. 차량을 정차하고 Web UI에 접속합니다.
+2. CAN-B ID 880, 921/923, 297 수신 상태를 확인합니다.
+3. B채널 `BUS-OFF=0`이고 TEC/REC, TX Fail이 증가하지 않는지 확인합니다.
+4. Nag Killer를 ON으로 설정합니다.
+5. echo 수와 마지막 판정, DAS/AP 상태, 조향각 age를 함께 확인합니다.
 
-```
-Real EPAS:      12 00 08 23 1F 89 4C A4   (ho=0, torque=+0.33Nm, cnt=C)
-Our modified:   12 00 08 B6 5F 89 4D 78   (ho=1, torque=+1.80Nm, cnt=D)
-```
+## 모드별 실제 동작
 
-## Tested Hardware
+| 모드 | 토크/타이밍 | 조건 |
+|---|---|---|
+| MODE 1 | +1.80 Nm 고정 | ID 880 DLC 8, 실제 `handsOn=0` |
+| MODE 2 | `+1.80, +1.50, -1.50, -1.80 Nm` 200ms 순환, 1초 burst + 1.5초 pause | ID 880 DLC 8, 실제 `handsOn=0` |
+| MODE 3(기본) | state 2: 2초 후 0.50~1.80 Nm random walk, state 3: 1초 후 ±1.80 Nm 삼각파 | 921/923·297 age ≤1초, AP 3~6, validity=1, 조향각 ±5°, DAS state 2/3 |
 
-| Vehicle | HW | Autopilot | Status |
-|---------|-----|-----------|--------|
-| Model Y Performance 2022 | HW3 | Basic Autopilot | **Working** |
+조건이 맞으면 원본의 관련 상위 비트를 보존하면서 토크와 hands-on 필드를 적용하고, counter를 1 증가시킨 뒤 checksum을 다시 계산합니다. MODE 1/2는 검증 원본과 같이 DAS/조향의 최근 수신 유효시간을 확인하지 않고, MODE 3만 과거 컨텍스트 재사용을 차단합니다.
 
-## Supported Boards
+## 공통 안전 경계
 
-**Any ESP32 board with a CAN transceiver** will work. Tested with:
+- 최종 토크는 모드와 무관하게 raw `0x74E~0x8B6`, 즉 -1.80~+1.80 Nm로 제한됩니다.
+- `twai_transmit()`이 송신 요청을 성공으로 반환한 경우에만 echo·주입 카운터와 마지막 송신 시각이 갱신됩니다. 버스 ACK와 오류 상태는 별도의 TEC/REC, TX Fail, BUS-OFF 진단으로 확인해야 합니다.
+- 성공적으로 보낸 마지막 echo와 ID, DLC, 전체 데이터가 같은 수신 프레임은 다시 처리하지 않습니다.
+- MODE 1/2는 실제 `handsOnLevel=0`일 때만 송신합니다. MODE 3은 검증 원본과 같이 0 또는 1을 허용합니다.
 
-- **LILYGO T-CAN485** (~15 EUR) — ESP32 + SN65HVD230 CAN transceiver, screw terminals
+## 채널 구분
 
-**Other compatible boards:**
-- ESP32 + MCP2551 or SN65HVD230 breakout
-- M5Stack ATOM CAN
-- Any board supported by this project
-
-## Wiring to Vehicle
-
-Connect to **X179 diagnostic connector, pin 2 and pin 3** (CAN bus 4):
-
-```
-Board CAN_H  ──────  X179 Pin 2  (CAN bus 4+)
-Board CAN_L  ──────  X179 Pin 3  (CAN bus 4-)
-Board USB    ──────  Any 5V source (car USB, phone charger, laptop)
-```
-
-### X179 20-pin Connector Pinout (S/X new Blue / Model Y)
-
-```
-     ┌─────────────────────────────┐
-     │  1   2   3   4   5   6   7  │  ← Top row (pin 1 = 12V+)
-     │  8   9  10  11  12  13  14  │  ← Middle row
-     │ 15  16  17  18  19  20      │  ← Bottom row (pin 20 = GND)
-     └─────────────────────────────┘
-            (front mating face)
-```
-
-| Pin | Function | Notes |
-|-----|----------|-------|
-| 1 | 12V+ | Vehicle power |
-| **2** | **CAN bus 4+** | **← Connect CAN_H here** |
-| **3** | **CAN bus 4-** | **← Connect CAN_L here** |
-| 6 | K/Serial | |
-| 9 | CAN bus 2+ | Vehicle CAN |
-| 10 | CAN bus 2- | Vehicle CAN |
-| 13 | CAN bus 6+ | Body/Left CAN (used by FSD mod / Enhance cable) |
-| 14 | CAN bus 6- | Body/Left CAN |
-| 18 | CAN bus 3+ | Chassis CAN |
-| 19 | CAN bus 3- | Chassis CAN |
-| 20 | Ground | |
-
-:::warning Important: CAN Bus 4 Only
-The nag killer works **ONLY on CAN bus 4** (pin 2/3). It does NOT work on CAN bus 3 (pin 18/19) or CAN bus 6 (pin 13/14) due to Tesla's anti-spoofing on those buses.
-
-Pin numbering: Always read pin numbers from the **FRONT MATING FACE** of the connector. If you look at the back (wire side) of a female connector, the numbers appear mirrored!
-:::
-
-## Building & Flashing
-
-### With PlatformIO (Recommended)
-
-For LILYGO T-CAN485:
-```bash
-pio run -e lilygo_tcan485_nag_killer
-pio run -e lilygo_tcan485_nag_killer -t upload
-```
-
-For generic ESP32 + CAN transceiver (default pins GPIO 5/4):
-```bash
-pio run -e esp32_twai_nag_killer
-pio run -e esp32_twai_nag_killer -t upload
-```
-
-### With Arduino IDE / CLI
-
-Use build flag `-DNAG_KILLER` and set your board's TX/RX pins with `-DTWAI_TX_PIN=GPIO_NUM_xx -DTWAI_RX_PIN=GPIO_NUM_xx`.
-
-## LILYGO T-CAN485 Pin Mapping
-
-| Function | GPIO |
-|----------|------|
-| CAN TX | 27 |
-| CAN RX | 26 |
-| 5V Enable | 16 |
-| CAN Standby | 23 (LOW = active) |
-
-## What Doesn't Work (Extensively Tested)
-
-| Approach | Bus | Why it fails |
-|----------|-----|-------------|
-| CAN 880 echo | Bus 3 (Chassis, pin 18/19) | Gateway anti-spoofing blocks |
-| CAN 880 echo | Bus 6 (Body, pin 13/14) | DAS ignores injected frames |
-| CAN 82 echo | Bus 6 (Body, pin 13/14) | DAS ignores |
-| CAN 905 echo | Bus 3 (Chassis) | Source validation rejects |
-| CAN 1160 LKA torque | Bus 3 (Chassis) | DAS sends at 50Hz, overrides |
-| CAN 82 injection | Bus 3 (Chassis) | No effect |
-
-**Only CAN bus 4 (pin 2/3) works** — it does not have the same counter/source validation as the other buses.
-
-## Safety
-
-:::caution Safety Guidelines
-- The module only activates when `handsOnLevel = 0` (hands not detected)
-- When you grip the wheel normally, the module does nothing
-- CAN bus-off auto-recovery is built in
-- No vehicle modifications — fully reversible, plug and play
-- **Keep your hands near the wheel and stay attentive at all times**
-:::
-
-## Credits
-
-- Reverse engineered by BatteryPlug (nicolozak) with Claude AI assistance
-- TSL6P method decoded with help from the Tesla Open CAN Mod Discord community
-- DBC files from Tesla community (Poppyseed, Onyx)
+Nag Killer는 CAN-B 전용입니다. CAN-A의 조건부 Summon Unlock, EU Unlock, TSLLC와는 별도 경로이며 Nag 모드 변경이 CAN-A 기능을 바꾸지 않습니다.

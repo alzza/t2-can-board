@@ -85,10 +85,15 @@ public:
 
     void send(const CanFrame &frame) override
     {
+        (void)sendCheck(frame);
+    }
+
+    bool sendCheck(const CanFrame &frame) override
+    {
         if (!driverOK_ || recoveryInProgress_) {
             txSuppressedCount_++;
             if (recoveryInProgress_) updateRecoveryProgress();
-            return;
+            return false;
         }
 
         twai_message_t msg = {};
@@ -105,7 +110,9 @@ public:
             txSuppressedCount_++;
             if (!updateRecoveryProgress() && isBusOff())
                 recoverWithCooldown();
+            return false;
         }
+        return true;
     }
 
     // ── 진단 getters (web API, timeseries, BUS-OFF 이벤트 로그에서 사용) ──
@@ -129,8 +136,6 @@ public:
 
     bool     getSoftRecovery()             const { return true; }
     uint32_t getSoftRecoveryFallbackCount() const { return softRecoveryFallbackCount_; }
-    bool     getSingleShotTx()             const { return false; }
-    bool     getBusOffStopSkip()           const { return true; }
 
     // v4.4 alert 폴링 — TEC/REC 동시 노출
     uint32_t pollAlerts(uint16_t &tec, uint16_t &rec)

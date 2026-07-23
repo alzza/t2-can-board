@@ -47,7 +47,7 @@ struct TsSample {
     uint8_t  handsOn;
     uint8_t  dasState;
     uint8_t  nagMode;
-    uint8_t  smartProfile;
+    uint8_t  nagModeDefault;
     uint16_t dasSourceId;
     uint8_t  lastDecision;
     // intervalDecision은 5초 구간 요약, lastDecision은 마지막 880 처리 분기다.
@@ -69,9 +69,37 @@ struct TsSample {
     uint16_t modeBPhaseAgeMs;
     uint16_t modeBFirstEchoDelayMs;
     uint16_t modeBDelayTargetMs;
+    // A채널 MCP2515 상태. 간헐 EFLG 경고와 RX 오버런의 원인 추적용.
+    uint32_t aFrames;
+    uint32_t aTxOk;
+    uint32_t aTxFail;
+    uint32_t aMerrf;
+    uint32_t aRxOvr;
+    uint32_t aEflgEvents;
+    uint16_t dAFrames;
+    uint16_t dATxOk;
+    uint16_t dATxFail;
+    uint16_t dAMerrf;
+    uint16_t dARxOvr;
+    uint16_t dAEflgEvents;
+    uint16_t aFrameAgeMs;
+    uint16_t aLoopAgeMs;
+    uint16_t aGuardRemainingMs;
+    float    aFrameHz;
+    uint8_t  aEflg;
+    uint8_t  aEflgPeak;
+    uint8_t  aTec;
+    uint8_t  aRec;
+    uint8_t  aTecPeak;
+    uint8_t  aRecPeak;
+    uint8_t  aGuardActive;
+    uint8_t  aGuardReason;
+    uint32_t aWakeCount;
+    uint32_t aWakeToSummonTxMs;
+    uint8_t  aWakeAwaitingTx;
 };
 
-static constexpr size_t TS_CAP = 240;  // 240 × 5s = 20분 (TsSample 148B 기준 약 34.7 KiB)
+static constexpr size_t TS_CAP = 240;  // 240 × 5s = 20분
 inline TsSample tsBuf[TS_CAP];
 inline volatile size_t tsHead = 0;
 inline volatile size_t tsCount = 0;
@@ -97,6 +125,12 @@ inline volatile uint32_t tsBaseSkipHandsOn = 0;
 inline volatile uint32_t tsBaseSkipDas = 0;
 inline volatile uint32_t tsBaseNoDasEcho = 0;
 inline volatile uint32_t tsBaseUserMark = 0;
+inline volatile uint32_t tsBaseAFrames = 0;
+inline volatile uint32_t tsBaseATxOk = 0;
+inline volatile uint32_t tsBaseATxFail = 0;
+inline volatile uint32_t tsBaseAMerrf = 0;
+inline volatile uint32_t tsBaseARxOvr = 0;
+inline volatile uint32_t tsBaseAEflgEvents = 0;
 
 inline volatile uint32_t tsPrevEcho = 0;
 inline volatile uint32_t tsPrevF880 = 0;
@@ -111,6 +145,12 @@ inline volatile uint32_t tsPrevSkipHandsOn = 0;
 inline volatile uint32_t tsPrevSkipDas = 0;
 inline volatile uint32_t tsPrevNoDasEcho = 0;
 inline volatile uint32_t tsPrevUserMark = 0;
+inline volatile uint32_t tsPrevAFrames = 0;
+inline volatile uint32_t tsPrevATxOk = 0;
+inline volatile uint32_t tsPrevATxFail = 0;
+inline volatile uint32_t tsPrevAMerrf = 0;
+inline volatile uint32_t tsPrevARxOvr = 0;
+inline volatile uint32_t tsPrevAEflgEvents = 0;
 
 inline uint32_t tsDelta(uint32_t current, uint32_t base) {
     return current - base;
@@ -126,11 +166,10 @@ inline uint16_t tsElapsed16(uint32_t nowMs, uint32_t startMs) {
     return tsDelta16(nowMs, startMs);
 }
 
-inline uint16_t tsModeBDelayTargetMs(uint8_t phase, uint8_t smartProfile) {
-    const NagSmartProfileSettings &profile = nagSmartProfileSettings(smartProfile);
-    if (phase == 1) return profile.state1GraceMs;
-    if (phase == 2) return profile.state2DelayMs;
-    if (phase == 4) return profile.strongDelayMs;
+inline uint16_t tsModeBDelayTargetMs(uint8_t phase, uint8_t nagMode) {
+    if (nagModeClamp(nagMode) != kNagMode3) return 0;
+    if (phase == 3) return 2000;
+    if (phase == 5) return 1000;
     return 0;
 }
 
@@ -162,6 +201,12 @@ static void timeseriesTaskFn(void*) {
         uint32_t curSkipDas = (uint32_t)bChannelDiag.skipDasState;
         uint32_t curNoDas = (uint32_t)bChannelDiag.nagFiredNoDas;
         uint32_t curUserMark = (uint32_t)userMarkerCount;
+        uint32_t curAFrames = (uint32_t)aChannelDiag.framesReceivedTotal;
+        uint32_t curATxOk = (uint32_t)aChannelDiag.aTxOk;
+        uint32_t curATxFail = (uint32_t)aChannelDiag.aTxFail;
+        uint32_t curAMerrf = (uint32_t)aChannelDiag.aMerrfCount;
+        uint32_t curARxOvr = (uint32_t)aChannelDiag.aRxOvrCount;
+        uint32_t curAEflgEvents = (uint32_t)aChannelDiag.mcpEflgEventCount;
         s.echoCnt  = tsDelta(curEcho, (uint32_t)tsBaseEcho);
         s.f880     = tsDelta(cur880, (uint32_t)tsBaseF880);
         s.f921     = tsDelta(cur921, (uint32_t)tsBaseF921);
@@ -188,10 +233,22 @@ static void timeseriesTaskFn(void*) {
         s.dSkipDas = tsDelta16(curSkipDas, (uint32_t)tsPrevSkipDas);
         s.dNoDasEcho = tsDelta16(curNoDas, (uint32_t)tsPrevNoDasEcho);
         s.dUserMark = tsDelta16(curUserMark, (uint32_t)tsPrevUserMark);
+        s.aFrames = tsDelta(curAFrames, (uint32_t)tsBaseAFrames);
+        s.aTxOk = tsDelta(curATxOk, (uint32_t)tsBaseATxOk);
+        s.aTxFail = tsDelta(curATxFail, (uint32_t)tsBaseATxFail);
+        s.aMerrf = tsDelta(curAMerrf, (uint32_t)tsBaseAMerrf);
+        s.aRxOvr = tsDelta(curARxOvr, (uint32_t)tsBaseARxOvr);
+        s.aEflgEvents = tsDelta(curAEflgEvents, (uint32_t)tsBaseAEflgEvents);
+        s.dAFrames = tsDelta16(curAFrames, (uint32_t)tsPrevAFrames);
+        s.dATxOk = tsDelta16(curATxOk, (uint32_t)tsPrevATxOk);
+        s.dATxFail = tsDelta16(curATxFail, (uint32_t)tsPrevATxFail);
+        s.dAMerrf = tsDelta16(curAMerrf, (uint32_t)tsPrevAMerrf);
+        s.dARxOvr = tsDelta16(curARxOvr, (uint32_t)tsPrevARxOvr);
+        s.dAEflgEvents = tsDelta16(curAEflgEvents, (uint32_t)tsPrevAEflgEvents);
         s.handsOn  = (uint8_t)bChannelDiag.realHo;
         s.dasState = (uint8_t)bChannelDiag.dasHandsOnStateRx;
         s.nagMode = (uint8_t)bChannelDiag.nagMode;
-        s.smartProfile = nagSmartProfileClamp((uint8_t)bChannelDiag.smartProfile);
+        s.nagModeDefault = s.nagMode == kNagModeDefault ? 1 : 0;
         s.dasSourceId = (uint16_t)(uint32_t)bChannelDiag.dasStatusSourceId;
         s.lastDecision = (uint8_t)bChannelDiag.nagLastDecision;
         s.intervalDecision = nagIntervalDecision(s.d880, s.d921 + s.d923, s.dEcho, s.dDrop,
@@ -209,7 +266,23 @@ static void timeseriesTaskFn(void*) {
         s.modeBStateAgeMs = tsElapsed16(s.t_ms, (uint32_t)bChannelDiag.modeBStateEnterMs);
         s.modeBPhaseAgeMs = tsElapsed16(s.t_ms, (uint32_t)bChannelDiag.modeBPhaseEnterMs);
         s.modeBFirstEchoDelayMs = tsDelta16((uint32_t)bChannelDiag.modeBFirstEchoDelayMs, 0);
-        s.modeBDelayTargetMs = tsModeBDelayTargetMs(s.modeBPhase, s.smartProfile);
+        s.modeBDelayTargetMs = tsModeBDelayTargetMs(s.modeBPhase, s.nagMode);
+        s.aFrameHz = (float)aChannelDiag.frameHz;
+        s.aEflg = (uint8_t)aChannelDiag.mcpEflg;
+        s.aEflgPeak = (uint8_t)aChannelDiag.mcpEflgPeak;
+        s.aTec = (uint8_t)aChannelDiag.aTec;
+        s.aRec = (uint8_t)aChannelDiag.aRec;
+        s.aTecPeak = (uint8_t)aChannelDiag.aTecPeak;
+        s.aRecPeak = (uint8_t)aChannelDiag.aRecPeak;
+        s.aFrameAgeMs = tsElapsed16(s.t_ms, (uint32_t)aChannelDiag.lastFrameRxMs);
+        s.aLoopAgeMs = tsElapsed16(s.t_ms, (uint32_t)aChannelDiag.lastLoopMs);
+        s.aGuardActive = aTxGuardActive(s.t_ms) ? 1 : 0;
+        s.aGuardReason = (uint8_t)aChannelDiag.aTxGuardLastReason;
+        s.aWakeCount = (uint32_t)aChannelDiag.wakeCount;
+        s.aWakeToSummonTxMs = (uint32_t)aChannelDiag.wakeToSummonTxMs;
+        s.aWakeAwaitingTx = (bool)aChannelDiag.wakeAwaitingSummonTx ? 1U : 0U;
+        const uint32_t aGuardUntil = (uint32_t)aChannelDiag.aTxGuardUntilMs;
+        s.aGuardRemainingMs = aGuardUntil > s.t_ms ? tsDelta16(aGuardUntil, s.t_ms) : 0;
         portENTER_CRITICAL(&tsMux);
         tsBuf[tsHead] = s;
         tsPrevEcho = curEcho;
@@ -225,6 +298,12 @@ static void timeseriesTaskFn(void*) {
         tsPrevSkipDas = curSkipDas;
         tsPrevNoDasEcho = curNoDas;
         tsPrevUserMark = curUserMark;
+        tsPrevAFrames = curAFrames;
+        tsPrevATxOk = curATxOk;
+        tsPrevATxFail = curATxFail;
+        tsPrevAMerrf = curAMerrf;
+        tsPrevARxOvr = curARxOvr;
+        tsPrevAEflgEvents = curAEflgEvents;
         tsHead = (tsHead + 1) % TS_CAP;
         if (tsCount < TS_CAP) ++tsCount;
         portEXIT_CRITICAL(&tsMux);
@@ -259,6 +338,12 @@ inline void timeseriesReset() {
     tsBaseSkipDas = (uint32_t)bChannelDiag.skipDasState;
     tsBaseNoDasEcho = (uint32_t)bChannelDiag.nagFiredNoDas;
     tsBaseUserMark = (uint32_t)userMarkerCount;
+    tsBaseAFrames = (uint32_t)aChannelDiag.framesReceivedTotal;
+    tsBaseATxOk = (uint32_t)aChannelDiag.aTxOk;
+    tsBaseATxFail = (uint32_t)aChannelDiag.aTxFail;
+    tsBaseAMerrf = (uint32_t)aChannelDiag.aMerrfCount;
+    tsBaseARxOvr = (uint32_t)aChannelDiag.aRxOvrCount;
+    tsBaseAEflgEvents = (uint32_t)aChannelDiag.mcpEflgEventCount;
     tsPrevEcho = (uint32_t)bChannelDiag.echoCount;
     tsPrevF880 = (uint32_t)bChannelDiag.frames880;
     tsPrevF921 = (uint32_t)bChannelDiag.frames921;
@@ -272,6 +357,12 @@ inline void timeseriesReset() {
     tsPrevSkipDas = (uint32_t)bChannelDiag.skipDasState;
     tsPrevNoDasEcho = (uint32_t)bChannelDiag.nagFiredNoDas;
     tsPrevUserMark = (uint32_t)userMarkerCount;
+    tsPrevAFrames = (uint32_t)aChannelDiag.framesReceivedTotal;
+    tsPrevATxOk = (uint32_t)aChannelDiag.aTxOk;
+    tsPrevATxFail = (uint32_t)aChannelDiag.aTxFail;
+    tsPrevAMerrf = (uint32_t)aChannelDiag.aMerrfCount;
+    tsPrevARxOvr = (uint32_t)aChannelDiag.aRxOvrCount;
+    tsPrevAEflgEvents = (uint32_t)aChannelDiag.mcpEflgEventCount;
     portEXIT_CRITICAL(&tsMux);
     userMarkerActive = false;
     eventLogReset();
@@ -321,14 +412,14 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
         recording?"ON":"OFF", (unsigned)n);
     httpd_resp_sendstr_chunk(req, meta);
     if (tsMetaWriter) tsMetaWriter(req);  // web_server에서 드라이버 토글 등 주입
-    const char* hdr = "t_s,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,dasStateName,dasStateGroup,dasWarnLevel,dasWarning,nagMode,smartProfile,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,f297,apState,modeBPhase,steerDeg,realTorqueNm,modeBInject,modeBLastNm,age880Ms,ageDasMs,age297Ms,ageEchoMs,modeBStateAgeMs,modeBPhaseAgeMs,modeBFirstEchoDelayMs,modeBDelayTargetMs,d297,dModeBInject\n";
+    const char* hdr = "t_s,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,dasStateName,dasStateGroup,dasWarnLevel,dasWarning,nagMode,nagModeDefault,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,f297,apState,modeBPhase,steerDeg,realTorqueNm,modeBInject,modeBLastNm,age880Ms,ageDasMs,age297Ms,ageEchoMs,modeBStateAgeMs,modeBPhaseAgeMs,modeBFirstEchoDelayMs,modeBDelayTargetMs,d297,dModeBInject,aFrames,aFrameHz,aEflg,aEflgState,aEflgPeak,aTec,aRec,aTecPeak,aRecPeak,aTxOk,aTxFail,aMerrf,aRxOvr,aEflgEvents,aFrameAgeMs,aLoopAgeMs,aGuardActive,aGuardReason,aGuardRemainingMs,aWakeCount,aWakeToSummonTxMs,aWakeAwaitingTx,dAFrames,dATxOk,dATxFail,dAMerrf,dARxOvr,dAEflgEvents\n";
     httpd_resp_sendstr_chunk(req, hdr);
-    char line[768];
+    char line[1152];
     size_t start = (n < TS_CAP) ? 0 : head;  // oldest first
     for (size_t i = 0; i < n; ++i) {
         TsSample s;
         timeseriesCopyAt(start + i, s);
-        snprintf(line, sizeof(line), "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%.1f,%.2f,%u,%.2f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+        int used = snprintf(line, sizeof(line), "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%.1f,%.2f,%u,%.2f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u",
             (unsigned)(s.t_ms / 1000),
             (unsigned)s.busoff, (unsigned)s.tec, (unsigned)s.rec,
             (unsigned)s.arbLost, (unsigned)s.busErr, (unsigned)s.txFail,
@@ -336,7 +427,7 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
             (unsigned)s.handsOn, (unsigned)s.dasState,
             dasHandsOnStateName(s.dasState), dasHandsOnStateGroup(s.dasState),
             (unsigned)dasHandsOnWarningLevel(s.dasState), dasHandsOnStateIsWarning(s.dasState) ? 1U : 0U,
-            (unsigned)s.nagMode, (unsigned)s.smartProfile, (unsigned)s.dasSourceId,
+            (unsigned)s.nagMode, (unsigned)s.nagModeDefault, (unsigned)s.dasSourceId,
             (unsigned)s.echoDrop, (unsigned)s.skipRuntime,
             (unsigned)s.skipAp, (unsigned)s.skipHandsOn, (unsigned)s.skipDas,
             (unsigned)s.noDasEcho, (unsigned)s.userMark,
@@ -352,6 +443,20 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
             (unsigned)s.ageEchoMs, (unsigned)s.modeBStateAgeMs, (unsigned)s.modeBPhaseAgeMs,
             (unsigned)s.modeBFirstEchoDelayMs, (unsigned)s.modeBDelayTargetMs,
             (unsigned)s.d297, (unsigned)s.dModeBInject);
+        if (used < 0 || (size_t)used >= sizeof(line)) continue;
+        snprintf(line + used, sizeof(line) - (size_t)used,
+            ",%u,%.1f,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+            (unsigned)s.aFrames, (double)s.aFrameHz,
+            (unsigned)s.aEflg, aMcpEflgStateName(s.aEflg), (unsigned)s.aEflgPeak,
+            (unsigned)s.aTec, (unsigned)s.aRec, (unsigned)s.aTecPeak, (unsigned)s.aRecPeak,
+            (unsigned)s.aTxOk, (unsigned)s.aTxFail, (unsigned)s.aMerrf,
+            (unsigned)s.aRxOvr, (unsigned)s.aEflgEvents,
+            (unsigned)s.aFrameAgeMs, (unsigned)s.aLoopAgeMs,
+            (unsigned)s.aGuardActive, aTxGuardReasonName(s.aGuardReason),
+            (unsigned)s.aGuardRemainingMs,
+            (unsigned)s.aWakeCount, (unsigned)s.aWakeToSummonTxMs, (unsigned)s.aWakeAwaitingTx,
+            (unsigned)s.dAFrames, (unsigned)s.dATxOk, (unsigned)s.dATxFail,
+            (unsigned)s.dAMerrf, (unsigned)s.dARxOvr, (unsigned)s.dAEflgEvents);
         httpd_resp_sendstr_chunk(req, line);
     }
     httpd_resp_sendstr_chunk(req, NULL);

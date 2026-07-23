@@ -60,12 +60,16 @@ static void appSetup(std::unique_ptr<Driver> drv, const char *readyMsg)
     digitalWrite(PIN_LED, HIGH);
 
     appDriver = std::move(drv);
-    if (!appDriver->init())
+    const bool driverInitOk = appDriver->init();
+    aChannelDiag.driverInitialized = driverInitOk;
+    if (!driverInitOk)
     {
         Serial.println("CAN init failed");
     }
-
-    appDriver->setFilters(appHandler->filterIds(), appHandler->filterIdCount());
+    else
+    {
+        appDriver->setFilters(appHandler->filterIds(), appHandler->filterIdCount());
+    }
     // ISR 지원 드라이버만 인터럽트 활성화 (T2CAN의 MCP2515는 폴링 전용)
     if constexpr (Driver::kSupportsISR)
     {
@@ -107,7 +111,16 @@ static void appLoop()
         appHandler->frameCount++;
         _aHzFrames++;
 #if defined(DRIVER_TWAI) && !defined(NATIVE_BUILD)
-        aChannelDiag.lastFrameRxMs = millis();
+        const uint32_t frameNowMs = millis();
+        const uint32_t previousFrameMs = (uint32_t)aChannelDiag.lastFrameRxMs;
+        if (previousFrameMs > 0 && frameNowMs - previousFrameMs > kAChannelWakeGapMs) {
+            aChannelDiag.wakeCount = (uint32_t)aChannelDiag.wakeCount + 1;
+            aChannelDiag.lastWakeRxMs = frameNowMs;
+            aChannelDiag.wakeAwaitingSummonTx = true;
+            aChannelDiag.wakeToSummonTxMs = 0;
+            logRing.push("[A-CH] CAN 재수신 시작: 첫 Summon TX 지연 측정", frameNowMs);
+        }
+        aChannelDiag.lastFrameRxMs = frameNowMs;
 #endif
         appHandler->handleMessage(frame, *appDriver);
     }
@@ -122,8 +135,6 @@ static void appLoop()
             _aLastHzMs = _now;
         }
     }
-    aChannelDiag.lastStatusUpdateMs = millis();
-
 #if defined(DRIVER_TWAI) && !defined(NATIVE_BUILD)
     // ── A채널 MCP2515 에러 플래그 폴링 (1초 간격) ─────────────────────────────
     // getErrorFlags()는 Normal Mode를 유지하며 EFLG 레지스터만 읽음 (통신 무중단)
@@ -168,6 +179,20 @@ static void appLoop()
             static uint8_t _prevEflg = 0;
             if (eflg != 0 && _prevEflg == 0) {
                 aChannelDiag.mcpEflgEventCount = (uint32_t)aChannelDiag.mcpEflgEventCount + 1;
+                eventLogPush(EV_A_EFLG_SET, tec, rec, eflg);
+                char buf[96];
+                snprintf(buf, sizeof(buf), "⚠️ [A-CH] EFLG 진입: 0x%02X %s TEC=%u REC=%u",
+                         eflg, aMcpEflgStateName(eflg), tec, rec);
+                logRing.push(buf, _nowMs);
+            } else if (eflg == 0 && _prevEflg != 0) {
+                eventLogPush(EV_A_EFLG_CLEAR, tec, rec, _prevEflg);
+                char buf[88];
+                snprintf(buf, sizeof(buf), "✅ [A-CH] EFLG 해제: 이전=0x%02X TEC=%u REC=%u",
+                         _prevEflg, tec, rec);
+                logRing.push(buf, _nowMs);
+            }
+            if (eflg & 0xC0U) {
+                eventLogPush(EV_A_RX_OVERRUN, tec, rec, eflg);
             }
             _prevEflg = eflg;
 

@@ -120,6 +120,34 @@ void test_main_ui_removes_retired_can_injection_experiments()
     TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "A채널 실험"));
 }
 
+void test_main_ui_uses_verified_nag_modes_and_removes_smart_profiles()
+{
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "name=\"nagMode\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "MODE 1"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "MODE 2"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "MODE 3"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "MODE 3 · 기본"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "/api/nag-mode?m="));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "/api/nag-profile"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "name=\"nagProfile\""));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, ">A안<"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, ">D안<"));
+}
+
+void test_main_ui_exposes_authoritative_channel_health_and_csv_diagnostics()
+{
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "a.health_state"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "b.health_state"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"d-a-eflg-now\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"d-a-wake\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"suWakeDelay\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "/api/can-diag/log-dl"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "/api/timeseries.csv"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "/api/events.csv"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "id=\"tSsTx\""));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "id=\"tBoStop\""));
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -132,6 +160,8 @@ int main()
     RUN_TEST(test_main_ui_keeps_can_nag_tsllc_and_summon_status_together);
     RUN_TEST(test_main_ui_uses_ino_summon_control_and_monitoring_fields);
     RUN_TEST(test_main_ui_removes_retired_can_injection_experiments);
+    RUN_TEST(test_main_ui_uses_verified_nag_modes_and_removes_smart_profiles);
+    RUN_TEST(test_main_ui_exposes_authoritative_channel_health_and_csv_diagnostics);
 
     return UNITY_END();
 }

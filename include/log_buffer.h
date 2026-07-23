@@ -7,8 +7,8 @@
 
 struct LogRingBuffer
 {
-    static constexpr size_t kCapacity = 32;
-    static constexpr size_t kMaxMsgLen = 128;
+    static constexpr size_t kCapacity = 64;
+    static constexpr size_t kMaxMsgLen = 192;
 
     struct Entry
     {

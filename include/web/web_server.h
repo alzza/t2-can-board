@@ -119,21 +119,9 @@ static constexpr char kNvsKeyAChTx[]        = "a_ch_tx";      // A채널 1021 �
 static constexpr char kNvsKeyASpiMhz[]      = "a_spi_mhz";    // A MCP2515 SPI MHz: 8 or 10
 static constexpr char kNvsKeyAOneShot[]     = "a_oneshot";    // A MCP2515 one-shot mode
 static constexpr char kNvsKeyATxGuard[]     = "a_tx_guard";   // A TX guard enable
-// NagConfig NVS 키 (모두 15자 이하)
+// NagConfig NVS 키 (15자 이하)
 static constexpr char kNvsKeyNagMode[]      = "nag_mode";
-static constexpr char kNvsKeyNagProfile[]   = "nag_prof";
-static constexpr char kNvsKeyNagId[]        = "nag_id";       // compatibility: always 880
-static constexpr char kNvsKeyNagTc[]        = "nag_tc";       // uint8: torqueCount
-static constexpr char kNvsKeyNagTb2[]       = "nag_tb2";      // bytes: torqueB2[8]
-static constexpr char kNvsKeyNagTb3[]       = "nag_tb3";      // bytes: torqueB3[8]
-static constexpr char kNvsKeyNagHo[]        = "nag_ho";       // uint8: hoRatePct
 static_assert(sizeof(kNvsKeyNagMode) - 1 <= 15, "NVS key too long");
-static_assert(sizeof(kNvsKeyNagProfile) - 1 <= 15, "NVS key too long");
-static_assert(sizeof(kNvsKeyNagId)   - 1 <= 15, "NVS key too long");
-static_assert(sizeof(kNvsKeyNagTc)   - 1 <= 15, "NVS key too long");
-static_assert(sizeof(kNvsKeyNagTb2)  - 1 <= 15, "NVS key too long");
-static_assert(sizeof(kNvsKeyNagTb3)  - 1 <= 15, "NVS key too long");
-static_assert(sizeof(kNvsKeyNagHo)   - 1 <= 15, "NVS key too long");
 static constexpr char kNvsKeyTheme[] = "theme";
 static_assert(sizeof(kNvsKeyTsllc) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyAChTx) - 1 <= 15, "NVS key too long");
@@ -470,6 +458,7 @@ static bool purgeRetiredExperimentNvs()
     static constexpr const char *keys[] = {
         "ulc_stalk", "alc_offhwy", "ulc_offhwy", "ulc_speed", "ulc_blind",
         "auto_lc", "bk_ui_ulc", "bk_alc_off", "enh_autopilot", "bk_eap",
+        "nag_prof", "nag_id", "nag_tc", "nag_tb2", "nag_tb3", "nag_ho",
     };
     nvs_handle_t handle;
     if (nvs_open(kNvsNamespace, NVS_READWRITE, &handle) != ESP_OK) return false;
@@ -536,7 +525,7 @@ static esp_err_t writeOtaSafeFeatureSettings(nvs_handle_t handle)
     if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyASpiMhz, defaultMhz);
     if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyAOneShot, kAMcpOneShotDefaultEnabled ? 1 : 0);
     if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyATxGuard, kATxGuardDefaultEnabled ? 1 : 0);
-    if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyNagProfile, kNagSmartProfileDefault);
+    if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyNagMode, kNagModeDefault);
     return err;
 }
 
@@ -566,10 +555,17 @@ static void logDownloadCanQuietOff(bool savedATx, bool savedNag)
 
 static bool prepareOtaUploadCanQuiet()
 {
+    // OTA 플래시 쓰기 전 새 수정 송신을 원자적으로 차단하고, 이미 허가된
+    // A/B sendCheck()가 끝나는 것을 기다린다. 단순 토글 OFF와 달리 코어 간
+    // 경합으로 인한 마지막 1건의 송신을 OTA 구간 밖으로 밀어낸다.
+    canTxQuiesceBegin();
+    const uint32_t drainStartedMs = millis();
+
     nvs_handle_t handle;
     esp_err_t err = nvs_open(kNvsNamespace, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
         applyOtaSafeFeatureRuntimeDefaults();
+        canTxQuiesceCancel();
         Serial.printf("[OTA] 업로드 전 CAN TX OFF: NVS open 실패 (%ld)\n", static_cast<long>(err));
         return false;
     }
@@ -578,36 +574,40 @@ static bool prepareOtaUploadCanQuiet()
     if (err == ESP_OK) err = nvs_commit(handle);
     nvs_close(handle);
     if (err != ESP_OK) {
+        canTxQuiesceCancel();
         Serial.printf("[OTA] 업로드 전 CAN TX OFF 저장 실패 (%ld)\n", static_cast<long>(err));
         return false;
     }
 
+    while (!canTxQuiesceIdle()) {
+        if (millis() - drainStartedMs >= 250) {
+            logRing.push("[OTA] CAN 송신 종료 확인 시간 초과 — 업로드 취소", millis());
+            Serial.println("[OTA] CAN 송신 종료 확인 시간 초과 — 업로드 취소");
+            // 기능은 NVS/런타임 모두 OFF로 남긴다. 재부팅 없이 UI에서 다시
+            // 기능을 켜는 기존 동작은 유지하도록 차단만 해제한다.
+            canTxQuiesceCancel();
+            return false;
+        }
+        delay(1);
+    }
+
     esp_err_t clearErr = twai_clear_transmit_queue();
     if (clearErr != ESP_OK && clearErr != ESP_ERR_INVALID_STATE) {
+        canTxQuiesceCancel();
         Serial.printf("[OTA] B채널 TX queue clear 실패 (%ld)\n", static_cast<long>(clearErr));
         return false;
     }
 
-    logRing.push("[OTA] 업로드 시작: CAN TX OFF/stock 저장", millis());
-    Serial.println("[OTA] 업로드 시작: CAN TX OFF/stock 저장");
-    delay(5);
+    logRing.push("[OTA] 업로드 시작: CAN TX OFF/stock 저장 + A/B 송신 종료 확인", millis());
+    Serial.println("[OTA] 업로드 시작: CAN TX OFF/stock 저장 + A/B 송신 종료 확인");
     return true;
 }
 
 // NagConfig NVS 저장/로드 헬퍼
 static void nagCfgSave(const NagConfig &c) {
-    NagConfig fixed = c;
-    nagCfgDefaultsSmart(fixed);
-    fixed.smartProfile = nagSmartProfileClamp(c.smartProfile);
     nvs_handle_t h;
     if (nvs_open(kNvsNamespace, NVS_READWRITE, &h) != ESP_OK) return;
-    nvs_set_u8(h,  kNvsKeyNagMode, fixed.mode);
-    nvs_set_u8(h,  kNvsKeyNagProfile, fixed.smartProfile);
-    nvs_set_u16(h, kNvsKeyNagId,   fixed.targetId);
-    nvs_set_u8(h,  kNvsKeyNagTc,   fixed.torqueCount);
-    nvs_set_blob(h, kNvsKeyNagTb2, fixed.torqueB2, kNagMaxTorqueEntries);
-    nvs_set_blob(h, kNvsKeyNagTb3, fixed.torqueB3, kNagMaxTorqueEntries);
-    nvs_set_u8(h,  kNvsKeyNagHo,   fixed.hoRatePct);
+    nvs_set_u8(h, kNvsKeyNagMode, nagModeClamp(c.mode));
     nvs_commit(h);
     nvs_close(h);
 }
@@ -628,7 +628,7 @@ static esp_err_t loadVehicleRuntimeSettingsBeforeCan()
     uint8_t spiMhz = defaultMhz;
     uint8_t oneShot = kAMcpOneShotDefaultEnabled ? 1 : 0;
     uint8_t txGuard = kATxGuardDefaultEnabled ? 1 : 0;
-    uint8_t nagProfile = kNagSmartProfileDefault;
+    uint8_t nagMode = kNagModeDefault;
     uint32_t busoffCooldown = 1000;
 
     err = nvsReadU8OrDefault(h, kNvsKeyIsaSpeedChime, isa, isa);
@@ -640,7 +640,7 @@ static esp_err_t loadVehicleRuntimeSettingsBeforeCan()
     if (err == ESP_OK) err = nvsReadU8OrDefault(h, kNvsKeyASpiMhz, spiMhz, spiMhz);
     if (err == ESP_OK) err = nvsReadU8OrDefault(h, kNvsKeyAOneShot, oneShot, oneShot);
     if (err == ESP_OK) err = nvsReadU8OrDefault(h, kNvsKeyATxGuard, txGuard, txGuard);
-    if (err == ESP_OK) err = nvsReadU8OrDefault(h, kNvsKeyNagProfile, nagProfile, nagProfile);
+    if (err == ESP_OK) err = nvsReadU8OrDefault(h, kNvsKeyNagMode, nagMode, nagMode);
     if (err == ESP_OK) err = nvsReadU32OrDefault(h, kNvsKeyBoCool, busoffCooldown, busoffCooldown);
     nvs_close(h);
     if (err != ESP_OK) return err;
@@ -662,14 +662,12 @@ static esp_err_t loadVehicleRuntimeSettingsBeforeCan()
     bChannelDiag.busoffCooldownMs = busoffCooldown;
 
     NagConfig c;
-    nagCfgDefaultsSmart(c);
-    c.mode = kNagModeB;
-    c.smartProfile = nagSmartProfileClamp(nagProfile);
+    nagCfgDefaults(c);
+    c.mode = nagModeClamp(nagMode);
     portENTER_CRITICAL(&nagCfgMux);
     nagConfig = c;
     portEXIT_CRITICAL(&nagCfgMux);
-    bChannelDiag.nagMode = kNagModeB;
-    bChannelDiag.smartProfile = c.smartProfile;
+    bChannelDiag.nagMode = c.mode;
     return ESP_OK;
 }
 
@@ -1279,7 +1277,6 @@ static esp_err_t statusHandler(httpd_req_t *req)
     }
 
     // Read handler state (atomic reads -- no lock needed)
-    bool fsdEnabled = appHandler ? (bool)appHandler->FSDEnabled : false;
     bool enablePrint = appHandler ? (bool)appHandler->enablePrint : true;
     bool isaSuppress = kWebSupportsIsaSpeedChimeSuppress ? (bool)isaSpeedChimeSuppressRuntime : false;
     bool emergencyVehicleDetection =
@@ -1296,7 +1293,6 @@ static esp_err_t statusHandler(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
         return ESP_FAIL;
     }
-    cJSON_AddBoolToObject(root, "fsd_enabled", fsdEnabled);
     cJSON_AddBoolToObject(root, "isa_speed_chime_suppress", isaSuppress);
     cJSON_AddBoolToObject(root, "emergency_vehicle_detection", emergencyVehicleDetection);
     cJSON_AddBoolToObject(root, "summon_unlock_enabled", summonUnlockEnabled);
@@ -1336,6 +1332,10 @@ static esp_err_t statusHandler(httpd_req_t *req)
         cJSON_AddNumberToObject(summon, "txOk", (uint32_t)summonGateDiag.txOk);
         cJSON_AddNumberToObject(summon, "txFail", (uint32_t)summonGateDiag.txFail);
         cJSON_AddNumberToObject(summon, "blocked", (uint32_t)summonGateDiag.blocked);
+        cJSON_AddNumberToObject(summon, "wake_count", (uint32_t)aChannelDiag.wakeCount);
+        cJSON_AddBoolToObject(summon, "wake_waiting_tx", (bool)aChannelDiag.wakeAwaitingSummonTx);
+        cJSON_AddNumberToObject(summon, "wake_to_tx_ms", (uint32_t)aChannelDiag.wakeToSummonTxMs);
+        cJSON_AddNumberToObject(summon, "last_wake_rx_ms", (uint32_t)aChannelDiag.lastWakeRxMs);
         const uint8_t summonCanState = ((uint8_t)aChannelDiag.mcpEflg & 0x20U) ? 2U : 1U;
         cJSON_AddNumberToObject(summon, "canState", summonCanState);
         cJSON_AddNumberToObject(summon, "uptimeS", handlerStartMs / 1000U);
@@ -1563,7 +1563,6 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(ach, "summon_unlock_modified",
                             (uint32_t)aChannelDiag.summonUnlockModifiedCount);
     cJSON_AddNumberToObject(ach, "last_frame_id", (uint32_t)aChannelDiag.lastFrameIdReceived);
-    cJSON_AddNumberToObject(ach, "last_update_ms", (uint32_t)aChannelDiag.lastStatusUpdateMs);
     cJSON_AddNumberToObject(ach, "last_loop_ms", (uint32_t)aChannelDiag.lastLoopMs);
     cJSON_AddNumberToObject(ach, "core_id", (int32_t)aChannelDiag.loopCoreId);
     cJSON_AddNumberToObject(ach, "spi_freq_hz", (uint32_t)aMcpSpiFreqHz);
@@ -1572,7 +1571,7 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddBoolToObject(ach, "mcp_one_shot", (bool)aMcpOneShotRuntime);
     cJSON_AddBoolToObject(ach, "channel_tx_enabled", (bool)aChannelTxRuntime);
     cJSON_AddBoolToObject(ach, "tx_guard_enabled", (bool)aTxGuardRuntime);
-    // MCP2515 에러 플래그 (EFLG 레지스터, 5초 폴링)
+    // MCP2515 에러 플래그 (EFLG 레지스터, 1초 폴링)
     cJSON_AddNumberToObject(ach, "mcp_eflg", (uint32_t)aChannelDiag.mcpEflg);
     cJSON_AddNumberToObject(ach, "mcp_eflg_peak", (uint32_t)aChannelDiag.mcpEflgPeak);
     cJSON_AddNumberToObject(ach, "mcp_txbo_count", (uint32_t)aChannelDiag.mcpTxBoCount);
@@ -1581,7 +1580,7 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(ach, "mcp_recovery_fail", (uint32_t)aChannelDiag.mcpRecoveryFailCount);
     cJSON_AddNumberToObject(ach, "mcp_busoff_since_ms", (uint32_t)aChannelDiag.mcpBusOffSinceMs);
     cJSON_AddNumberToObject(ach, "mcp_last_recovery_ms", (uint32_t)aChannelDiag.mcpLastRecoveryMs);
-    // A채널 송수신 진단 카운터 (5초 폴링 + handler 송신 결과)
+    // A채널 송수신 진단 카운터 (1초 EFLG 폴링 + handler 송신 결과)
     cJSON_AddNumberToObject(ach, "tx_ok",   (uint32_t)aChannelDiag.aTxOk);
     cJSON_AddNumberToObject(ach, "tx_fail", (uint32_t)aChannelDiag.aTxFail);
     cJSON_AddNumberToObject(ach, "tec",      (uint32_t)(uint8_t)aChannelDiag.aTec);
@@ -1593,6 +1592,10 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(ach, "last_frame_rx_ms", (uint32_t)aChannelDiag.lastFrameRxMs);
     cJSON_AddNumberToObject(ach, "last_tx_ms",       (uint32_t)aChannelDiag.lastTxMs);
     cJSON_AddNumberToObject(ach, "eflg_event_count", (uint32_t)aChannelDiag.mcpEflgEventCount);
+    cJSON_AddNumberToObject(ach, "wake_count", (uint32_t)aChannelDiag.wakeCount);
+    cJSON_AddNumberToObject(ach, "last_wake_rx_ms", (uint32_t)aChannelDiag.lastWakeRxMs);
+    cJSON_AddBoolToObject(ach, "wake_waiting_summon_tx", (bool)aChannelDiag.wakeAwaitingSummonTx);
+    cJSON_AddNumberToObject(ach, "wake_to_summon_tx_ms", (uint32_t)aChannelDiag.wakeToSummonTxMs);
     uint32_t aGuardUntil = (uint32_t)aChannelDiag.aTxGuardUntilMs;
     uint32_t aNow = millis();
     bool aGuardActive = aTxGuardActive(aNow);
@@ -1607,14 +1610,56 @@ static esp_err_t statusHandler(httpd_req_t *req)
     const uint32_t aLoopAgeMs = webSafeAgeMs(statusNowMs, aLastLoopMs);
     const bool aFresh = (aLastFrameMs > 0) && (aFrameAgeMs <= 2000);
     const bool aTaskAlive = (aLastLoopMs > 0) && (aLoopAgeMs <= 2000);
-    const bool aDriverOk = (appHandler != nullptr);
-    const bool aConnected = aDriverOk && aFresh && (((uint8_t)aChannelDiag.mcpEflg & 0x20) == 0);
+    const bool aDriverOk = (bool)aChannelDiag.driverInitialized;
+    const uint8_t aEflg = (uint8_t)aChannelDiag.mcpEflg;
+    const char *aHealthState = "OK";
+    const char *aHealthReason = "정상 수신 중";
+    uint8_t aHealthLevel = 0;
+    if (!aDriverOk) {
+        aHealthState = "INIT_FAILED";
+        aHealthReason = "MCP2515 초기화 실패";
+        aHealthLevel = 2;
+    } else if (!aTaskAlive) {
+        aHealthState = "LOOP_STALLED";
+        aHealthReason = "A채널 폴링 루프 지연";
+        aHealthLevel = 2;
+    } else if (aEflg & 0x20U) {
+        aHealthState = "BUS_OFF";
+        aHealthReason = "MCP2515 BUS-OFF";
+        aHealthLevel = 2;
+    } else if (!aFresh) {
+        aHealthState = "NO_FRAMES";
+        aHealthReason = "최근 2초간 수신 프레임 없음";
+        aHealthLevel = 1;
+    } else if (aEflg != 0) {
+        aHealthState = aMcpEflgStateName(aEflg);
+        if (strcmp(aHealthState, "RX_OVERRUN") == 0)
+            aHealthReason = "MCP2515 수신 버퍼 오버런";
+        else if (strcmp(aHealthState, "ERROR_PASSIVE") == 0)
+            aHealthReason = "MCP2515 에러 패시브";
+        else
+            aHealthReason = "MCP2515 오류 카운터 경고";
+        aHealthLevel = aMcpEflgSeverity(aEflg);
+    }
+    const bool aConnected = aDriverOk && aTaskAlive && aFresh && ((aEflg & 0x20U) == 0);
+    cJSON_AddBoolToObject(ach, "driver_initialized", (bool)aChannelDiag.driverInitialized);
     cJSON_AddBoolToObject(ach, "driver_ok", aDriverOk);
     cJSON_AddBoolToObject(ach, "connected", aConnected);
     cJSON_AddBoolToObject(ach, "fresh", aFresh);
     cJSON_AddBoolToObject(ach, "task_alive", aTaskAlive);
     cJSON_AddNumberToObject(ach, "frame_age_ms", aFrameAgeMs);
     cJSON_AddNumberToObject(ach, "loop_age_ms", aLoopAgeMs);
+    cJSON_AddStringToObject(ach, "health_state", aHealthState);
+    cJSON_AddStringToObject(ach, "health_reason", aHealthReason);
+    cJSON_AddNumberToObject(ach, "health_level", aHealthLevel);
+    cJSON_AddBoolToObject(ach, "eflg_rx1_overrun", (aEflg & 0x80U) != 0);
+    cJSON_AddBoolToObject(ach, "eflg_rx0_overrun", (aEflg & 0x40U) != 0);
+    cJSON_AddBoolToObject(ach, "eflg_tx_bus_off",  (aEflg & 0x20U) != 0);
+    cJSON_AddBoolToObject(ach, "eflg_tx_passive",  (aEflg & 0x10U) != 0);
+    cJSON_AddBoolToObject(ach, "eflg_rx_passive",  (aEflg & 0x08U) != 0);
+    cJSON_AddBoolToObject(ach, "eflg_tx_warning",  (aEflg & 0x04U) != 0);
+    cJSON_AddBoolToObject(ach, "eflg_rx_warning",  (aEflg & 0x02U) != 0);
+    cJSON_AddBoolToObject(ach, "eflg_warning",     (aEflg & 0x01U) != 0);
     
     cJSON *bch = cJSON_AddObjectToObject(channels, "b_channel");
     cJSON_AddNumberToObject(bch, "frames_received", (uint32_t)bChannelDiag.framesReceivedTotal);
@@ -1638,8 +1683,8 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddBoolToObject(bch, "das_hands_warning", dasHandsOnStateIsWarning((uint8_t)bChannelDiag.dasHandsOnStateRx));
     cJSON_AddNumberToObject(bch, "das_source_id", (uint32_t)bChannelDiag.dasStatusSourceId);
     cJSON_AddNumberToObject(bch, "last_das_status_rx_ms", (uint32_t)bChannelDiag.lastDasStatusRxMs);
-    cJSON_AddNumberToObject(bch, "nag_mode", (uint32_t)kNagModeB);
-    cJSON_AddNumberToObject(bch, "smart_profile", (uint32_t)nagSmartProfileClamp((uint8_t)bChannelDiag.smartProfile));
+    cJSON_AddNumberToObject(bch, "nag_mode", (uint32_t)nagModeClamp((uint8_t)bChannelDiag.nagMode));
+    cJSON_AddStringToObject(bch, "nag_mode_name", nagModeName((uint8_t)bChannelDiag.nagMode));
     cJSON_AddNumberToObject(bch, "echo_count", (uint32_t)bChannelDiag.echoCount);
     cJSON_AddNumberToObject(bch, "echo_drop_late", (uint32_t)bChannelDiag.echoDroppedLate);
     cJSON_AddNumberToObject(bch, "skip_runtime_or_inactive", (uint32_t)bChannelDiag.skipRuntimeOrInactive);
@@ -1648,7 +1693,6 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(bch, "skip_das_state", (uint32_t)bChannelDiag.skipDasState);
     cJSON_AddNumberToObject(bch, "twai_state_code", (uint32_t)bChannelDiag.twaiStateCode);
     cJSON_AddNumberToObject(bch, "last_frame_id", (uint32_t)bChannelDiag.frameIdReceived);
-    cJSON_AddNumberToObject(bch, "last_update_ms", (uint32_t)bChannelDiag.lastStatusUpdateMs);
     cJSON_AddNumberToObject(bch, "last_frame_rx_ms", (uint32_t)bChannelDiag.lastFrameRxMs);
     cJSON_AddNumberToObject(bch, "last_loop_ms", (uint32_t)bChannelDiag.lastLoopMs);
     cJSON_AddNumberToObject(bch, "core_id", (int32_t)bChannelDiag.taskCoreId);
@@ -1662,6 +1706,8 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(bch, "last_recovery_duration_ms", (uint32_t)bChannelDiag.lastRecoveryDurationMs);
     cJSON_AddNumberToObject(bch, "twai_rx_err_peak", (uint32_t)bChannelDiag.twaiRxErrPeak);
     cJSON_AddNumberToObject(bch, "twai_tx_err_peak", (uint32_t)bChannelDiag.twaiTxErrPeak);
+    cJSON_AddNumberToObject(bch, "twai_rx_err_now", (uint32_t)bChannelDiag.twaiRxErrNow);
+    cJSON_AddNumberToObject(bch, "twai_tx_err_now", (uint32_t)bChannelDiag.twaiTxErrNow);
     // B채널 심층 진단: TWAI 누적 카운터 (UI 타일 + 가설 판별용)
     cJSON_AddNumberToObject(bch, "arb_lost",   (uint32_t)bChannelDiag.bArbLost);
     cJSON_AddNumberToObject(bch, "bus_error",  (uint32_t)bChannelDiag.bBusError);
@@ -1678,9 +1724,43 @@ static esp_err_t statusHandler(httpd_req_t *req)
     const bool bDriverOk = gWebDriverB && gWebDriverB->isDriverOK();
     const bool bConnected = (bool)bChannelDiag.nagTaskCreated &&
                             bDriverOk &&
-                            ((bool)bChannelDiag.twaiConnected || twaiStateCode == 1 || twaiStateCode == 3) &&
+                            (twaiStateCode == 1 || twaiStateCode == 3) &&
                             twaiStateCode != 2 &&
-                            bFresh;
+                            bFresh &&
+                            bTaskAlive;
+    const char *bHealthState = "OK";
+    const char *bHealthReason = "정상 수신 중";
+    uint8_t bHealthLevel = 0;
+    if (!(bool)bChannelDiag.nagTaskCreated) {
+        bHealthState = "TASK_OFF";
+        bHealthReason = "통합 CAN 태스크 미생성";
+        bHealthLevel = 2;
+    } else if (!bDriverOk) {
+        bHealthState = "DRIVER_FAILED";
+        bHealthReason = "TWAI 드라이버 초기화 실패";
+        bHealthLevel = 2;
+    } else if (!bTaskAlive) {
+        bHealthState = "LOOP_STALLED";
+        bHealthReason = "B채널 폴링 루프 지연";
+        bHealthLevel = 2;
+    } else if (twaiStateCode == 2) {
+        bHealthState = "BUS_OFF";
+        bHealthReason = "TWAI BUS-OFF";
+        bHealthLevel = 2;
+    } else if (twaiStateCode == 3) {
+        bHealthState = "RECOVERING";
+        bHealthReason = "TWAI 복구 진행 중";
+        bHealthLevel = 1;
+    } else if (!bFresh) {
+        bHealthState = "NO_FRAMES";
+        bHealthReason = "최근 2초간 수신 프레임 없음";
+        bHealthLevel = 1;
+    } else if ((uint32_t)bChannelDiag.twaiTxErrNow >= 96U ||
+               (uint32_t)bChannelDiag.twaiRxErrNow >= 96U) {
+        bHealthState = "ERROR_WARNING";
+        bHealthReason = "TWAI 오류 카운터 경고";
+        bHealthLevel = 1;
+    }
     cJSON_AddBoolToObject(bch, "driver_initialized", (bool)bChannelDiag.driverBInitialized);
     cJSON_AddBoolToObject(bch, "driver_ok", bDriverOk);
     cJSON_AddNumberToObject(bch, "driver_install_err", gWebDriverB ? gWebDriverB->getLastInstallErr() : -1);
@@ -1691,6 +1771,9 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddBoolToObject(bch, "task_alive", bTaskAlive);
     cJSON_AddNumberToObject(bch, "frame_age_ms", bFrameAgeMs);
     cJSON_AddNumberToObject(bch, "loop_age_ms", bLoopAgeMs);
+    cJSON_AddStringToObject(bch, "health_state", bHealthState);
+    cJSON_AddStringToObject(bch, "health_reason", bHealthReason);
+    cJSON_AddNumberToObject(bch, "health_level", bHealthLevel);
 
     signalObserverAddJson(root, statusNowMs);
 
@@ -1701,6 +1784,7 @@ static esp_err_t statusHandler(httpd_req_t *req)
     // CAN bus diagnostics
     twai_status_info_t twaiStatus;
     cJSON *can = cJSON_AddObjectToObject(root, "can");
+    cJSON_AddStringToObject(can, "state_channel", "B");
     if (twai_get_status_info(&twaiStatus) == ESP_OK)
     {
         const char *stateStr = "UNKNOWN";
@@ -1733,8 +1817,11 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(can, "frames_received", totalFramesReceived);
     cJSON_AddNumberToObject(can, "frames_received_a", aFramesReceived);
     cJSON_AddNumberToObject(can, "frames_received_b", bFramesReceived);
-    cJSON_AddNumberToObject(can, "frames_sent",
-                            appHandler ? (uint32_t)appHandler->framesSent : 0);
+    const uint32_t aFramesSent = appHandler ? (uint32_t)appHandler->framesSent : 0;
+    const uint32_t bFramesSent = (uint32_t)bChannelDiag.echoCount;
+    cJSON_AddNumberToObject(can, "frames_sent", aFramesSent + bFramesSent);
+    cJSON_AddNumberToObject(can, "frames_sent_a", aFramesSent);
+    cJSON_AddNumberToObject(can, "frames_sent_b", bFramesSent);
 
     char *json = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
@@ -1864,23 +1951,14 @@ static esp_err_t aTxGuardHandler(httpd_req_t *req)
 
 // ─── GET /api/nag-config  ────────────────────────────────────────────────────
 // 현재 NagConfig를 JSON으로 반환 (v2 /api/config 에 해당)
-static void addNagProfileJson(cJSON *root, const NagSmartProfileSettings &profile)
+static void addNagModeJson(cJSON *root, uint8_t mode)
 {
-    cJSON_AddNumberToObject(root, "smartProfile", profile.id);
-    cJSON_AddStringToObject(root, "profileLabel", profile.label);
-    cJSON_AddStringToObject(root, "profileSummary", profile.summary);
-    cJSON_AddNumberToObject(root, "state1GraceMs", profile.state1GraceMs);
-    cJSON_AddNumberToObject(root, "state2DelayMs", profile.state2DelayMs);
-    cJSON_AddNumberToObject(root, "strongDelayMs", profile.strongDelayMs);
-    cJSON_AddNumberToObject(root, "strongRampMs", profile.strongRampMs);
-    cJSON_AddNumberToObject(root, "state2MildMinRawDelta", profile.state2MildMinRawDelta);
-    cJSON_AddNumberToObject(root, "state2MildMaxRawDelta", profile.state2MildMaxRawDelta);
-    cJSON_AddNumberToObject(root, "state2MildMinNm", (double)profile.state2MildMinRawDelta * 0.01);
-    cJSON_AddNumberToObject(root, "state2MildMaxNm", (double)profile.state2MildMaxRawDelta * 0.01);
-    cJSON_AddNumberToObject(root, "state2BurstMs", profile.state2BurstMs);
-    cJSON_AddNumberToObject(root, "state2PauseMs", profile.state2PauseMs);
-    cJSON_AddNumberToObject(root, "strongBurstMs", profile.strongBurstMs);
-    cJSON_AddNumberToObject(root, "strongPauseMs", profile.strongPauseMs);
+    mode = nagModeClamp(mode);
+    cJSON_AddNumberToObject(root, "mode", mode);
+    cJSON_AddStringToObject(root, "modeStr", nagModeName(mode));
+    cJSON_AddStringToObject(root, "modeSummary", nagModeSummary(mode));
+    cJSON_AddBoolToObject(root, "defaultMode", mode == kNagModeDefault);
+    cJSON_AddBoolToObject(root, "requiresContext", mode == kNagMode3);
 }
 
 static esp_err_t nagConfigGetHandler(httpd_req_t *req)
@@ -1889,25 +1967,15 @@ static esp_err_t nagConfigGetHandler(httpd_req_t *req)
     portENTER_CRITICAL(&nagCfgMux);
     c = nagConfig;
     portEXIT_CRITICAL(&nagCfgMux);
-    c.mode = kNagModeB;
-    c.smartProfile = nagSmartProfileClamp(c.smartProfile);
-    const NagSmartProfileSettings &profile = nagSmartProfileSettings(c.smartProfile);
+    c.mode = nagModeClamp(c.mode);
 
     cJSON *root = cJSON_CreateObject();
-    cJSON_AddNumberToObject(root, "mode",       c.mode);
-    cJSON_AddStringToObject(root, "modeStr",    "SMART");
-    addNagProfileJson(root, profile);
-    cJSON_AddNumberToObject(root, "targetId",   c.targetId);
-    cJSON_AddNumberToObject(root, "hoRatePct",  c.hoRatePct);
-    cJSON *arr = cJSON_AddArrayToObject(root, "torque");
-    for (uint8_t i = 0; i < c.torqueCount; i++) {
-        cJSON *entry = cJSON_CreateObject();
-        cJSON_AddNumberToObject(entry, "b2", c.torqueB2[i]);
-        cJSON_AddNumberToObject(entry, "b3", c.torqueB3[i]);
-        uint16_t raw = static_cast<uint16_t>(((c.torqueB2[i] & 0x0F) << 8) | c.torqueB3[i]);
-        cJSON_AddNumberToObject(entry, "nm", raw * 0.01f - 20.5f);
-        cJSON_AddItemToArray(arr, entry);
-    }
+    addNagModeJson(root, c.mode);
+    cJSON_AddNumberToObject(root, "targetId", kNagFixedTargetId);
+    cJSON_AddNumberToObject(root, "torqueMinNm", -1.8);
+    cJSON_AddNumberToObject(root, "torqueMaxNm", 1.8);
+    cJSON_AddNumberToObject(root, "contextFreshMs", 1000);
+    cJSON_AddNumberToObject(root, "steeringMaxAbsDeg", 5.0);
     char *json = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!json) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM"); return ESP_FAIL; }
@@ -1962,15 +2030,13 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
     cJSON_AddStringToObject(root, "canState", (cs < 4) ? csStr[cs] : "unknown");
     cJSON_AddNumberToObject(root, "uptimeS",  millis() / 1000);
 
-    uint8_t smartProfile = nagSmartProfileClamp((uint8_t)bChannelDiag.smartProfile);
-    const NagSmartProfileSettings &profile = nagSmartProfileSettings(smartProfile);
-    cJSON_AddNumberToObject(root, "mode",     kNagModeB);
-    cJSON_AddStringToObject(root, "modeStr",  "SMART");
-    addNagProfileJson(root, profile);
+    uint8_t mode = nagModeClamp((uint8_t)bChannelDiag.nagMode);
+    addNagModeJson(root, mode);
     cJSON_AddNumberToObject(root, "targetId", kNagFixedTargetId);
     // Mode B 진단
     cJSON_AddNumberToObject(root, "dasApState",  (uint8_t)bChannelDiag.dasAutopilotStateRx);
     cJSON_AddNumberToObject(root, "steerAngleDeg", (double)(float)bChannelDiag.steeringAngleDeg);
+    cJSON_AddBoolToObject(root, "steeringValid", (bool)bChannelDiag.steeringAngleValid);
     cJSON_AddNumberToObject(root, "frames297",   (uint32_t)bChannelDiag.frames297);
     cJSON_AddNumberToObject(root, "modeBPhase",  (uint8_t)bChannelDiag.modeBPhase);
     cJSON_AddNumberToObject(root, "modeBInjects",(uint32_t)bChannelDiag.modeBInjectCount);
@@ -1983,11 +2049,6 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "boSoftMode", isSoftMode);
     uint32_t softFallback = gWebDriverB ? gWebDriverB->getSoftRecoveryFallbackCount() : 0;
     cJSON_AddNumberToObject(root, "boSoftFallback", softFallback);
-    // [v4.4 실험 토글] Single Shot TX / BUS-OFF stop skip
-    bool isSS  = gWebDriverB ? gWebDriverB->getSingleShotTx()  : false;
-    bool isBOS = gWebDriverB ? gWebDriverB->getBusOffStopSkip() : false;
-    cJSON_AddBoolToObject(root, "singleShotTx",   isSS);
-    cJSON_AddBoolToObject(root, "busOffStopSkip",  isBOS);
     // ID 921 미수신 상태에서 에코 발사 횟수 (TEC 상승 원인 추적용)
     cJSON_AddNumberToObject(root, "nagFiredNoDas", (uint32_t)bChannelDiag.nagFiredNoDas);
     cJSON_AddNumberToObject(root, "skipApState", (uint32_t)bChannelDiag.skipApState);
@@ -2015,47 +2076,8 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
     return sendRet;
 }
 
-// ─── POST /api/nag-profile?p=0|1|2|3|4  ─────────────────────────────────────
-static esp_err_t nagProfileHandler(httpd_req_t *req)
-{
-    if (!rateLimitOk()) {
-        httpd_resp_set_status(req, "429 Too Many Requests");
-        httpd_resp_send(req, "Rate limited", HTTPD_RESP_USE_STRLEN);
-        return ESP_FAIL;
-    }
-    char queryBuf[32] = {};
-    httpd_req_get_url_query_str(req, queryBuf, sizeof(queryBuf));
-    char pBuf[4] = {};
-    uint8_t newProfile = kNagSmartProfileDefault;
-    if (httpd_query_key_value(queryBuf, "p", pBuf, sizeof(pBuf)) == ESP_OK) {
-        newProfile = nagSmartProfileClamp(static_cast<uint8_t>(atoi(pBuf)));
-    }
-
-    NagConfig nc;
-    portENTER_CRITICAL(&nagCfgMux);
-    nc = nagConfig;
-    portEXIT_CRITICAL(&nagCfgMux);
-    nc.mode = kNagModeB;
-    nc.smartProfile = newProfile;
-    portENTER_CRITICAL(&nagCfgMux);
-    nagConfig = nc;
-    portEXIT_CRITICAL(&nagCfgMux);
-    nagCfgSave(nc);
-    bChannelDiag.nagMode = kNagModeB;
-    bChannelDiag.smartProfile = newProfile;
-    eventLogPush(EV_NAG_MODE, (uint16_t)bChannelDiag.twaiTxErrNow,
-                 (uint16_t)bChannelDiag.twaiRxErrNow, (uint32_t)newProfile);
-
-    const NagSmartProfileSettings &profile = nagSmartProfileSettings(newProfile);
-    char logBuf[72];
-    snprintf(logBuf, sizeof(logBuf), "🔧 [NAG] 스마트 프로파일 → %s", profile.label);
-    logRing.push(logBuf, millis());
-
-    return nagConfigGetHandler(req);
-}
-
-// ─── POST /api/nag-mode?m=0|1  ───────────────────────────────────────────────
-// legacy endpoint: 이전 모드 토글 호출은 항상 스마트 토크로 고정한다.
+// ─── POST /api/nag-mode?m=1|2|3  ─────────────────────────────────────
+// MODE 1/2/3 중 하나를 선택하고 NVS에 저장한다.
 static esp_err_t nagModeHandler(httpd_req_t *req)
 {
     if (!rateLimitOk()) {
@@ -2063,28 +2085,40 @@ static esp_err_t nagModeHandler(httpd_req_t *req)
         httpd_resp_send(req, "Rate limited", HTTPD_RESP_USE_STRLEN);
         return ESP_FAIL;
     }
+    char queryBuf[32] = {};
+    char modeBuf[4] = {};
+    if (httpd_req_get_url_query_str(req, queryBuf, sizeof(queryBuf)) != ESP_OK ||
+        httpd_query_key_value(queryBuf, "m", modeBuf, sizeof(modeBuf)) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "m=1|2|3 required");
+        return ESP_FAIL;
+    }
+    int requested = atoi(modeBuf);
+    if (requested < kNagMode1 || requested > kNagMode3) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid nag mode");
+        return ESP_FAIL;
+    }
     NagConfig nc;
     portENTER_CRITICAL(&nagCfgMux);
     nc = nagConfig;
     portEXIT_CRITICAL(&nagCfgMux);
-    nc.mode = kNagModeB;
-    nc.smartProfile = nagSmartProfileClamp(nc.smartProfile);
+    nc.mode = static_cast<uint8_t>(requested);
     portENTER_CRITICAL(&nagCfgMux);
     nagConfig = nc;
     portEXIT_CRITICAL(&nagCfgMux);
     nagCfgSave(nc);
-    bChannelDiag.nagMode = kNagModeB;
-    bChannelDiag.smartProfile = nc.smartProfile;
+    bChannelDiag.nagMode = nc.mode;
     eventLogPush(EV_NAG_MODE, (uint16_t)bChannelDiag.twaiTxErrNow,
-                 (uint16_t)bChannelDiag.twaiRxErrNow, (uint32_t)nc.smartProfile);
+                 (uint16_t)bChannelDiag.twaiRxErrNow, (uint32_t)nc.mode);
 
-    logRing.push("🔧 [NAG] /api/nag-mode 호환 호출 → 스마트 토크 유지", millis());
+    char logBuf[64];
+    snprintf(logBuf, sizeof(logBuf), "[NAG] 모드 변경: %s", nagModeName(nc.mode));
+    logRing.push(logBuf, millis());
 
     return nagConfigGetHandler(req);  // 변경된 설정 반환
 }
 
 // ─── POST /api/nag-update  ───────────────────────────────────────────────────
-// targetId/토크 테이블 변경 요청은 무시하고 880 고정. profile 변경은 /api/nag-profile 사용.
+// targetId/토크 테이블 변경 요청은 무시하고 880 고정.
 static esp_err_t nagUpdateHandler(httpd_req_t *req)
 {
     if (!rateLimitOk()) {
@@ -2092,12 +2126,12 @@ static esp_err_t nagUpdateHandler(httpd_req_t *req)
         httpd_resp_send(req, "Rate limited", HTTPD_RESP_USE_STRLEN);
         return ESP_FAIL;
     }
-    logRing.push("🔧 [NAG] /api/nag-update — ID 880 고정 유지 (profile은 /api/nag-profile 사용)", millis());
+    logRing.push("[NAG] /api/nag-update — ID 880/토크 상한 고정 유지", millis());
     return nagConfigGetHandler(req);
 }
 
 // ─── POST /api/nag-reset  ────────────────────────────────────────────────────
-// 스마트 토크 기본 프로파일로 리셋
+// 검증된 기본 MODE 3으로 리셋
 static esp_err_t nagResetHandler(httpd_req_t *req)
 {
     if (!rateLimitOk()) {
@@ -2106,67 +2140,14 @@ static esp_err_t nagResetHandler(httpd_req_t *req)
         return ESP_FAIL;
     }
     NagConfig nc;
-    nagCfgDefaultsSmart(nc);
+    nagCfgDefaults(nc);
     portENTER_CRITICAL(&nagCfgMux);
     nagConfig = nc;
     portEXIT_CRITICAL(&nagCfgMux);
     nagCfgSave(nc);
-    bChannelDiag.nagMode = kNagModeB;
-    bChannelDiag.smartProfile = nc.smartProfile;
-    logRing.push("🔧 [NAG] 설정 리셋 → 스마트 기본값", millis());
+    bChannelDiag.nagMode = nc.mode;
+    logRing.push("[NAG] 설정 리셋 → MODE 3(기본)", millis());
     return nagConfigGetHandler(req);
-}
-
-// ─── POST /api/twai-ss-tx?v=0|1  ─────────────────────────────────────────────
-// 4/10 정상 기준에서는 Single Shot TX를 사용하지 않는다. API는 호환용으로만 유지.
-static esp_err_t twaiSsTxHandler(httpd_req_t *req)
-{
-    if (!rateLimitOk()) {
-        httpd_resp_set_status(req, "429 Too Many Requests");
-        httpd_resp_send(req, "Rate limited", HTTPD_RESP_USE_STRLEN);
-        return ESP_FAIL;
-    }
-    char queryBuf[32];
-    int v = -1;
-    if (httpd_req_get_url_query_str(req, queryBuf, sizeof(queryBuf)) == ESP_OK) {
-        char val[8];
-        if (httpd_query_key_value(queryBuf, "v", val, sizeof(val)) == ESP_OK)
-            v = atoi(val);
-    }
-    if (v < 0) {
-        httpd_resp_set_status(req, "400 Bad Request");
-        httpd_resp_send(req, "v=0|1 required", HTTPD_RESP_USE_STRLEN);
-        return ESP_FAIL;
-    }
-    (void)v;
-    httpd_resp_send(req, "single_shot=DISABLED", HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
-}
-
-// ─── POST /api/twai-busoff-stop?v=0|1  ───────────────────────────────────────
-// v4.4 상태 머신 준수: BUS-OFF 상태에서는 twai_stop()을 호출하지 않는다.
-static esp_err_t twaiBusOffStopHandler(httpd_req_t *req)
-{
-    if (!rateLimitOk()) {
-        httpd_resp_set_status(req, "429 Too Many Requests");
-        httpd_resp_send(req, "Rate limited", HTTPD_RESP_USE_STRLEN);
-        return ESP_FAIL;
-    }
-    char queryBuf[32];
-    int v = -1;
-    if (httpd_req_get_url_query_str(req, queryBuf, sizeof(queryBuf)) == ESP_OK) {
-        char val[8];
-        if (httpd_query_key_value(queryBuf, "v", val, sizeof(val)) == ESP_OK)
-            v = atoi(val);
-    }
-    if (v < 0) {
-        httpd_resp_set_status(req, "400 Bad Request");
-        httpd_resp_send(req, "v=0|1 required", HTTPD_RESP_USE_STRLEN);
-        return ESP_FAIL;
-    }
-    (void)v;
-    httpd_resp_send(req, "busoff_stop_skip=ENABLED_FIXED", HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
 }
 
 // ─── BUS-OFF 이벤트 로그 API ────────────────────────────────────────────────────
@@ -2379,7 +2360,7 @@ static esp_err_t eventsBundleHandler(httpd_req_t *req) {
     httpd_resp_sendstr_chunk(req, line);
     httpd_resp_sendstr_chunk(req,
         "# type: 0=BUSOFF 1=REC_OK 2=REC_FAIL 3=REC_SOFT 4=ERR_PASS 5=ARB_LOST 6=BUS_ERR 7=TX_FAIL 8=RX_FULL 9=TX_BACKOFF 10=USER_MARK 11=NAG_MODE 12=MODEB_STATE 13=MODEB_PHASE 14=MODEB_FIRST_ECHO\r\n");
-    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING_START 2=AP_WARNING_END | NAG_MODE detail: smartProfile 0=default 1=A 2=B 3=C 4=D | MODEB_STATE detail: ap<<16|oldHo<<8|newHo | MODEB_PHASE detail: phase<<24|ap<<16|ho<<8|decision | FIRST_ECHO detail: delay_ms | detailText is decoded for analysis\r\n");
+    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING_START 2=AP_WARNING_END | NAG_MODE detail: 1=MODE1 2=MODE2 3=MODE3(default) | MODEB_STATE detail: ap<<16|oldHo<<8|newHo | MODEB_PHASE detail: phase<<24|ap<<16|ho<<8|decision | FIRST_ECHO detail: delay_ms | detailText is decoded for analysis\r\n");
     httpd_resp_sendstr_chunk(req, "wall_time,timestamp_ms,type,typeName,tec,rec,detail,detailText\r\n");
     char detailText[180];
     size_t eventStart = (eventN < EVT_CAP) ? 0 : eventHead;
@@ -2449,14 +2430,14 @@ static esp_err_t userMarkerHandler(httpd_req_t *req) {
     uint16_t tec = (uint16_t)(uint32_t)bChannelDiag.twaiTxErrNow;
     uint16_t rec = (uint16_t)(uint32_t)bChannelDiag.twaiRxErrNow;
     eventLogPush(EV_USER_MARK, tec, rec, detail);
-    const NagSmartProfileSettings &profile = nagSmartProfileSettings((uint8_t)bChannelDiag.smartProfile);
+    uint8_t nagMode = nagModeClamp((uint8_t)bChannelDiag.nagMode);
 
     const char *detailName = userMarkerDetailName(detail);
     char msg[352];
     snprintf(msg, sizeof(msg),
-        "[USER-MARK] %s Profile=%s AP=%u Phase=%u 880=%u 921=%u 923=%u 297=%u HO=%u DAS=%s(0x%02X L%u warn=%u) Angle=%.1fdeg Real=%.2fNm MB=%.2fNm E=%u D=%u Last=%s TEC=%u/REC=%u",
+        "[USER-MARK] %s NagMode=%s AP=%u Phase=%u 880=%u 921=%u 923=%u 297=%u HO=%u DAS=%s(0x%02X L%u warn=%u) Angle=%.1fdeg Real=%.2fNm MB=%.2fNm E=%u D=%u Last=%s TEC=%u/REC=%u",
         detailName,
-        profile.label,
+        nagModeName(nagMode),
         (unsigned)(uint8_t)bChannelDiag.dasAutopilotStateRx,
         (unsigned)(uint8_t)bChannelDiag.modeBPhase,
         (unsigned)bChannelDiag.frames880,
@@ -2515,7 +2496,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
     httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_set_hdr(req, "Connection", "close");
-    char line[768];
+    char line[1152];
     char tsBuf[40];
 
     // 메타 정보 (Generated at = wall-clock, Boot at = wall-clock baseline)
@@ -2660,7 +2641,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         (unsigned)dasHandsOnWarningLevel((uint8_t)bChannelDiag.dasHandsOnStateRx),
         dasHandsOnStateIsWarning((uint8_t)bChannelDiag.dasHandsOnStateRx) ? 1U : 0U,
         (unsigned)bChannelDiag.dasStatusSourceId,
-        nagSmartProfileSettings((uint8_t)bChannelDiag.smartProfile).label,
+        nagModeName((uint8_t)bChannelDiag.nagMode),
         twS,
         gWebDriverB ? gWebDriverB->getLastInstallErr() : -1,
         gWebDriverB ? gWebDriverB->getLastStartErr() : -1);
@@ -2687,13 +2668,13 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         uint32_t age297 = (uint32_t)bChannelDiag.last297RxMs ? (now - (uint32_t)bChannelDiag.last297RxMs) : 0;
         uint32_t ageEcho = (uint32_t)bChannelDiag.lastEchoTxMs ? (now - (uint32_t)bChannelDiag.lastEchoTxMs) : 0;
         snprintf(line, sizeof(line),
-            "B나그판정: 880=%u(age=%ums) 921=%u(age=%ums) 923=%u(age=%ums) 297=%u(age=%ums) Echo=%u(age=%ums) | Profile=%s AP=%u Phase=%u HO=%u Torque=%.2fNm DAS=%s(0x%02X/L%u/warn=%u)@%u Last=%s\r\n",
+            "B나그판정: 880=%u(age=%ums) 921=%u(age=%ums) 923=%u(age=%ums) 297=%u(age=%ums) Echo=%u(age=%ums) | NagMode=%s AP=%u Phase=%u HO=%u Torque=%.2fNm DAS=%s(0x%02X/L%u/warn=%u)@%u Last=%s\r\n",
             (unsigned)bChannelDiag.frames880, (unsigned)age880,
             (unsigned)bChannelDiag.frames921, (unsigned)age921,
             (unsigned)bChannelDiag.frames923, (unsigned)age923,
             (unsigned)bChannelDiag.frames297, (unsigned)age297,
             (unsigned)bChannelDiag.echoCount, (unsigned)ageEcho,
-            nagSmartProfileSettings((uint8_t)bChannelDiag.smartProfile).label,
+            nagModeName((uint8_t)bChannelDiag.nagMode),
             (unsigned)(uint8_t)bChannelDiag.dasAutopilotStateRx,
             (unsigned)(uint8_t)bChannelDiag.modeBPhase,
             (unsigned)(uint8_t)bChannelDiag.realHo,
@@ -2779,7 +2760,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         tsSnapRecording ? "ON" : "OFF", (unsigned)tsN);
     httpd_resp_sendstr_chunk(req, line);
     httpd_resp_sendstr_chunk(req,
-        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,dasStateName,dasStateGroup,dasWarnLevel,dasWarning,nagMode,smartProfile,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,f297,apState,modeBPhase,steerDeg,realTorqueNm,modeBInject,modeBLastNm,age880Ms,ageDasMs,age297Ms,ageEchoMs,modeBStateAgeMs,modeBPhaseAgeMs,modeBFirstEchoDelayMs,modeBDelayTargetMs,d297,dModeBInject\r\n");
+        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,dasStateName,dasStateGroup,dasWarnLevel,dasWarning,nagMode,nagModeDefault,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,f297,apState,modeBPhase,steerDeg,realTorqueNm,modeBInject,modeBLastNm,age880Ms,ageDasMs,age297Ms,ageEchoMs,modeBStateAgeMs,modeBPhaseAgeMs,modeBFirstEchoDelayMs,modeBDelayTargetMs,d297,dModeBInject,aFrames,aFrameHz,aEflg,aEflgState,aEflgPeak,aTec,aRec,aTecPeak,aRecPeak,aTxOk,aTxFail,aMerrf,aRxOvr,aEflgEvents,aFrameAgeMs,aLoopAgeMs,aGuardActive,aGuardReason,aGuardRemainingMs,aWakeCount,aWakeToSummonTxMs,aWakeAwaitingTx,dAFrames,dATxOk,dATxFail,dAMerrf,dARxOvr,dAEflgEvents\r\n");
     {
         if (tsN == 0) {
             httpd_resp_sendstr_chunk(req, "(시계열 없음)\r\n");
@@ -2797,7 +2778,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                     timeseriesCopyAt(fallbackStart + i, s);  // malloc 실패 시 fallback
                 }
                 formatLogTimestamp(s.t_ms, tsBuf, sizeof(tsBuf));
-                snprintf(line, sizeof(line), "%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%.1f,%.2f,%u,%.2f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+                int used = snprintf(line, sizeof(line), "%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%.1f,%.2f,%u,%.2f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u",
                     tsBuf, (unsigned)s.t_ms,
                     (unsigned)s.busoff, (unsigned)s.tec, (unsigned)s.rec,
                     (unsigned)s.arbLost, (unsigned)s.busErr, (unsigned)s.txFail,
@@ -2805,7 +2786,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                     (unsigned)s.handsOn, (unsigned)s.dasState,
                     dasHandsOnStateName(s.dasState), dasHandsOnStateGroup(s.dasState),
                     (unsigned)dasHandsOnWarningLevel(s.dasState), dasHandsOnStateIsWarning(s.dasState) ? 1U : 0U,
-                    (unsigned)s.nagMode, (unsigned)s.smartProfile, (unsigned)s.dasSourceId,
+                    (unsigned)s.nagMode, (unsigned)s.nagModeDefault, (unsigned)s.dasSourceId,
                     (unsigned)s.echoDrop, (unsigned)s.skipRuntime,
                     (unsigned)s.skipAp, (unsigned)s.skipHandsOn, (unsigned)s.skipDas,
                     (unsigned)s.noDasEcho, (unsigned)s.userMark,
@@ -2822,6 +2803,20 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                     (unsigned)s.ageEchoMs, (unsigned)s.modeBStateAgeMs, (unsigned)s.modeBPhaseAgeMs,
                     (unsigned)s.modeBFirstEchoDelayMs, (unsigned)s.modeBDelayTargetMs,
                     (unsigned)s.d297, (unsigned)s.dModeBInject);
+                if (used < 0 || (size_t)used >= sizeof(line)) continue;
+                snprintf(line + used, sizeof(line) - (size_t)used,
+                    ",%u,%.1f,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+                    (unsigned)s.aFrames, (double)s.aFrameHz,
+                    (unsigned)s.aEflg, aMcpEflgStateName(s.aEflg), (unsigned)s.aEflgPeak,
+                    (unsigned)s.aTec, (unsigned)s.aRec, (unsigned)s.aTecPeak, (unsigned)s.aRecPeak,
+                    (unsigned)s.aTxOk, (unsigned)s.aTxFail, (unsigned)s.aMerrf,
+                    (unsigned)s.aRxOvr, (unsigned)s.aEflgEvents,
+                    (unsigned)s.aFrameAgeMs, (unsigned)s.aLoopAgeMs,
+                    (unsigned)s.aGuardActive, aTxGuardReasonName(s.aGuardReason),
+                    (unsigned)s.aGuardRemainingMs,
+                    (unsigned)s.aWakeCount, (unsigned)s.aWakeToSummonTxMs, (unsigned)s.aWakeAwaitingTx,
+                    (unsigned)s.dAFrames, (unsigned)s.dATxOk, (unsigned)s.dATxFail,
+                    (unsigned)s.dAMerrf, (unsigned)s.dARxOvr, (unsigned)s.dAEflgEvents);
                 if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) {
                     if (snap) free(snap);
                     logsBundleSerialTrace("fail section4", handlerStartMs);
@@ -2992,28 +2987,6 @@ static esp_err_t busoffCooldownHandler(httpd_req_t *req) {
     return ESP_OK;
 }
 
-// POST /api/busoff-mode {"soft":true/false}
-// v4.4 상태 머신 준수: soft recovery 우선, 실패 시 hard reinstall fallback.
-static esp_err_t busoffModeHandler(httpd_req_t *req) {
-    char buf[64] = {};
-    int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-    if (ret <= 0) { httpd_resp_send_500(req); return ESP_OK; }
-    cJSON *root = cJSON_Parse(buf);
-    if (!root) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad json"); return ESP_OK; }
-    cJSON *softItem = cJSON_GetObjectItem(root, "soft");
-    if (!softItem) {
-        cJSON_Delete(root);
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing soft");
-        return ESP_OK;
-    }
-    bool soft = cJSON_IsTrue(softItem);
-    cJSON_Delete(root);
-    (void)soft;
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, "{\"ok\":true,\"soft\":true,\"fixed\":true}");
-    return ESP_OK;
-}
-
 // ─── CAN 자가 진단 API ────────────────────────────────────────────────────────
 
 // POST /api/can-diag/start — 진단 태스크 시작
@@ -3046,8 +3019,14 @@ static esp_err_t canDiagLogHandler(httpd_req_t *req) {
     }
     LogRingBuffer::Entry entries[32];
     int n = diagLog.readSince(since, entries, 32);
+    const uint32_t currentHead = diagLog.currentHead();
+    const uint32_t oldest = currentHead > LogRingBuffer::kCapacity
+                                ? currentHead - LogRingBuffer::kCapacity : 0;
+    const uint32_t start = since > oldest ? since : oldest;
+    const uint32_t nextHead = start + (uint32_t)n;
     cJSON *root = cJSON_CreateObject();
-    cJSON_AddNumberToObject(root, "head",  (int)diagLog.currentHead());
+    cJSON_AddNumberToObject(root, "head",  (int)nextHead);
+    cJSON_AddNumberToObject(root, "complete_head", (int)currentHead);
     cJSON_AddNumberToObject(root, "state", (uint8_t)diagState);  // 0=idle,1=running,2=done
     cJSON *arr = cJSON_AddArrayToObject(root, "lines");
     for (int i = 0; i < n; i++) {
@@ -3062,6 +3041,34 @@ static esp_err_t canDiagLogHandler(httpd_req_t *req) {
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
     free(json);
+    return ESP_OK;
+}
+
+// GET /api/can-diag/log-dl — 자가 진단 결과 CSV 다운로드
+static esp_err_t canDiagLogDlHandler(httpd_req_t *req) {
+    httpd_resp_set_type(req, "text/csv; charset=utf-8");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"can_diag.csv\"");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_sendstr_chunk(req, "t_ms,message\r\n");
+
+    const uint32_t head = diagLog.currentHead();
+    const uint32_t start = head > LogRingBuffer::kCapacity ? head - LogRingBuffer::kCapacity : 0;
+    char escaped[LogRingBuffer::kMaxMsgLen * 2 + 1];
+    char line[LogRingBuffer::kMaxMsgLen * 2 + 48];
+    for (uint32_t i = start; i < head; ++i) {
+        const LogRingBuffer::Entry &entry = diagLog.at(i);
+        size_t out = 0;
+        for (size_t j = 0; entry.msg[j] != '\0' && out + 2 < sizeof(escaped); ++j) {
+            const char ch = entry.msg[j];
+            if (ch == '"') escaped[out++] = '"';
+            escaped[out++] = (ch == '\r' || ch == '\n') ? ' ' : ch;
+        }
+        escaped[out] = '\0';
+        snprintf(line, sizeof(line), "%u,\"%s\"\r\n",
+                 (unsigned)entry.timestamp_ms, escaped);
+        if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) return ESP_FAIL;
+    }
+    httpd_resp_sendstr_chunk(req, NULL);
     return ESP_OK;
 }
 
@@ -3274,6 +3281,7 @@ static esp_err_t otaHandler(httpd_req_t *req)
 
     if (!Update.begin(req->content_len))
     {
+        canTxQuiesceCancel();
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, Update.errorString());
         return ESP_FAIL;
     }
@@ -3290,6 +3298,7 @@ static esp_err_t otaHandler(httpd_req_t *req)
             if (++timeoutCount >= 5)
             {
                 Update.abort();
+                canTxQuiesceCancel();
                 httpd_resp_set_status(req, "408 Request Timeout");
                 httpd_resp_send(req, "Upload timed out", HTTPD_RESP_USE_STRLEN);
                 return ESP_FAIL;
@@ -3299,6 +3308,7 @@ static esp_err_t otaHandler(httpd_req_t *req)
         if (received <= 0)
         {
             Update.abort();
+            canTxQuiesceCancel();
             httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Upload failed");
             return ESP_FAIL;
         }
@@ -3306,6 +3316,7 @@ static esp_err_t otaHandler(httpd_req_t *req)
         if (Update.write(buffer, received) != (size_t)received)
         {
             Update.abort();
+            canTxQuiesceCancel();
             httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, Update.errorString());
             return ESP_FAIL;
         }
@@ -3314,6 +3325,7 @@ static esp_err_t otaHandler(httpd_req_t *req)
 
     if (!Update.end(true))
     {
+        canTxQuiesceCancel();
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, Update.errorString());
         return ESP_FAIL;
     }
@@ -3586,19 +3598,15 @@ static httpd_handle_t webServer = NULL;
 // timeseries CSV 메타 라이터: 드라이버 토글 + 기능 토글 상태를 '#' 주석 라인으로 주입
 static void timeseriesMetaWrite(httpd_req_t* req) {
     char line[420];
-    bool ssTx = gWebDriverB ? gWebDriverB->getSingleShotTx() : false;
     bool soft = gWebDriverB ? gWebDriverB->getSoftRecovery() : false;
-    bool boSk = gWebDriverB ? gWebDriverB->getBusOffStopSkip() : false;
     uint32_t cool = gWebDriverB ? gWebDriverB->getCooldownMs() : 0;
-    const NagSmartProfileSettings &profile = nagSmartProfileSettings((uint8_t)bChannelDiag.smartProfile);
+    uint8_t nagMode = nagModeClamp((uint8_t)bChannelDiag.nagMode);
     snprintf(line, sizeof(line),
-        "# nag_killer=%s  smart_profile=%u(%s)  ss_tx=%s  busoff_mode=%s  busoff_stop_skip=%s  cooldown_ms=%u\n",
+        "# nag_killer=%s  nag_mode=%u(%s)  busoff_mode=%s  cooldown_ms=%u\n",
         (bool)nagKillerRuntime ? "ON" : "OFF",
-        (unsigned)profile.id,
-        profile.label,
-        ssTx ? "ON" : "OFF",
+        (unsigned)nagMode,
+        nagModeName(nagMode),
         soft ? "soft" : "hard",
-        boSk ? "ON" : "OFF",
         (unsigned)cool);
     httpd_resp_sendstr_chunk(req, line);
     snprintf(line, sizeof(line),
@@ -3714,8 +3722,8 @@ static void webServerInit(TWAIDriver* drv = nullptr)
                   (unsigned long)(uint32_t)aMcpSpiFreqHz,
                   (int)(bool)aMcpOneShotRuntime,
                   (int)(bool)aTxGuardRuntime);
-        Serial.printf("NVS: NAG_PROFILE = %u, BUSOFF_COOLDOWN = %lu ms\n",
-                      (unsigned)(uint8_t)bChannelDiag.smartProfile,
+        Serial.printf("NVS: NAG_MODE = %u, BUSOFF_COOLDOWN = %lu ms\n",
+                      (unsigned)(uint8_t)bChannelDiag.nagMode,
                       (unsigned long)(uint32_t)bChannelDiag.busoffCooldownMs);
     }
     else
@@ -3819,8 +3827,6 @@ static void webServerInit(TWAIDriver* drv = nullptr)
         .uri = "/api/nag-stats", .method = HTTP_GET, .handler = nagStatsGetHandler, .user_ctx = NULL};
     httpd_uri_t uriNagMode = {
         .uri = "/api/nag-mode", .method = HTTP_POST, .handler = nagModeHandler, .user_ctx = NULL};
-    httpd_uri_t uriNagProfile = {
-        .uri = "/api/nag-profile", .method = HTTP_POST, .handler = nagProfileHandler, .user_ctx = NULL};
     httpd_uri_t uriNagUpdate = {
         .uri = "/api/nag-update", .method = HTTP_POST, .handler = nagUpdateHandler, .user_ctx = NULL};
     httpd_uri_t uriNagReset = {
@@ -3830,6 +3836,8 @@ static void webServerInit(TWAIDriver* drv = nullptr)
         .uri = "/api/can-diag/start", .method = HTTP_POST, .handler = canDiagStartHandler, .user_ctx = NULL};
     httpd_uri_t uriCanDiagLog = {
         .uri = "/api/can-diag/log", .method = HTTP_GET, .handler = canDiagLogHandler, .user_ctx = NULL};
+    httpd_uri_t uriCanDiagLogDl = {
+        .uri = "/api/can-diag/log-dl", .method = HTTP_GET, .handler = canDiagLogDlHandler, .user_ctx = NULL};
     httpd_uri_t uriTimeseriesCsv = {
         .uri = "/api/timeseries.csv", .method = HTTP_GET, .handler = timeseriesCsvHandler, .user_ctx = NULL};
     httpd_uri_t uriTimeseriesReset = {
@@ -3858,12 +3866,6 @@ static void webServerInit(TWAIDriver* drv = nullptr)
         .uri = "/api/busoff-log-dl", .method = HTTP_GET, .handler = busoffLogDlHandler, .user_ctx = NULL};
     httpd_uri_t uriBusOffCooldown = {
         .uri = "/api/busoff-cooldown", .method = HTTP_POST, .handler = busoffCooldownHandler, .user_ctx = NULL};
-    httpd_uri_t uriBusOffMode = {
-        .uri = "/api/busoff-mode", .method = HTTP_POST, .handler = busoffModeHandler, .user_ctx = NULL};
-    httpd_uri_t uriTwaiSsTx = {
-        .uri = "/api/twai-ss-tx", .method = HTTP_POST, .handler = twaiSsTxHandler, .user_ctx = NULL};
-    httpd_uri_t uriTwaiBusOffStop = {
-        .uri = "/api/twai-busoff-stop", .method = HTTP_POST, .handler = twaiBusOffStopHandler, .user_ctx = NULL};
 
     httpd_register_uri_handler(webServer, &uriRoot);
     httpd_register_uri_handler(webServer, &uriStatus);
@@ -3893,11 +3895,11 @@ static void webServerInit(TWAIDriver* drv = nullptr)
     httpd_register_uri_handler(webServer, &uriNagConfigGet);
     httpd_register_uri_handler(webServer, &uriNagStatsGet);
     httpd_register_uri_handler(webServer, &uriNagMode);
-    httpd_register_uri_handler(webServer, &uriNagProfile);
     httpd_register_uri_handler(webServer, &uriNagUpdate);
     httpd_register_uri_handler(webServer, &uriNagReset);
     httpd_register_uri_handler(webServer, &uriCanDiagStart);
     httpd_register_uri_handler(webServer, &uriCanDiagLog);
+    httpd_register_uri_handler(webServer, &uriCanDiagLogDl);
     httpd_register_uri_handler(webServer, &uriTimeseriesCsv);
     httpd_register_uri_handler(webServer, &uriTimeseriesReset);
     httpd_register_uri_handler(webServer, &uriTimeseriesRec);
@@ -3911,9 +3913,6 @@ static void webServerInit(TWAIDriver* drv = nullptr)
     httpd_register_uri_handler(webServer, &uriBusOffLogClear);
     httpd_register_uri_handler(webServer, &uriBusOffLogDl);
     httpd_register_uri_handler(webServer, &uriBusOffCooldown);
-    httpd_register_uri_handler(webServer, &uriBusOffMode);
-    httpd_register_uri_handler(webServer, &uriTwaiSsTx);
-    httpd_register_uri_handler(webServer, &uriTwaiBusOffStop);
 
     // OTA 상태 머신 라우트 (복구모드 여부와 관계없이 항상 등록)
     httpd_uri_t uriOtaConfirm = {
