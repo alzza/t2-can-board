@@ -28,7 +28,6 @@ inline LogRingBuffer logRing;
 // 모든 CAN 핸들러의 기본 클래스
 struct CarManagerBase
 {
-    Shared<bool> enablePrint{true};     // 시리얼 출력 활성화 여부
     Shared<uint32_t> frameCount{0};     // 수신 프레임 카운터
     Shared<uint32_t> framesSent{0};     // 전송 프레임 카운터
 

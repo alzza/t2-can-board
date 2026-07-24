@@ -62,6 +62,8 @@ python3 scripts/platformio_set_ino_profile.py \
 
 PlatformIO reads the active board, vehicle, and optional feature defines from `sketch_config.h`. The `-e` environment still selects the board, so it must match the uncommented driver define. If they do not match, the build stops with a clear error.
 
-## Serial Debug Output
+## Serial 출력 정책
 
-Debug output is printed over Serial at **115200 baud** when `enablePrint` is `true`. Open the Serial Monitor to see live FSD state and active speed profile.
+Serial 속도는 **115200 baud**입니다. 차량 운행 중 주기 상태 출력은 사용하지 않으며,
+부팅·OTA·초기화 실패·BUS-OFF/복구·TEC/REC 임계값 전환만 출력합니다.
+상세 분석은 Web UI의 진단 화면과 CSV/전체 로그 저장을 사용합니다.

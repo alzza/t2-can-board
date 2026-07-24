@@ -409,11 +409,11 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   .observer-head{gap:8px}
   .observer-file-btn{padding:8px 10px;min-width:84px;font-size:11px}
 }
-/* ── 진단 화면: 항상 펼친 채널별 상태판 ─────────────────────── */
+/* ── 진단 화면: 요약 우선, 상세 카운터는 필요할 때 펼침 ─────── */
 .diag-card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px;margin-bottom:12px}
 .diag-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
 .diag-head h2{margin:0;font-size:1.05em;color:var(--tx)}
-.diag-signal-grid{display:grid;grid-template-columns:1fr;gap:10px}
+.diag-signal-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .diag-signal-group{border:1px solid var(--bd);border-radius:10px;background:var(--bg2);padding:10px;min-width:0}
 .diag-channel-grid{display:grid;grid-template-columns:1fr;gap:12px;align-items:start}
 .diag-title{font-weight:700;color:var(--tx)}
@@ -426,6 +426,21 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
 .diag-help{font-size:11px;color:var(--tx3);line-height:1.55;margin-top:8px}
 .diag-help b{color:var(--tx2)}
 @media(max-width:760px){.diag-signal-grid,.diag-channel-grid{grid-template-columns:1fr}}
+.diag-details{padding:0;overflow:hidden}
+.diag-details>summary{list-style:none;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 16px;cursor:pointer;color:var(--tx);font-size:.9em;font-weight:850}
+.diag-details>summary::-webkit-details-marker{display:none}
+.diag-details>summary:after{content:"상세 보기 ＋";font-size:11px;color:var(--tx3);font-weight:700}
+.diag-details[open]>summary:after{content:"상세 닫기 －"}
+.diag-details[open]>summary{border-bottom:1px solid var(--bd)}
+.diag-details-body{padding:12px}
+.live-log-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+.live-log-head h2{margin:0}
+.log-mode{display:inline-flex;border:1px solid var(--bd);border-radius:9px;padding:2px;background:var(--bg2)}
+.log-mode button{border:0;border-radius:7px;background:transparent;color:var(--tx3);padding:6px 10px;font-size:11px;font-weight:800;cursor:pointer}
+.log-mode button.active{background:var(--card);color:var(--tx);box-shadow:0 1px 4px rgba(0,0,0,.16)}
+.log-empty{display:none;color:var(--tx3);font-size:12px;padding:14px 4px;text-align:center}
+.log-guide{color:var(--tx3);font-size:11px;line-height:1.5;margin:-3px 0 9px}
+.le.warn{color:var(--warn)}.le.err{color:var(--err);font-weight:700}.le.state{color:var(--acc2)}
 .chip{display:inline-block;font-size:11px;font-weight:600;padding:3px 8px;border-radius:12px;border:1px solid transparent;line-height:1.4;white-space:nowrap;font-family:monospace}
 .chip.ok{background:rgba(76,175,80,.12);color:var(--acc2);border-color:rgba(76,175,80,.3)}
 .chip.warn{background:rgba(230,126,34,.15);color:var(--warn);border-color:rgba(230,126,34,.4)}
@@ -710,19 +725,12 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
       </div>
     </div>
   </div>
-  <div class="row">
-    <div class="labelWrap">
-      <span class="label">Enable Log</span>
-      <span class="meta">Serial and web log polling</span>
-    </div>
-    <label class="sw"><input type="checkbox" id="tLog" checked onchange="togLog(this)"><span class="sl"></span></label>
-  </div>
 </div>
 </section>
 
 <section class="view" id="view-diag" role="tabpanel" aria-labelledby="tab-diag">
 
-<!-- ═══ 진단 신호 패널 (옵션 B): A/B 채널 진단 카운터를 chip 형태로 압축 ═══
+<!-- ═══ 진단 요약: A/B 채널 상태를 먼저 확인하고 상세 카운터는 아래에서 펼침 ═══
      ┌─ A: TX OK/Fail · TEC · MERRF · RX-OVR
      └─ B: ARB-LOST · BUS-ERR · TX-FAIL · RX-MISS
      0 = 녹색(ok), >0 = 주황(warn), 임계값 초과 = 빨강(err) -->
@@ -745,14 +753,15 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
         <span class="chip ok" id="d-a-eflg-peak" title="부팅 이후 관측한 EFLG 비트 누적 OR">EFLG-PEAK 0x00</span>
         <span class="chip ok" id="d-a-guard" title="A채널 TX Guard 활성 상태와 원인">GUARD OFF</span>
         <span class="chip ok" id="d-a-age" title="A채널 마지막 프레임/루프 경과시간">AGE --</span>
+        <span class="chip ok" id="d-a-gap" title="A채널 폴링 호출 사이 최근/최대 공백과 2ms 초과 누적">LOOP-GAP --</span>
         <span class="chip ok" id="d-a-wake" title="2초 이상 수신 공백 뒤 재수신 시작부터 첫 Summon TX 성공까지">WAKE→TX --</span>
       </div>
-      <div class="diag-help"><b>TX</b>: 송신 성공/실패 · <b>TEC/REC</b>: CAN 에러 카운터 · <b>MERRF/RX-OVR</b>: MCP2515 오류/수신 오버런 · <b>EFLG-EV</b>: EFLG 비정상 전환 횟수</div>
+      <div class="diag-help"><b>TX</b>: 송신 성공/실패 · <b>TEC/REC</b>: CAN 에러 카운터 · <b>MERRF/RX-OVR</b>: MCP2515 오류/수신 오버런 · <b>LOOP-GAP</b>: 2개뿐인 MCP2515 RX 버퍼를 비우지 못한 폴링 공백 추적</div>
     </div>
     <div class="diag-signal-group">
       <div class="diag-lbl">B채널</div>
       <div class="diag-row">
-        <span class="chip ok" id="d-b-arb"    title="Arbitration Lost. ↑ = 동일 ID 충돌">ARB 0</span>
+        <span class="chip ok" id="d-b-arb"    title="Arbitration Lost. 다른 프레임에 우선권을 양보한 횟수이며 TEC/REC·BUS-ERR가 0이면 물리 오류가 아님">ARB 0</span>
         <span class="chip ok" id="d-b-err"    title="Bus Error 누적. ↑ = 배선/ACK 부재">BUS-ERR 0</span>
         <span class="chip ok" id="d-b-txf"    title="TX-FAILED 누적. Single-shot 충돌 회피 동작 검증">TX-FAIL 0</span>
         <span class="chip ok" id="d-b-rxm"    title="RX-MISSED 누적. ↑ = nagKillerTask 폴링 부족">RX-MISS 0</span>
@@ -768,6 +777,9 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   </div>
 </div>
 
+<details class="card diag-details" id="diagDetails">
+<summary><span>채널별 상세 카운터 · BUS-OFF 이력</span><span class="diag-sum" id="diag-detail-hint">기본 접힘</span></summary>
+<div class="diag-details-body">
 <div class="diag-channel-grid">
 <div class="card no-collapse">
   <h2><span id="aChTitle">&#x1F535; A 채널 (MCP2515 · Summon/TSLLC)</span></h2>
@@ -887,14 +899,18 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
       </thead>
       <tbody id="boLogBody"></tbody>
       </table>
-    </div>
 </div>
+</div>
+</div>
+</details>
 <!-- CAN 자가 진단 패널 -->
 <div class="card no-collapse" id="diagCard">
   <h2>&#x1F52C; CAN 통신 자가 진단</h2>
   <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6">
     버스 트래픽 &middot; 에코 동작 &middot; TEC/REC &middot; BUS-OFF 이력을 순서대로 체크합니다.
-    차량 현장에서 컴퓨터 없이 이 페이지만으로 통신 이슈를 진단할 수 있습니다 (~19초 소요).
+    차량 현장에서 컴퓨터 없이 이 페이지만으로 통신 이슈를 진단할 수 있습니다 (~19초 소요).<br>
+    수동 기록을 시작하지 않으면 최근 20분이 자동 보관됩니다. 수동 기록은 시작 시 기존 로그를 비우고,
+    정지 시 해당 구간을 고정합니다. CSV에는 실제 시각과 업타임, A/B 채널, 플래그 상태가 함께 저장됩니다.
   </div>
   <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
     <button class="btn" id="diagBtn" onclick="startCanDiag()">CAN 진단</button>
@@ -905,9 +921,9 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
     <span id="diagStatus" style="font-size:12px;color:var(--muted)"></span>
   </div>
   <div class="diag-download-grid">
-    <a class="btn" href="/api/can-diag/log-dl" download="can_diag.csv">자가 진단 CSV</a>
-    <a class="btn" href="/api/timeseries.csv" download="timeseries.csv">A/B 시계열 CSV</a>
-    <a class="btn" href="/api/events.csv" download="can_events.csv">밀리초 이벤트 CSV</a>
+    <a class="btn" href="/api/can-diag/log-dl" download="can_diag.csv">자가 진단 결과 CSV</a>
+    <a class="btn" href="/api/timeseries.csv" download="can_timeseries_ab.csv">A/B 상태 시계열 CSV</a>
+    <a class="btn" href="/api/events.csv" download="can_events.csv">채널별 이벤트 CSV</a>
     <a class="btn" href="/api/logs-bundle" data-download-url="/api/logs-bundle" download="canmod_logs.txt" onclick="return handleDownloadAction(event,this)">전체 로그 저장</a>
   </div>
   <div id="diagLogWrap" style="display:none">
@@ -915,7 +931,18 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   </div>
 </div>
 
-<div id="log"></div>
+<div class="card no-collapse">
+  <div class="live-log-head">
+    <h2>중요 실시간 로그</h2>
+    <div class="log-mode" role="group" aria-label="실시간 로그 표시 범위">
+      <button type="button" id="logModeImportant" class="active" onclick="setLiveLogMode('important')">중요</button>
+      <button type="button" id="logModeAll" onclick="setLiveLogMode('all')">전체</button>
+    </div>
+  </div>
+  <div class="log-guide">기본 화면에는 경고·오류, BUS-OFF/복구, TX Guard, 기능 변경, USER_MARK만 표시합니다. 전체 저장 파일에는 모든 런타임 로그가 유지됩니다.</div>
+  <div id="logEmpty" class="log-empty">표시할 중요 로그가 없습니다.</div>
+  <div id="log"></div>
+</div>
 </section>
 
 <section class="view" id="view-ota" role="tabpanel" aria-labelledby="tab-ota">
@@ -969,6 +996,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
 </section>
 <script>
 var logSince=0,errCount=0;
+var liveLogMode='important',liveLogEntries=[];
 var baseUptimeMs=0,baseUptimeTs=0,detailPollingStarted=false;
 var _activeView='main';
 var _otaUploadInProgress=false;
@@ -1002,6 +1030,52 @@ function handleDownloadAction(ev,el){
   scheduleLogsBundleNetworkResume(pauseMs);
   el.setAttribute('href',appendQueryParam(base,'dl',Date.now()));
   return true;
+}
+function liveLogClass(msg){
+  var s=String(msg||'');
+  if(/BUS[-_]OFF 복구 성공|CAN 오류 카운터 정상 복귀/i.test(s))return'state';
+  if(/BUS[-_]OFF 복구 시도/i.test(s))return'warn';
+  if(/❌|🚨|\[ERROR\]|\bFAIL(?:ED)?\b|실패|BUS[-_]OFF/i.test(s))return'err';
+  if(/⚠|\[WARN\]|경고|RECOVERING|복구 (?:시도|실패)/i.test(s))return'warn';
+  if(/USER[-_]MARK|TX guard|A_CHANNEL_TX|SUMMON_UNLOCK_HW3|\bTSLLC\b|NAG_KILLER|A SPI clock target|A MCP2515 mode|\[NAG\] (?:모드 변경|설정 리셋)|\[EMERGENCY\]|\[RESTORE\]|\[OTA\]/i.test(s))return'state';
+  return'normal';
+}
+function isImportantLiveLog(msg){return liveLogClass(msg)!=='normal';}
+function liveLogWallTime(ts){
+  var nTs=Number(ts)||0;
+  return baseUptimeTs?baseUptimeTs+(nTs-baseUptimeMs):Date.now();
+}
+function renderLiveLogs(){
+  var logEl=document.getElementById('log'),empty=document.getElementById('logEmpty');
+  if(!logEl)return;
+  logEl.textContent='';
+  var shown=0;
+  for(var i=liveLogEntries.length-1;i>=0&&shown<100;i--){
+    var e=liveLogEntries[i];
+    if(liveLogMode==='important'&&!isImportantLiveLog(e.msg))continue;
+    var le=document.createElement('div'),kind=liveLogClass(e.msg);
+    le.className='le '+kind;
+    var ts=document.createElement('span');ts.className='ts';
+    ts.textContent='['+new Date(liveLogWallTime(e.ts)).toLocaleTimeString()+'] ';
+    le.appendChild(ts);le.appendChild(document.createTextNode(e.msg));
+    logEl.appendChild(le);shown++;
+  }
+  logEl.style.display=shown?'block':'none';
+  if(empty)empty.style.display=shown?'none':'block';
+}
+function setLiveLogMode(mode){
+  liveLogMode=mode==='all'?'all':'important';
+  var imp=document.getElementById('logModeImportant'),all=document.getElementById('logModeAll');
+  if(imp)imp.classList.toggle('active',liveLogMode==='important');
+  if(all)all.classList.toggle('active',liveLogMode==='all');
+  try{localStorage.setItem('tcan-log-mode',liveLogMode);}catch(e){}
+  renderLiveLogs();
+}
+function ingestLiveLogs(entries){
+  if(!entries||!entries.length)return;
+  for(var i=0;i<entries.length;i++)liveLogEntries.push({ts:entries[i].ts,msg:String(entries[i].msg||'')});
+  if(liveLogEntries.length>200)liveLogEntries.splice(0,liveLogEntries.length-200);
+  renderLiveLogs();
 }
 function showView(name){
   var views={main:1,control:1,diag:1,ota:1,experiment:1};
@@ -1572,8 +1646,9 @@ function updateChannelStatus(d){
   setChip('d-a-eflg-peak','EFLG-PEAK 0x'+hex2(aEflgPeak),aEflgPeak?'warn':'ok');
   setChip('d-a-guard',a.tx_guard_active?('GUARD '+(a.tx_guard_reason||'ON')+' '+n(a.tx_guard_remaining_ms)+'ms'):'GUARD OFF',a.tx_guard_active?'warn':'ok');
   setChip('d-a-age','AGE RX '+n(a.frame_age_ms)+' / LOOP '+n(a.loop_age_ms)+'ms',a.task_alive&&a.fresh?'ok':a.task_alive?'warn':'err');
+  var aGap=n(a.loop_gap_last_us);setChip('d-a-gap','LOOP-GAP '+aGap+'/'+n(a.loop_gap_peak_us)+'us >2ms:'+n(a.loop_gap_over_2ms),aGap>10000?'err':aGap>2000?'warn':'ok');
   setChip('d-a-wake',a.wake_waiting_summon_tx?'WAKE→TX 대기':('WAKE→TX '+(n(a.wake_count)?n(a.wake_to_summon_tx_ms)+'ms':'--')),a.wake_waiting_summon_tx?'warn':'ok');
-  setChip('d-b-arb','ARB '+n(b.arb_lost),n(b.arb_lost)?'warn':'ok');
+  setChip('d-b-arb','ARB '+n(b.arb_lost),n(b.bus_error)||n(b.tx_failed)||n(b.twai_tx_err_now)||n(b.twai_rx_err_now)?'warn':'ok');
   setChip('d-b-err','BUS-ERR '+n(b.bus_error),n(b.bus_error)?'warn':'ok');
   setChip('d-b-txf','TX-FAIL '+n(b.tx_failed),n(b.tx_failed)?'warn':'ok');
   setChip('d-b-rxm','RX-MISS '+n(b.rx_missed),n(b.rx_missed)?'warn':'ok');
@@ -1626,7 +1701,6 @@ async function poll(){
     var tAChannelTx=document.getElementById('tAChannelTx');if(tAChannelTx)tAChannelTx.checked=!!d.a_channel_tx;
     var tNag=document.getElementById('tNag');if(tNag)tNag.checked=!!d.nag_killer;
     var tBNagMaster=document.getElementById('tBNagMaster');if(tBNagMaster)tBNagMaster.checked=!!d.nag_killer;
-    var tLog=document.getElementById('tLog');if(tLog)tLog.checked=!!d.enable_print;
     if(d.features){
       var tASpi8=document.getElementById('tASpi8');if(tASpi8)tASpi8.checked=!!(d.features.a_spi_8mhz&&d.features.a_spi_8mhz.enabled);
       var tAOneShot=document.getElementById('tAOneShot');if(tAOneShot)tAOneShot.checked=!!(d.features.a_mcp_oneshot&&d.features.a_mcp_oneshot.enabled);
@@ -1651,19 +1725,7 @@ async function poll(){
     updateChannelStatus(d);
     renderSignalObserver(d.signal_observer);
     updateUserMarkerUi(d);
-    if(d.logs&&d.logs.length){
-      var logEl=document.getElementById('log');
-      if(logEl){
-        for(var i=0;i<d.logs.length;i++){
-          var le=document.createElement('div');le.className='le';
-          var ts=document.createElement('span');ts.className='ts';
-          ts.textContent='['+new Date(d.logs[i].ts).toLocaleTimeString()+'] ';
-          le.appendChild(ts);le.appendChild(document.createTextNode(d.logs[i].msg));
-          logEl.insertBefore(le,logEl.firstChild);
-        }
-        while(logEl.children.length>100)logEl.removeChild(logEl.lastChild);
-      }
-    }
+    if(d.logs&&d.logs.length)ingestLiveLogs(d.logs);
     logSince=d.log_head||logSince;
     errCount=0;
     var ce=document.getElementById('connErr');if(ce)ce.style.display='none';
@@ -1733,7 +1795,7 @@ async function updateRecStatus(){
     if(d.rec){btn.textContent='⏹ 기록 정지';btn.style.background='#c0392b';
       st.textContent='🔴 REC '+fmtElapsed(d.elapsed_ms)+' · '+d.samples+'샘플';
     }else{btn.textContent='⏺ 기록 시작';btn.style.background='';
-      st.textContent=d.start_ms?'⏹ 정지됨 · '+d.samples+'샘플':'';
+      st.textContent=d.start_ms?'⏹ 구간 고정 · '+d.samples+'샘플':'자동 최근 20분 · '+d.samples+'샘플';
     }
   }catch(e){}
 }
@@ -2034,6 +2096,11 @@ setInterval(function(){
   var saved='main';
   try{saved=localStorage.getItem('tcan-view')||'main';}catch(e){}
   showView(saved);
+})();
+(function(){
+  var saved='important';
+  try{saved=localStorage.getItem('tcan-log-mode')||'important';}catch(e){}
+  setLiveLogMode(saved);
 })();
 </script>
 </body>

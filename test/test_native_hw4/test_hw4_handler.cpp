@@ -12,7 +12,6 @@ void setUp()
 {
     mock.reset();
     handler = HW4Handler();
-    handler.enablePrint = false;
     bypassTlsscRequirementRuntime = kBypassTlsscRequirementDefaultEnabled;
     isaSpeedChimeSuppressRuntime = kIsaSpeedChimeSuppressDefaultEnabled;
     emergencyVehicleDetectionRuntime = kEmergencyVehicleDetectionDefaultEnabled;

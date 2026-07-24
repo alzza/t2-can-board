@@ -10,11 +10,12 @@ sidebar_position: 2
 
 **ESP32 boards:** Hold the **BOOT** button during upload if auto-reset does not work.
 
-## No Serial Output
+## Serial 출력이 보이지 않을 때
 
-- Ensure the Serial Monitor is set to **115200 baud**
-- Check that `enablePrint` is set to `true`
-- Verify the USB cable supports data (not charge-only)
+- Serial Monitor 속도를 **115200 baud**로 설정합니다.
+- 정상 운행 중에는 주기 디버그 출력이 없으므로 출력이 적은 것이 정상입니다.
+- 부팅 직후에도 출력이 없다면 충전 전용이 아닌 데이터 USB 케이블인지 확인합니다.
+- 상세 상태는 Web UI 진단 화면과 CSV/전체 로그 저장에서 확인합니다.
 
 ## CAN Communication Errors
 

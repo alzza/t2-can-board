@@ -135,12 +135,13 @@ void nagKillerTask(void* pvParameters) {
     uint32_t lastHzMs  = millis();
 
     logRing.push("🟢 [CAN] A/B 통합 폴링 Task 시작", millis());
-    Serial.println("🟢 [CAN] A/B 통합 폴링 Task 시작");
     bChannelDiag.nagTaskCreated = true;
     bChannelDiag.taskCoreId = xPortGetCoreID();
 
-    uint32_t lastTecWarnMs = 0;  // TEC 경고 로그 쓰로틀용
+    bool bErrorWarningActive = false;  // TEC/REC 경고 진입·해제 전환만 출력
     uint32_t prevBusoffForLog = 0; // BUS-OFF 이벤트 로그용 직전값
+    uint32_t prevRecovAttempt = 0; // 복구 시도 이벤트 직전값
+    uint32_t prevRecovSuccess = 0; // 복구 성공 이벤트 직전값
     uint32_t prevRecovFail    = 0; // 복구 실패 카운터 직전값
     uint32_t lastBusoffEventMs = 0; // 이전 BUS-OFF 시각 (시간간격 계산용)
     uint32_t prevCooldown = 1000;  // 쿨다운 변경 감지용
@@ -202,18 +203,68 @@ void nagKillerTask(void* pvParameters) {
                 ev.recovered     = (curFail == prevRecovFail) ? 1 : 0;
                 ev.pad[0] = ev.pad[1] = ev.pad[2] = 0;
                 busOffLog.push(ev);
+                eventLogPushAt(ev.timestampMs, EV_BUSOFF,
+                               (uint16_t)ev.tec, (uint16_t)ev.rec, ev.seqNum);
+                char busOffBuf[112];
+                snprintf(busOffBuf, sizeof(busOffBuf),
+                         "❌ [B-CH] BUS-OFF #%u TEC=%u REC=%u",
+                         (unsigned)ev.seqNum, (unsigned)ev.tec, (unsigned)ev.rec);
+                logRing.push(busOffBuf, ev.timestampMs);
+                Serial.println(busOffBuf);
                 lastBusoffEventMs = ev.timestampMs;
-                prevRecovFail     = curFail;
                 prevBusoffForLog  = curBo;
             }
 
             // 복구 카운터 동기화 (이전에는 미연결 → 대시보드에 항상 0/0/0으로 표시되던 문제 수정)
-            bChannelDiag.recoveryAttemptCount   = driverB->getRecoveryAttemptCount();
-            bChannelDiag.recoverySuccessCount   = driverB->getRecoverySuccessCount();
-            bChannelDiag.recoveryFailCount      = driverB->getRecoveryFailCount();
+            const uint32_t curRecovAttempt = driverB->getRecoveryAttemptCount();
+            const uint32_t curRecovSuccess = driverB->getRecoverySuccessCount();
+            const uint32_t curRecovFail = driverB->getRecoveryFailCount();
+            bChannelDiag.recoveryAttemptCount   = curRecovAttempt;
+            bChannelDiag.recoverySuccessCount   = curRecovSuccess;
+            bChannelDiag.recoveryFailCount      = curRecovFail;
             bChannelDiag.lastRecoveryDurationMs = driverB->getLastRecoveryDurationMs();
             bChannelDiag.maxRecoveryDurationMs  = driverB->getMaxRecoveryDurationMs();
             bChannelDiag.lastBusoffMs           = driverB->getLastBusOffMs();
+            if (curRecovAttempt > prevRecovAttempt) {
+                eventLogPush(EV_RECOVERY_SOFT,
+                             (uint16_t)driverB->getBusOffTec(),
+                             (uint16_t)driverB->getBusOffRec(),
+                             curRecovAttempt);
+                char recoveryBuf[104];
+                snprintf(recoveryBuf, sizeof(recoveryBuf),
+                         "⚠️ [B-CH] BUS-OFF 복구 시도 #%u",
+                         (unsigned)curRecovAttempt);
+                logRing.push(recoveryBuf, millis());
+                Serial.println(recoveryBuf);
+                prevRecovAttempt = curRecovAttempt;
+            }
+            if (curRecovSuccess > prevRecovSuccess) {
+                eventLogPush(EV_RECOVERY_OK,
+                             (uint16_t)driverB->getBusOffTec(),
+                             (uint16_t)driverB->getBusOffRec(),
+                             driverB->getLastRecoveryDurationMs());
+                char recoveryBuf[120];
+                snprintf(recoveryBuf, sizeof(recoveryBuf),
+                         "✅ [B-CH] BUS-OFF 복구 성공 #%u (%ums)",
+                         (unsigned)curRecovSuccess,
+                         (unsigned)driverB->getLastRecoveryDurationMs());
+                logRing.push(recoveryBuf, millis());
+                Serial.println(recoveryBuf);
+                prevRecovSuccess = curRecovSuccess;
+            }
+            if (curRecovFail > prevRecovFail) {
+                eventLogPush(EV_RECOVERY_FAIL,
+                             (uint16_t)driverB->getBusOffTec(),
+                             (uint16_t)driverB->getBusOffRec(),
+                             curRecovFail);
+                char recoveryBuf[104];
+                snprintf(recoveryBuf, sizeof(recoveryBuf),
+                         "❌ [B-CH] BUS-OFF 복구 실패 #%u",
+                         (unsigned)curRecovFail);
+                logRing.push(recoveryBuf, millis());
+                Serial.println(recoveryBuf);
+                prevRecovFail = curRecovFail;
+            }
 
             // 에러 카운터 상시 샘플링 (TEC/REC 피크 추적 + 심층 진단)
             if (driverB->isDriverOK()) {
@@ -230,22 +281,34 @@ void nagKillerTask(void* pvParameters) {
                     bChannelDiag.bBusError  = twSt.bus_error_count;
                     bChannelDiag.bTxFailed  = twSt.tx_failed_count;
                     bChannelDiag.bRxMissed  = twSt.rx_missed_count;
-                    // TEC >= 96: BUS-OFF 전 조기 경고 (2초 쓰로틀)
-                    if (twSt.tx_error_counter >= 96 && millis() - lastTecWarnMs > 2000) {
-                        lastTecWarnMs = millis();
-                        char tecBuf[80];
+                    // TEC/REC >= 96: BUS-OFF/수신 오류 전 조기 경고.
+                    // 주기 출력 대신 임계값 진입·해제 순간만 남겨 Serial/Web 로그 폭주를 막는다.
+                    const bool errorWarningNow =
+                        twSt.tx_error_counter >= 96 || twSt.rx_error_counter >= 96;
+                    if (errorWarningNow && !bErrorWarningActive) {
+                        char tecBuf[96];
                         snprintf(tecBuf, sizeof(tecBuf),
-                            "⚠️ [B-CH] TEC=%u REC=%u (에러 수동->BUS-OFF 임박)",
+                            "⚠️ [B-CH] CAN 오류 카운터 경고 진입 TEC=%u REC=%u",
                             (unsigned)twSt.tx_error_counter,
                             (unsigned)twSt.rx_error_counter);
                         logRing.push(tecBuf, millis());
                         Serial.println(tecBuf);
+                    } else if (!errorWarningNow && bErrorWarningActive) {
+                        char recoveredBuf[96];
+                        snprintf(recoveredBuf, sizeof(recoveredBuf),
+                            "✅ [B-CH] CAN 오류 카운터 정상 복귀 TEC=%u REC=%u",
+                            (unsigned)twSt.tx_error_counter,
+                            (unsigned)twSt.rx_error_counter);
+                        logRing.push(recoveredBuf, millis());
+                        Serial.println(recoveredBuf);
                     }
+                    bErrorWarningActive = errorWarningNow;
                 }
             }
 
             CanFrame frame;
             int rxLimit = 30; // 무한 루프(WDT Panic) 방지 제한
+            uint8_t bFramesBeforeAService = 0;
             while (driverB->read(frame) && rxLimit > 0) {
                 bChannelDiag.frameIdReceived = frame.id;
                 bChannelDiag.framesReceivedTotal++;
@@ -272,6 +335,14 @@ void nagKillerTask(void* pvParameters) {
                     bChannelDiag.framesFilteredOutTotal++;
                 }
                 rxLimit--;
+                // TWAI RX burst를 8개 처리할 때마다 MCP2515의 2-deep RX 버퍼를
+                // 즉시 비운다. B채널 accept-all burst가 A채널 폴링을 오래 막지 않게 한다.
+                if (++bFramesBeforeAService >= 8) {
+#if defined(BOARD_T2CAN) && !defined(NATIVE_BUILD)
+                    if (!gOtaRecoveryModeActive) appLoop<MCP2515Driver>();
+#endif
+                    bFramesBeforeAService = 0;
+                }
             }
         }
 
@@ -315,7 +386,13 @@ void nagKillerTask(void* pvParameters) {
                 (unsigned)aChannelDiag.aRxOvrCount,
                 (unsigned)(uint8_t)aChannelDiag.mcpEflg);
             logRing.push(aBuf, millis());
-            Serial.println(aBuf);
+            char aPollBuf[112];
+            snprintf(aPollBuf, sizeof(aPollBuf),
+                "⏱️ [A-POLL] LoopGap last=%uus peak=%uus over2ms=%u",
+                (unsigned)aChannelDiag.loopGapLastUs,
+                (unsigned)aChannelDiag.loopGapPeakUs,
+                (unsigned)aChannelDiag.loopGapOver2msCount);
+            logRing.push(aPollBuf, millis());
 
             const char* twaiStr =
                 bChannelDiag.twaiStateCode == 1 ? "OK" :
@@ -340,7 +417,6 @@ void nagKillerTask(void* pvParameters) {
                 nagModeName((uint8_t)bChannelDiag.nagMode),
                 twaiStr);
             logRing.push(bBuf, millis());
-            Serial.println(bBuf);
 
             uint32_t cur880 = (uint32_t)bChannelDiag.frames880;
             uint32_t cur921 = (uint32_t)bChannelDiag.frames921;
@@ -386,7 +462,6 @@ void nagKillerTask(void* pvParameters) {
                 (unsigned)bChannelDiag.dasStatusSourceId,
                 nagDecisionName(intervalDecision));
             logRing.push(bNag, millis());
-            Serial.println(bNag);
 
             char bGate[180];
             snprintf(bGate, sizeof(bGate),
@@ -398,7 +473,6 @@ void nagKillerTask(void* pvParameters) {
                 (unsigned)dNoDas,
                 nagDecisionName((uint8_t)bChannelDiag.nagLastDecision));
             logRing.push(bGate, millis());
-            Serial.println(bGate);
 
             prevLog880 = cur880;
             prevLog921 = cur921;
@@ -434,7 +508,6 @@ void nagKillerTask(void* pvParameters) {
                 (unsigned)bChannelDiag.skipHandsOn,
                 (unsigned)bChannelDiag.skipDasState);
             logRing.push(bDeep, millis());
-            Serial.println(bDeep);
 
             lastStatusTime = millis();
         }
@@ -452,10 +525,13 @@ void nagKillerTask(void* pvParameters) {
                 driverB ? driverB->getLastInstallErr() : -1,
                 driverB ? driverB->getLastStartErr() : -1);
             logRing.push(dbg, millis());
-            Serial.println(dbg);
             lastDebugTime = millis();
         }
 
+        // 문자열 포맷/웹 로그 갱신 중 도착한 A 프레임을 1ms 양보 전에 한 번 더 비운다.
+#if defined(BOARD_T2CAN) && !defined(NATIVE_BUILD)
+        if (!gOtaRecoveryModeActive) appLoop<MCP2515Driver>();
+#endif
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
@@ -716,14 +792,10 @@ void setup() {
 
     // B채널: TWAI 초기화
     driverB = std::make_unique<TWAIDriver>((gpio_num_t)T2CAN_TX, (gpio_num_t)T2CAN_RX);
-    Serial.println("[B-CH] TWAI 드라이버 초기화 시도...");
-
     if (driverB && driverB->init()) {
         bChannelDiag.driverBInitialized = true;
-        Serial.println("🟢✅ [B-CH] TWAI 드라이버 초기화 성공");
         logRing.push("🟢✅ [B-CH] TWAI 드라이버 초기화 성공", millis());
     } else {
-        Serial.println("❌ [B-CH] TWAI 드라이버 초기화 실패!");
         char initFailBuf[120];
         snprintf(initFailBuf, sizeof(initFailBuf),
             "❌ [B-CH] TWAI 드라이버 초기화 실패! install=%d start=%d",
@@ -733,7 +805,6 @@ void setup() {
         Serial.println(initFailBuf);
     }
 
-    Serial.println("[CAN] 통합 CAN Task 생성 시도...");
     // Core 1 핀: TWAI ISR(설치된 코어=Core 1)과 task 코어 일치 + A채널
     // appLoop 통합 폴링. B 초기화가 실패해도 A채널은 계속 폴링한다.
     BaseType_t result = xTaskCreatePinnedToCore(
@@ -741,7 +812,6 @@ void setup() {
 
     if (result == pdPASS) {
         bChannelDiag.nagTaskCreated = true;
-        Serial.println("🟢✅ [CAN] 통합 CAN Task 생성 성공");
         logRing.push("🟢✅ [CAN] 통합 CAN Task 생성 성공", millis());
     } else {
         char errBuf[100];
@@ -753,7 +823,6 @@ void setup() {
     } // end if (!gOtaRecoveryModeActive)
 
 #if defined(DRIVER_TWAI) && !defined(NATIVE_BUILD)
-    Serial.println("[WEB] 모든 런타임 초기화 완료. 웹 서버 시작");
     logRing.push("[WEB] 모든 런타임 초기화 완료. 웹 서버 시작", millis());
     webServerInit(gOtaRecoveryModeActive ? nullptr : driverB.get());
     if (!gOtaRecoveryModeActive) {
@@ -765,7 +834,6 @@ void setup() {
         char fBuf[64];
         snprintf(fBuf, sizeof(fBuf), "[B-CH] SW 필터 기준: ID %u / 921 / 923 / 297", (unsigned)kNagFixedTargetId);
         logRing.push(fBuf, millis());
-        Serial.println(fBuf);
     } else {
         Serial.println("[OTA] 복구모드: CAN 비활성, 웹 서버만 시작됨");
     }

@@ -79,14 +79,10 @@ static inline bool webDownloadBusy(uint32_t now) {
 }
 
 static inline void logsBundleSerialTrace(const char *stage, uint32_t startMs) {
-    uint32_t now = millis();
-    Serial.printf("[LOGDL] %lu +%lums %s heap=%u min=%u stack=%u\n",
-        (unsigned long)now,
-        (unsigned long)(now - startMs),
-        stage,
-        (unsigned)esp_get_free_heap_size(),
-        (unsigned)esp_get_minimum_free_heap_size(),
-        (unsigned)uxTaskGetStackHighWaterMark(NULL));
+    // 다운로드 단계 추적은 Web health 카운터와 전체 로그 파일로 확인한다.
+    // 정상 다운로드마다 Serial을 채우지 않도록 3-A 정책에서는 출력하지 않는다.
+    (void)stage;
+    (void)startMs;
 }
 
 static void formatDurationHms(uint32_t durationMs, char *out, size_t out_n);
@@ -475,8 +471,7 @@ static bool purgeRetiredExperimentNvs()
     }
     if (erased > 0) {
         esp_err_t err = nvs_commit(handle);
-        if (err == ESP_OK) Serial.printf("NVS: purged %u retired experiment key(s)\n", (unsigned)erased);
-        else {
+        if (err != ESP_OK) {
             ok = false;
             Serial.printf("NVS: retired experiment purge commit failed (%ld)\n", static_cast<long>(err));
         }
@@ -761,10 +756,16 @@ static esp_err_t featureToggleHandler(httpd_req_t *req, Shared<bool> &target, bo
         return ESP_FAIL;
     }
     target = enabled;
-    Serial.printf("Web: %s set to %d\n", logName, enabled);
     char buf[80];
     snprintf(buf, sizeof(buf), "[Web] %s: %s", logName, enabled ? "ON" : "OFF");
     logRing.push(buf, millis());
+    if ((&target == &summonUnlockRuntime) || (&target == &tsllcRuntime) ||
+        (&target == &nagKillerRuntime) || (&target == &aChannelTxRuntime)) {
+        eventLogPush(EV_FEATURE_STATE,
+                     (uint16_t)bChannelDiag.twaiTxErrNow,
+                     (uint16_t)bChannelDiag.twaiRxErrNow,
+                     eventFeatureStateDetail());
+    }
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
@@ -1180,7 +1181,6 @@ static esp_err_t rebootHandler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    Serial.println("Web: manual reboot requested");
     logRing.push("[Web] 보드 재부팅 요청", millis());
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"ok\":true,\"restarting\":true}", HTTPD_RESP_USE_STRLEN);
@@ -1223,7 +1223,6 @@ static esp_err_t nvsResetHandler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    Serial.println("[NVS] canmod namespace erased by web request");
     logRing.push("[Web] NVS 전체 초기화 요청 — 재부팅", millis());
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"ok\":true,\"erased\":true,\"restarting\":true}", HTTPD_RESP_USE_STRLEN);
@@ -1277,7 +1276,6 @@ static esp_err_t statusHandler(httpd_req_t *req)
     }
 
     // Read handler state (atomic reads -- no lock needed)
-    bool enablePrint = appHandler ? (bool)appHandler->enablePrint : true;
     bool isaSuppress = kWebSupportsIsaSpeedChimeSuppress ? (bool)isaSpeedChimeSuppressRuntime : false;
     bool emergencyVehicleDetection =
         kWebSupportsEmergencyVehicleDetection ? (bool)emergencyVehicleDetectionRuntime : false;
@@ -1299,7 +1297,6 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "nag_killer", nagKiller);
     cJSON_AddBoolToObject(root, "a_channel_tx", aChannelTx);
     cJSON_AddBoolToObject(root, "tsllc_enabled", tsllcEnabled);
-    cJSON_AddBoolToObject(root, "enable_print", enablePrint);
     cJSON_AddBoolToObject(root, "can_boot_allowed", !gOtaRecoveryModeActive);
     cJSON_AddStringToObject(root, "can_boot_block_reason", gCanBootBlockReason);
 
@@ -1591,6 +1588,9 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(ach, "rec_peak",         (uint32_t)(uint8_t)aChannelDiag.aRecPeak);
     cJSON_AddNumberToObject(ach, "last_frame_rx_ms", (uint32_t)aChannelDiag.lastFrameRxMs);
     cJSON_AddNumberToObject(ach, "last_tx_ms",       (uint32_t)aChannelDiag.lastTxMs);
+    cJSON_AddNumberToObject(ach, "loop_gap_last_us", (uint32_t)aChannelDiag.loopGapLastUs);
+    cJSON_AddNumberToObject(ach, "loop_gap_peak_us", (uint32_t)aChannelDiag.loopGapPeakUs);
+    cJSON_AddNumberToObject(ach, "loop_gap_over_2ms", (uint32_t)aChannelDiag.loopGapOver2msCount);
     cJSON_AddNumberToObject(ach, "eflg_event_count", (uint32_t)aChannelDiag.mcpEflgEventCount);
     cJSON_AddNumberToObject(ach, "wake_count", (uint32_t)aChannelDiag.wakeCount);
     cJSON_AddNumberToObject(ach, "last_wake_rx_ms", (uint32_t)aChannelDiag.lastWakeRxMs);
@@ -1898,6 +1898,10 @@ static esp_err_t aSpi8MhzHandler(httpd_req_t *req)
     char buf[96];
     snprintf(buf, sizeof(buf), "[Web] A SPI clock target: %uMHz (reboot required)", (unsigned)spiMhz);
     logRing.push(buf, millis());
+    eventLogPush(EV_A_SPI_TARGET,
+                 (uint16_t)(uint8_t)aChannelDiag.aTec,
+                 (uint16_t)(uint8_t)aChannelDiag.aRec,
+                 spiMhz);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
@@ -1921,6 +1925,10 @@ static esp_err_t aOneShotHandler(httpd_req_t *req)
     char buf[80];
     snprintf(buf, sizeof(buf), "[Web] A MCP2515 mode: %s", enabled ? "One-Shot" : "Normal");
     logRing.push(buf, millis());
+    eventLogPush(EV_FEATURE_STATE,
+                 (uint16_t)bChannelDiag.twaiTxErrNow,
+                 (uint16_t)bChannelDiag.twaiRxErrNow,
+                 eventFeatureStateDetail());
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
@@ -1944,6 +1952,10 @@ static esp_err_t aTxGuardHandler(httpd_req_t *req)
     char buf[80];
     snprintf(buf, sizeof(buf), "[Web] A TX guard: %s", enabled ? "ON" : "OFF");
     logRing.push(buf, millis());
+    eventLogPush(EV_FEATURE_STATE,
+                 (uint16_t)bChannelDiag.twaiTxErrNow,
+                 (uint16_t)bChannelDiag.twaiRxErrNow,
+                 eventFeatureStateDetail());
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
@@ -2355,25 +2367,22 @@ static esp_err_t eventsBundleHandler(httpd_req_t *req) {
     size_t eventN = 0;
     size_t eventHead = 0;
     eventLogSnapshot(eventN, eventHead);
-    snprintf(line, sizeof(line), "\r\n=== [2] 밀리초 이벤트 ===\r\n# uptime_ms=%u count=%u capacity=%u\r\n",
-        (unsigned)millis(), (unsigned)eventN, (unsigned)EVT_CAP);
+    snprintf(line, sizeof(line),
+        "\r\n=== [2] 채널별 CAN 이벤트 ===\r\n"
+        "# uptime_ms=%u records=%u occurrences=%u coalesced=%u overwritten=%u capacity=%u\r\n",
+        (unsigned)millis(), (unsigned)eventN,
+        (unsigned)evtOccurrenceTotal, (unsigned)evtCoalescedTotal,
+        (unsigned)evtOverwrittenTotal, (unsigned)EVT_CAP);
     httpd_resp_sendstr_chunk(req, line);
-    httpd_resp_sendstr_chunk(req,
-        "# type: 0=BUSOFF 1=REC_OK 2=REC_FAIL 3=REC_SOFT 4=ERR_PASS 5=ARB_LOST 6=BUS_ERR 7=TX_FAIL 8=RX_FULL 9=TX_BACKOFF 10=USER_MARK 11=NAG_MODE 12=MODEB_STATE 13=MODEB_PHASE 14=MODEB_FIRST_ECHO\r\n");
-    httpd_resp_sendstr_chunk(req, "# marker detail: 1=AP_WARNING_START 2=AP_WARNING_END | NAG_MODE detail: 1=MODE1 2=MODE2 3=MODE3(default) | MODEB_STATE detail: ap<<16|oldHo<<8|newHo | MODEB_PHASE detail: phase<<24|ap<<16|ho<<8|decision | FIRST_ECHO detail: delay_ms | detailText is decoded for analysis\r\n");
-    httpd_resp_sendstr_chunk(req, "wall_time,timestamp_ms,type,typeName,tec,rec,detail,detailText\r\n");
-    char detailText[180];
+    eventLogCsvHeader(req);
     size_t eventStart = (eventN < EVT_CAP) ? 0 : eventHead;
     for (size_t i = 0; i < eventN; ++i) {
         CanEvent e;
         eventLogCopyAt(eventStart + i, e);
-        formatLogTimestamp(e.t_ms, tsBuf, sizeof(tsBuf));
-        snprintf(line, sizeof(line), "%s,%u,%u,%s,%u,%u,%u,%s\r\n",
-            tsBuf, (unsigned)e.t_ms, (unsigned)e.type,
-            eventTypeName(e.type),
-            (unsigned)e.tec, (unsigned)e.rec, (unsigned)e.detail,
-            eventDetailText(e.type, e.detail, detailText, sizeof(detailText)));
-        httpd_resp_sendstr_chunk(req, line);
+        if (eventLogCsvRow(req, e) != ESP_OK) {
+            logDownloadCanQuietOff(_savedATx, _savedNag);
+            return ESP_FAIL;
+        }
     }
     logDownloadCanQuietOff(_savedATx, _savedNag);
     httpd_resp_sendstr_chunk(req, nullptr);
@@ -2837,8 +2846,11 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         size_t evtN = 0;
         size_t evtSnapHead = 0;
         eventLogSnapshot(evtN, evtSnapHead);
-        snprintf(line, sizeof(line), "밀리초 이벤트: count=%u cap=%u event_bundle=/api/events-bundle legacy_csv=/api/events.csv\r\n",
-            (unsigned)evtN, (unsigned)EVT_CAP);
+        snprintf(line, sizeof(line),
+            "채널별 이벤트: records=%u occurrences=%u coalesced=%u overwritten=%u cap=%u event_bundle=/api/events-bundle csv=/api/events.csv\r\n",
+            (unsigned)evtN, (unsigned)evtOccurrenceTotal,
+            (unsigned)evtCoalescedTotal, (unsigned)evtOverwrittenTotal,
+            (unsigned)EVT_CAP);
         httpd_resp_sendstr_chunk(req, line);
         (void)evtSnapHead;
     }
@@ -3049,23 +3061,34 @@ static esp_err_t canDiagLogDlHandler(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/csv; charset=utf-8");
     httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"can_diag.csv\"");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    httpd_resp_sendstr_chunk(req, "t_ms,message\r\n");
+    httpd_resp_sendstr_chunk(req, "\xEF\xBB\xBF");
+    httpd_resp_sendstr_chunk(req,
+        "schema_version,wall_time,uptime_ms,diag_state,sequence,scope,message\r\n");
 
     const uint32_t head = diagLog.currentHead();
     const uint32_t start = head > LogRingBuffer::kCapacity ? head - LogRingBuffer::kCapacity : 0;
-    char escaped[LogRingBuffer::kMaxMsgLen * 2 + 1];
-    char line[LogRingBuffer::kMaxMsgLen * 2 + 48];
+    const char *stateName =
+        diagState == DiagState::RUNNING ? "RUNNING" :
+        diagState == DiagState::DONE ? "DONE" : "NOT_RUN";
+    char escaped[LogRingBuffer::kMaxMsgLen * 2 + 3];
+    char line[LogRingBuffer::kMaxMsgLen * 2 + 160];
+    char wallTime[40];
+    if (head == 0) {
+        const uint32_t now = millis();
+        formatLogTimestamp(now, wallTime, sizeof(wallTime));
+        csvEscapeCell("자가 진단을 실행한 기록이 없습니다. 먼저 '자가 진단 실행'을 완료한 뒤 저장하세요.",
+                      escaped, sizeof(escaped));
+        snprintf(line, sizeof(line), "2,%s,%u,NOT_RUN,0,A/B,%s\r\n",
+                 wallTime, (unsigned)now, escaped);
+        httpd_resp_sendstr_chunk(req, line);
+    }
     for (uint32_t i = start; i < head; ++i) {
         const LogRingBuffer::Entry &entry = diagLog.at(i);
-        size_t out = 0;
-        for (size_t j = 0; entry.msg[j] != '\0' && out + 2 < sizeof(escaped); ++j) {
-            const char ch = entry.msg[j];
-            if (ch == '"') escaped[out++] = '"';
-            escaped[out++] = (ch == '\r' || ch == '\n') ? ' ' : ch;
-        }
-        escaped[out] = '\0';
-        snprintf(line, sizeof(line), "%u,\"%s\"\r\n",
-                 (unsigned)entry.timestamp_ms, escaped);
+        formatLogTimestamp(entry.timestamp_ms, wallTime, sizeof(wallTime));
+        csvEscapeCell(entry.msg, escaped, sizeof(escaped));
+        snprintf(line, sizeof(line), "2,%s,%u,%s,%u,A/B,%s\r\n",
+                 wallTime, (unsigned)entry.timestamp_ms, stateName,
+                 (unsigned)(i - start + 1U), escaped);
         if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) return ESP_FAIL;
     }
     httpd_resp_sendstr_chunk(req, NULL);
@@ -3126,8 +3149,11 @@ static esp_err_t emergencyDisableHandler(httpd_req_t *req)
     }
 
     applyEmergencyDisableAllFeatures();
+    eventLogPush(EV_FEATURE_STATE,
+                 (uint16_t)bChannelDiag.twaiTxErrNow,
+                 (uint16_t)bChannelDiag.twaiRxErrNow,
+                 eventFeatureStateDetail());
     logRing.push("🚨 [EMERGENCY] 긴급 기능해제 실행: 모든 런타임 기능 OFF", millis());
-    Serial.println("[EMERGENCY] All runtime features disabled by web request");
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"ok\":true,\"message\":\"emergency_disabled\"}", HTTPD_RESP_USE_STRLEN);
@@ -3144,48 +3170,14 @@ static esp_err_t emergencyRestoreHandler(httpd_req_t *req)
     }
 
     applyEmergencyRestoreAllFeatures();
+    eventLogPush(EV_FEATURE_STATE,
+                 (uint16_t)bChannelDiag.twaiTxErrNow,
+                 (uint16_t)bChannelDiag.twaiRxErrNow,
+                 eventFeatureStateDetail());
     logRing.push("✅ [RESTORE] 기능 원복 실행: 이전 설정 복원", millis());
-    Serial.println("[RESTORE] All runtime features restored from backup");
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, "{\"ok\":true,\"message\":\"emergency_restored\"}", HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
-}
-
-static esp_err_t enablePrintHandler(httpd_req_t *req)
-{
-    if (!rateLimitOk())
-    {
-        httpd_resp_set_status(req, "429 Too Many Requests");
-        httpd_resp_send(req, "Rate limited", HTTPD_RESP_USE_STRLEN);
-        return ESP_FAIL;
-    }
-
-    char body[64];
-    int len = httpd_req_recv(req, body, sizeof(body) - 1);
-    if (len <= 0)
-    {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
-        return ESP_FAIL;
-    }
-    body[len] = '\0';
-
-    cJSON *json = cJSON_Parse(body);
-    if (!json)
-    {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
-        return ESP_FAIL;
-    }
-
-    cJSON *enabled = cJSON_GetObjectItem(json, "enabled");
-    if (cJSON_IsBool(enabled) && appHandler)
-    {
-        appHandler->enablePrint = cJSON_IsTrue(enabled);
-    }
-    cJSON_Delete(json);
-
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
@@ -3595,39 +3587,6 @@ static void dnsTask(void *param)
 
 static httpd_handle_t webServer = NULL;
 
-// timeseries CSV 메타 라이터: 드라이버 토글 + 기능 토글 상태를 '#' 주석 라인으로 주입
-static void timeseriesMetaWrite(httpd_req_t* req) {
-    char line[420];
-    bool soft = gWebDriverB ? gWebDriverB->getSoftRecovery() : false;
-    uint32_t cool = gWebDriverB ? gWebDriverB->getCooldownMs() : 0;
-    uint8_t nagMode = nagModeClamp((uint8_t)bChannelDiag.nagMode);
-    snprintf(line, sizeof(line),
-        "# nag_killer=%s  nag_mode=%u(%s)  busoff_mode=%s  cooldown_ms=%u\n",
-        (bool)nagKillerRuntime ? "ON" : "OFF",
-        (unsigned)nagMode,
-        nagModeName(nagMode),
-        soft ? "soft" : "hard",
-        (unsigned)cool);
-    httpd_resp_sendstr_chunk(req, line);
-    snprintf(line, sizeof(line),
-        "# a_tx=%s  tsllc=%s  a_spi=%lu  a_spi_req=%lu  a_oneshot=%u  a_guard=%u  version=%s  build=%s  env=%s  built_at=%s  git=%s/%s  dirty=%u  source=%s\n",
-        (bool)aChannelTxRuntime ? "ON" : "OFF",
-        (bool)tsllcRuntime ? "ON" : "OFF",
-        (unsigned long)(uint32_t)aMcpSpiFreqHz,
-        (unsigned long)(uint32_t)aMcpRequestedSpiFreqHz,
-        (unsigned)((bool)aMcpOneShotRuntime),
-        (unsigned)((bool)aTxGuardRuntime),
-        FIRMWARE_VERSION,
-        FIRMWARE_BUILD_ID,
-        FIRMWARE_BUILD_ENV,
-        FIRMWARE_BUILD_AT,
-        FIRMWARE_GIT_BRANCH,
-        FIRMWARE_GIT_SHA,
-        (unsigned)(FIRMWARE_GIT_DIRTY != 0),
-        FIRMWARE_SOURCE_HASH);
-    httpd_resp_sendstr_chunk(req, line);
-}
-
 // ─── OTA 워치독 태스크 ───────────────────────────────────────────────────────
 // pending==2: 신 FW 확인 창 만료 시 자동 롤백
 // pending==4: 복구 확인 창 만료 시 복구모드(pending=5) 진입
@@ -3705,31 +3664,18 @@ static void webServerInit(TWAIDriver* drv = nullptr)
 {
     initLogTimezoneKst();
     gWebDriverB = drv;  // B채널 드라이버 포인터 주입
-    tsMetaWriter = timeseriesMetaWrite;  // CSV 메타 주입
+    tsTimeFormatter = formatLogTimestamp;
+    eventTimeFormatter = formatLogTimestamp;
     // 차량 영향 설정은 CAN 시작 전에 선로드된다. 여기서는 UI 전용 설정만 읽는다.
     if (nvsInit())
     {
         nvsReadStr(kNvsKeyTheme, themeRuntime, sizeof(themeRuntime), "dark");
-
-        Serial.printf("NVS: ISA_SPEED_CHIME_SUPPRESS = %d\n", (bool)isaSpeedChimeSuppressRuntime);
-        Serial.printf("NVS: EMERGENCY_VEHICLE_DETECTION = %d\n",
-                      (bool)emergencyVehicleDetectionRuntime);
-        Serial.printf("NVS: SUMMON_UNLOCK_HW3 = %d\n",
-                      (bool)summonUnlockRuntime);
-        Serial.printf("NVS: NAG_KILLER = %d\n", (bool)nagKillerRuntime);
-        Serial.printf("NVS: A_TX = %d, A_SPI = %lu Hz, A_ONESHOT = %d, A_TX_GUARD = %d\n",
-                  (int)(bool)aChannelTxRuntime,
-                  (unsigned long)(uint32_t)aMcpSpiFreqHz,
-                  (int)(bool)aMcpOneShotRuntime,
-                  (int)(bool)aTxGuardRuntime);
-        Serial.printf("NVS: NAG_MODE = %u, BUSOFF_COOLDOWN = %lu ms\n",
-                      (unsigned)(uint8_t)bChannelDiag.nagMode,
-                      (unsigned long)(uint32_t)bChannelDiag.busoffCooldownMs);
     }
     else
     {
         Serial.println("NVS: init failed, using defaults");
     }
+    eventLogPush(EV_FEATURE_STATE, 0, 0, eventFeatureStateDetail());
 
     // OTA 상태 머신: pending 값을 읽어 타이머 데드라인 설정 + 워치독 시작
     {
@@ -3750,8 +3696,6 @@ static void webServerInit(TWAIDriver* drv = nullptr)
     WiFi.mode(WIFI_AP);
     WiFi.softAP(AP_SSID, AP_PASS, kApChannel);
     delay(100);
-    Serial.printf("WiFi AP \"%s\" ch%u started (pass: %s): ", AP_SSID, (unsigned)kApChannel, AP_PASS);
-    Serial.println(WiFi.softAPIP());
 
     // DNS captive portal on Core 0
     xTaskCreatePinnedToCore(dnsTask, "dns", 4096, NULL, 2, NULL, 0);
@@ -3805,9 +3749,6 @@ static void webServerInit(TWAIDriver* drv = nullptr)
         .uri = "/api/emergency-disable", .method = HTTP_POST, .handler = emergencyDisableHandler, .user_ctx = NULL};
     httpd_uri_t uriEmergencyRestore = {
         .uri = "/api/emergency-restore", .method = HTTP_POST, .handler = emergencyRestoreHandler, .user_ctx = NULL};
-    httpd_uri_t uriEnablePrint = {
-        .uri = "/api/enable-print", .method = HTTP_POST, .handler = enablePrintHandler, .user_ctx = NULL};
-
     httpd_uri_t uriSetTheme = {
         .uri = "/api/set-theme", .method = HTTP_POST, .handler = setThemeHandler, .user_ctx = NULL};
     httpd_uri_t uriOta = {
@@ -3884,8 +3825,6 @@ static void webServerInit(TWAIDriver* drv = nullptr)
     httpd_register_uri_handler(webServer, &uriSignalObserverLogDl);
     httpd_register_uri_handler(webServer, &uriEmergencyDisable);
     httpd_register_uri_handler(webServer, &uriEmergencyRestore);
-    httpd_register_uri_handler(webServer, &uriEnablePrint);
-
     httpd_register_uri_handler(webServer, &uriSetTheme);
     httpd_register_uri_handler(webServer, &uriOta);
     httpd_register_uri_handler(webServer, &uriReboot);

@@ -91,7 +91,6 @@ void setUp()
     nagCfgDefaults(nagConfig);
     nagKillerRuntime = true;
     handler = NagHandler();
-    handler.enablePrint = false;
 }
 
 void tearDown() {}

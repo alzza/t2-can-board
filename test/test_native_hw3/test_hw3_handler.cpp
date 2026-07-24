@@ -24,7 +24,6 @@ void setUp()
 {
     mock.reset();
     handler = HW3Handler();
-    handler.enablePrint = false;
     summonUnlockRuntime = true;
     tsllcRuntime = true;
     aChannelTxRuntime = true;

@@ -1,6 +1,5 @@
 // 5초 간격 시계열 통계 수집 (최근 20분, RAM wrap-around)
 // 통합 로그 [4] 섹션에 포함되며, /api/timeseries.csv는 디버그용 보조 엔드포인트다.
-// 외과적 추가: 기존 구조 변경 없음
 #pragma once
 #include "can_helpers.h"
 #include "event_log.h"
@@ -15,6 +14,7 @@
 
 struct TsSample {
     uint32_t t_ms;
+    uint8_t  captureMode; // 0=자동 최근 20분, 1=사용자 수동 기록
     uint32_t busoff;
     uint32_t tec;
     uint32_t rec;
@@ -97,6 +97,21 @@ struct TsSample {
     uint32_t aWakeCount;
     uint32_t aWakeToSummonTxMs;
     uint8_t  aWakeAwaitingTx;
+    // 샘플 순간의 런타임 플래그. 다운로드 시점의 현재값을 과거 행에 잘못 붙이지 않는다.
+    uint8_t  aDriverOk;
+    uint8_t  aTxEnabled;
+    uint8_t  summonEnabled;
+    uint8_t  tsllcEnabled;
+    uint8_t  aOneShotEnabled;
+    uint8_t  aTxGuardEnabled;
+    uint8_t  aSpiMhz;
+    uint8_t  aSpiTargetMhz;
+    uint8_t  bDriverState;
+    uint8_t  nagEnabled;
+    uint32_t aLoopGapLastUs;
+    uint32_t aLoopGapPeakUs;
+    uint32_t aLoopGapOver2ms;
+    uint16_t dALoopGapOver2ms;
 };
 
 static constexpr size_t TS_CAP = 240;  // 240 × 5s = 20분
@@ -105,7 +120,7 @@ inline volatile size_t tsHead = 0;
 inline volatile size_t tsCount = 0;
 inline volatile uint32_t tsResetMs = 0;  // 마지막 리셋 시각 (CSV 메타용, 0=부팅 이후 리셋 없음)
 inline volatile uint32_t tsRecStartMs = 0;  // 사용자 '기록시작' 시각 (0=정지/미시작)
-inline volatile bool tsRecording = false;   // REC 표시 ON/OFF (수집 자체는 항상 동작)
+inline volatile bool tsRecording = false;   // 수동 기록 중 여부
 inline portMUX_TYPE tsMux = portMUX_INITIALIZER_UNLOCKED;
 
 inline volatile uint32_t tsBaseBusoff = 0;
@@ -131,6 +146,7 @@ inline volatile uint32_t tsBaseATxFail = 0;
 inline volatile uint32_t tsBaseAMerrf = 0;
 inline volatile uint32_t tsBaseARxOvr = 0;
 inline volatile uint32_t tsBaseAEflgEvents = 0;
+inline volatile uint32_t tsBaseALoopGapOver2ms = 0;
 
 inline volatile uint32_t tsPrevEcho = 0;
 inline volatile uint32_t tsPrevF880 = 0;
@@ -151,6 +167,7 @@ inline volatile uint32_t tsPrevATxFail = 0;
 inline volatile uint32_t tsPrevAMerrf = 0;
 inline volatile uint32_t tsPrevARxOvr = 0;
 inline volatile uint32_t tsPrevAEflgEvents = 0;
+inline volatile uint32_t tsPrevALoopGapOver2ms = 0;
 
 inline uint32_t tsDelta(uint32_t current, uint32_t base) {
     return current - base;
@@ -173,15 +190,33 @@ inline uint16_t tsModeBDelayTargetMs(uint8_t phase, uint8_t nagMode) {
     return 0;
 }
 
-// CSV 메타 라인 콜백 — web_server.h에서 드라이버 토글 상태 주입·
-using TsMetaWriter = void(*)(httpd_req_t*);
-inline TsMetaWriter tsMetaWriter = nullptr;
+using TsTimeFormatter = void(*)(uint32_t, char*, size_t);
+inline TsTimeFormatter tsTimeFormatter = nullptr;
+
+inline void timeseriesFormatTime(uint32_t timestampMs, char *out, size_t outLen) {
+    if (tsTimeFormatter) {
+        tsTimeFormatter(timestampMs, out, outLen);
+    } else {
+        snprintf(out, outLen, "uptime:%u", (unsigned)timestampMs);
+    }
+}
 
 static void timeseriesTaskFn(void*) {
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(5000));
+        uint32_t manualStartMs = 0;
+        bool manualRecording = false;
+        portENTER_CRITICAL(&tsMux);
+        manualStartMs = tsRecStartMs;
+        manualRecording = tsRecording;
+        portEXIT_CRITICAL(&tsMux);
+        // 수동 기록을 정지한 뒤에는 버퍼를 고정한다. 수동 기록을 시작하지 않은
+        // 기본 상태에서는 자동 최근 20분 버퍼가 계속 동작한다.
+        if (manualStartMs != 0 && !manualRecording) continue;
+
         TsSample s;
         s.t_ms     = millis();
+        s.captureMode = manualStartMs != 0 ? 1U : 0U;
         s.busoff   = tsDelta((uint32_t)bChannelDiag.busoffCount, (uint32_t)tsBaseBusoff);
         s.tec      = (uint32_t)bChannelDiag.twaiTxErrNow;
         s.rec      = (uint32_t)bChannelDiag.twaiRxErrNow;
@@ -207,6 +242,7 @@ static void timeseriesTaskFn(void*) {
         uint32_t curAMerrf = (uint32_t)aChannelDiag.aMerrfCount;
         uint32_t curARxOvr = (uint32_t)aChannelDiag.aRxOvrCount;
         uint32_t curAEflgEvents = (uint32_t)aChannelDiag.mcpEflgEventCount;
+        uint32_t curALoopGapOver2ms = (uint32_t)aChannelDiag.loopGapOver2msCount;
         s.echoCnt  = tsDelta(curEcho, (uint32_t)tsBaseEcho);
         s.f880     = tsDelta(cur880, (uint32_t)tsBaseF880);
         s.f921     = tsDelta(cur921, (uint32_t)tsBaseF921);
@@ -245,6 +281,10 @@ static void timeseriesTaskFn(void*) {
         s.dAMerrf = tsDelta16(curAMerrf, (uint32_t)tsPrevAMerrf);
         s.dARxOvr = tsDelta16(curARxOvr, (uint32_t)tsPrevARxOvr);
         s.dAEflgEvents = tsDelta16(curAEflgEvents, (uint32_t)tsPrevAEflgEvents);
+        s.aLoopGapLastUs = (uint32_t)aChannelDiag.loopGapLastUs;
+        s.aLoopGapPeakUs = (uint32_t)aChannelDiag.loopGapPeakUs;
+        s.aLoopGapOver2ms = tsDelta(curALoopGapOver2ms, (uint32_t)tsBaseALoopGapOver2ms);
+        s.dALoopGapOver2ms = tsDelta16(curALoopGapOver2ms, (uint32_t)tsPrevALoopGapOver2ms);
         s.handsOn  = (uint8_t)bChannelDiag.realHo;
         s.dasState = (uint8_t)bChannelDiag.dasHandsOnStateRx;
         s.nagMode = (uint8_t)bChannelDiag.nagMode;
@@ -281,6 +321,16 @@ static void timeseriesTaskFn(void*) {
         s.aWakeCount = (uint32_t)aChannelDiag.wakeCount;
         s.aWakeToSummonTxMs = (uint32_t)aChannelDiag.wakeToSummonTxMs;
         s.aWakeAwaitingTx = (bool)aChannelDiag.wakeAwaitingSummonTx ? 1U : 0U;
+        s.aDriverOk = (bool)aChannelDiag.driverInitialized ? 1U : 0U;
+        s.aTxEnabled = (bool)aChannelTxRuntime ? 1U : 0U;
+        s.summonEnabled = (bool)summonUnlockRuntime ? 1U : 0U;
+        s.tsllcEnabled = (bool)tsllcRuntime ? 1U : 0U;
+        s.aOneShotEnabled = (bool)aMcpOneShotRuntime ? 1U : 0U;
+        s.aTxGuardEnabled = (bool)aTxGuardRuntime ? 1U : 0U;
+        s.aSpiMhz = (uint8_t)((uint32_t)aMcpSpiFreqHz / 1000000UL);
+        s.aSpiTargetMhz = (uint8_t)((uint32_t)aMcpRequestedSpiFreqHz / 1000000UL);
+        s.bDriverState = (uint8_t)bChannelDiag.twaiStateCode;
+        s.nagEnabled = (bool)nagKillerRuntime ? 1U : 0U;
         const uint32_t aGuardUntil = (uint32_t)aChannelDiag.aTxGuardUntilMs;
         s.aGuardRemainingMs = aGuardUntil > s.t_ms ? tsDelta16(aGuardUntil, s.t_ms) : 0;
         portENTER_CRITICAL(&tsMux);
@@ -304,6 +354,7 @@ static void timeseriesTaskFn(void*) {
         tsPrevAMerrf = curAMerrf;
         tsPrevARxOvr = curARxOvr;
         tsPrevAEflgEvents = curAEflgEvents;
+        tsPrevALoopGapOver2ms = curALoopGapOver2ms;
         tsHead = (tsHead + 1) % TS_CAP;
         if (tsCount < TS_CAP) ++tsCount;
         portEXIT_CRITICAL(&tsMux);
@@ -315,12 +366,14 @@ inline void timeseriesStart() {
 }
 
 // 시계열 버퍼 + 기준점을 리셋. 드라이버 누적 카운터는 건드리지 않는다.
-inline void timeseriesReset() {
+inline void timeseriesReset(bool beginManualRecording = false) {
     uint32_t now = millis();
     portENTER_CRITICAL(&tsMux);
     tsHead = 0;
     tsCount = 0;
     tsResetMs = now;
+    tsRecStartMs = beginManualRecording ? now : 0;
+    tsRecording = beginManualRecording;
     tsBaseBusoff = (uint32_t)bChannelDiag.busoffCount;
     tsBaseArbLost = (uint32_t)bChannelDiag.bArbLost;
     tsBaseBusErr = (uint32_t)bChannelDiag.bBusError;
@@ -344,6 +397,7 @@ inline void timeseriesReset() {
     tsBaseAMerrf = (uint32_t)aChannelDiag.aMerrfCount;
     tsBaseARxOvr = (uint32_t)aChannelDiag.aRxOvrCount;
     tsBaseAEflgEvents = (uint32_t)aChannelDiag.mcpEflgEventCount;
+    tsBaseALoopGapOver2ms = (uint32_t)aChannelDiag.loopGapOver2msCount;
     tsPrevEcho = (uint32_t)bChannelDiag.echoCount;
     tsPrevF880 = (uint32_t)bChannelDiag.frames880;
     tsPrevF921 = (uint32_t)bChannelDiag.frames921;
@@ -363,6 +417,7 @@ inline void timeseriesReset() {
     tsPrevAMerrf = (uint32_t)aChannelDiag.aMerrfCount;
     tsPrevARxOvr = (uint32_t)aChannelDiag.aRxOvrCount;
     tsPrevAEflgEvents = (uint32_t)aChannelDiag.mcpEflgEventCount;
+    tsPrevALoopGapOver2ms = (uint32_t)aChannelDiag.loopGapOver2msCount;
     portEXIT_CRITICAL(&tsMux);
     userMarkerActive = false;
     eventLogReset();
@@ -398,29 +453,51 @@ inline void timeseriesBundleSnapshot(TsSample* dst, size_t count, size_t head) {
 }
 
 inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
-    httpd_resp_set_type(req, "text/csv");
-    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=timeseries.csv");
+    httpd_resp_set_type(req, "text/csv; charset=utf-8");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"can_timeseries_ab.csv\"");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     size_t n = 0;
     size_t head = 0;
     uint32_t resetMs = 0;
     uint32_t recStartMs = 0;
     bool recording = false;
     timeseriesSnapshot(n, head, resetMs, recStartMs, recording);
-    char meta[160];
-    snprintf(meta, sizeof(meta), "# uptime_ms=%u  reset_at_ms=%u  rec_start_ms=%u  rec=%s  samples=%u  interval_s=5\n",
-        (unsigned)millis(), (unsigned)resetMs, (unsigned)recStartMs,
-        recording?"ON":"OFF", (unsigned)n);
-    httpd_resp_sendstr_chunk(req, meta);
-    if (tsMetaWriter) tsMetaWriter(req);  // web_server에서 드라이버 토글 등 주입
-    const char* hdr = "t_s,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,dasStateName,dasStateGroup,dasWarnLevel,dasWarning,nagMode,nagModeDefault,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,f297,apState,modeBPhase,steerDeg,realTorqueNm,modeBInject,modeBLastNm,age880Ms,ageDasMs,age297Ms,ageEchoMs,modeBStateAgeMs,modeBPhaseAgeMs,modeBFirstEchoDelayMs,modeBDelayTargetMs,d297,dModeBInject,aFrames,aFrameHz,aEflg,aEflgState,aEflgPeak,aTec,aRec,aTecPeak,aRecPeak,aTxOk,aTxFail,aMerrf,aRxOvr,aEflgEvents,aFrameAgeMs,aLoopAgeMs,aGuardActive,aGuardReason,aGuardRemainingMs,aWakeCount,aWakeToSummonTxMs,aWakeAwaitingTx,dAFrames,dATxOk,dATxFail,dAMerrf,dARxOvr,dAEflgEvents\n";
+    (void)resetMs;
+    (void)recStartMs;
+    (void)recording;
+    httpd_resp_sendstr_chunk(req, "\xEF\xBB\xBF");
+    const char* hdr =
+        "schema_version,wall_time,uptime_ms,capture_mode,"
+        "b_busoff,b_tec,b_rec,b_arb_lost,b_bus_error,b_tx_fail,b_echo,b_frames_880,b_frames_921,b_frames_923,"
+        "b_hands_on,b_das_state,b_das_state_name,b_das_state_group,b_das_warn_level,b_das_warning,"
+        "b_nag_mode,b_nag_mode_default,b_das_source,b_echo_drop,b_skip_off,b_skip_ap,b_skip_hands_on,b_skip_das,b_no_das,"
+        "system_user_mark,b_d880,b_d921,b_d923,b_d_echo,b_d_drop,b_d_skip_off,b_d_skip_ap,b_d_skip_hands_on,b_d_skip_das,"
+        "b_d_no_das,system_d_user_mark,b_last_decision,b_interval_decision,b_frames_297,b_ap_state,b_mode3_phase,"
+        "b_steer_deg,b_real_torque_nm,b_mode3_inject,b_mode3_last_nm,b_age_880_ms,b_age_das_ms,b_age_297_ms,b_age_echo_ms,"
+        "b_mode3_state_age_ms,b_mode3_phase_age_ms,b_mode3_first_echo_delay_ms,b_mode3_delay_target_ms,b_d297,b_d_mode3_inject,"
+        "a_frames,a_frame_hz,a_eflg,a_eflg_state,a_eflg_peak,a_tec,a_rec,a_tec_peak,a_rec_peak,a_tx_ok,a_tx_fail,a_merrf,"
+        "a_rx_overrun,a_eflg_events,a_frame_age_ms,a_loop_age_ms,a_guard_active,a_guard_reason,a_guard_remaining_ms,"
+        "a_wake_count,a_wake_to_summon_tx_ms,a_wake_awaiting_tx,a_d_frames,a_d_tx_ok,a_d_tx_fail,a_d_merrf,a_d_rx_overrun,a_d_eflg_events,"
+        "a_driver_ok,a_tx_enabled,a_summon_enabled,a_tsllc_enabled,a_one_shot_enabled,a_tx_guard_enabled,a_spi_mhz,a_spi_target_mhz,"
+        "b_driver_state,b_nag_enabled,a_loop_gap_last_us,a_loop_gap_peak_us,a_loop_gap_over_2ms,a_d_loop_gap_over_2ms\r\n";
     httpd_resp_sendstr_chunk(req, hdr);
-    char line[1152];
+    char line[1408];
+    char wallTime[40];
     size_t start = (n < TS_CAP) ? 0 : head;  // oldest first
     for (size_t i = 0; i < n; ++i) {
         TsSample s;
         timeseriesCopyAt(start + i, s);
-        int used = snprintf(line, sizeof(line), "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%.1f,%.2f,%u,%.2f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u",
-            (unsigned)(s.t_ms / 1000),
+        timeseriesFormatTime(s.t_ms, wallTime, sizeof(wallTime));
+        int used = snprintf(line, sizeof(line),
+            "2,%s,%u,%s,"
+            "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+            "%u,%u,%s,%s,%u,%u,"
+            "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+            "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+            "%u,%u,%u,%u,%u,"
+            "%.1f,%.2f,%u,%.2f,"
+            "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u",
+            wallTime, (unsigned)s.t_ms, s.captureMode ? "MANUAL" : "AUTO",
             (unsigned)s.busoff, (unsigned)s.tec, (unsigned)s.rec,
             (unsigned)s.arbLost, (unsigned)s.busErr, (unsigned)s.txFail,
             (unsigned)s.echoCnt, (unsigned)s.f880, (unsigned)s.f921, (unsigned)s.f923,
@@ -445,7 +522,8 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
             (unsigned)s.d297, (unsigned)s.dModeBInject);
         if (used < 0 || (size_t)used >= sizeof(line)) continue;
         snprintf(line + used, sizeof(line) - (size_t)used,
-            ",%u,%.1f,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+            ",%u,%.1f,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+            "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
             (unsigned)s.aFrames, (double)s.aFrameHz,
             (unsigned)s.aEflg, aMcpEflgStateName(s.aEflg), (unsigned)s.aEflgPeak,
             (unsigned)s.aTec, (unsigned)s.aRec, (unsigned)s.aTecPeak, (unsigned)s.aRecPeak,
@@ -456,8 +534,15 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
             (unsigned)s.aGuardRemainingMs,
             (unsigned)s.aWakeCount, (unsigned)s.aWakeToSummonTxMs, (unsigned)s.aWakeAwaitingTx,
             (unsigned)s.dAFrames, (unsigned)s.dATxOk, (unsigned)s.dATxFail,
-            (unsigned)s.dAMerrf, (unsigned)s.dARxOvr, (unsigned)s.dAEflgEvents);
-        httpd_resp_sendstr_chunk(req, line);
+            (unsigned)s.dAMerrf, (unsigned)s.dARxOvr, (unsigned)s.dAEflgEvents,
+            (unsigned)s.aDriverOk, (unsigned)s.aTxEnabled,
+            (unsigned)s.summonEnabled, (unsigned)s.tsllcEnabled,
+            (unsigned)s.aOneShotEnabled, (unsigned)s.aTxGuardEnabled,
+            (unsigned)s.aSpiMhz, (unsigned)s.aSpiTargetMhz,
+            (unsigned)s.bDriverState, (unsigned)s.nagEnabled,
+            (unsigned)s.aLoopGapLastUs, (unsigned)s.aLoopGapPeakUs,
+            (unsigned)s.aLoopGapOver2ms, (unsigned)s.dALoopGapOver2ms);
+        if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) return ESP_FAIL;
     }
     httpd_resp_sendstr_chunk(req, NULL);
     return ESP_OK;
@@ -466,6 +551,9 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
 // POST /api/timeseries/reset
 inline esp_err_t timeseriesResetHandler(httpd_req_t* req) {
     timeseriesReset();
+    eventLogPush(EV_CAPTURE_RESET,
+                 (uint16_t)bChannelDiag.twaiTxErrNow,
+                 (uint16_t)bChannelDiag.twaiRxErrNow, 0);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, "{\"ok\":true}");
     return ESP_OK;
@@ -478,14 +566,16 @@ inline esp_err_t timeseriesRecHandler(httpd_req_t* req) {
     if (len > 0) httpd_req_recv(req, buf, len);
     bool start = (strstr(buf, "true") != nullptr);
     if (start) {
-        timeseriesReset();          // 깨끗한 구간으로 시작
-        portENTER_CRITICAL(&tsMux);
-        tsRecStartMs = millis();
-        tsRecording = true;
-        portEXIT_CRITICAL(&tsMux);
+        timeseriesReset(true);      // 깨끗한 구간 + 원자적으로 수동 기록 시작
+        eventLogPush(EV_CAPTURE_START,
+                     (uint16_t)bChannelDiag.twaiTxErrNow,
+                     (uint16_t)bChannelDiag.twaiRxErrNow, 0);
     } else {
+        eventLogPush(EV_CAPTURE_STOP,
+                     (uint16_t)bChannelDiag.twaiTxErrNow,
+                     (uint16_t)bChannelDiag.twaiRxErrNow, 0);
         portENTER_CRITICAL(&tsMux);
-        tsRecording = false;        // 시작 시각은 그대로 두어 경과 표시 유지 가능
+        tsRecording = false;        // 수동 기록 버퍼 고정
         portEXIT_CRITICAL(&tsMux);
     }
     httpd_resp_set_type(req, "application/json");

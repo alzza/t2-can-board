@@ -148,6 +148,20 @@ void test_main_ui_exposes_authoritative_channel_health_and_csv_diagnostics()
     TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "id=\"tBoStop\""));
 }
 
+void test_main_ui_defaults_to_summary_and_important_live_logs()
+{
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "<details class=\"card diag-details\" id=\"diagDetails\">"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "채널별 상세 카운터 · BUS-OFF 이력"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "var liveLogMode='important',liveLogEntries=[];"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "function isImportantLiveLog(msg)"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"logModeImportant\" class=\"active\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"logModeAll\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "전체 저장 파일에는 모든 런타임 로그가 유지됩니다."));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "id=\"tLog\""));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "/api/enable-print"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "enable_print"));
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -162,6 +176,7 @@ int main()
     RUN_TEST(test_main_ui_removes_retired_can_injection_experiments);
     RUN_TEST(test_main_ui_uses_verified_nag_modes_and_removes_smart_profiles);
     RUN_TEST(test_main_ui_exposes_authoritative_channel_health_and_csv_diagnostics);
+    RUN_TEST(test_main_ui_defaults_to_summary_and_important_live_logs);
 
     return UNITY_END();
 }

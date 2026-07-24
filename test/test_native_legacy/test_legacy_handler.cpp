@@ -12,7 +12,6 @@ void setUp()
 {
     mock.reset();
     handler = LegacyHandler();
-    handler.enablePrint = false;
 }
 
 void tearDown() {}

@@ -76,6 +76,7 @@ static void canDiagTaskFn(void* /*pv*/) {
     uint32_t s_a_merrf = (uint32_t)aChannelDiag.aMerrfCount;
     uint32_t s_a_ovr = (uint32_t)aChannelDiag.aRxOvrCount;
     uint32_t s_a_eflg_ev = (uint32_t)aChannelDiag.mcpEflgEventCount;
+    uint32_t s_a_gap_over2 = (uint32_t)aChannelDiag.loopGapOver2msCount;
     uint32_t s_tot = (uint32_t)bChannelDiag.framesReceivedTotal;
     uint32_t s_tgt = (uint32_t)bChannelDiag.frames880;  // nagTargetId 기준 카운터
     uint32_t s_921 = (uint32_t)bChannelDiag.frames921;
@@ -98,6 +99,7 @@ static void canDiagTaskFn(void* /*pv*/) {
     uint32_t d_a_merrf = (uint32_t)aChannelDiag.aMerrfCount - s_a_merrf;
     uint32_t d_a_ovr = (uint32_t)aChannelDiag.aRxOvrCount - s_a_ovr;
     uint32_t d_a_eflg_ev = (uint32_t)aChannelDiag.mcpEflgEventCount - s_a_eflg_ev;
+    uint32_t d_a_gap_over2 = (uint32_t)aChannelDiag.loopGapOver2msCount - s_a_gap_over2;
     uint32_t d_tot = (uint32_t)bChannelDiag.framesReceivedTotal - s_tot;
     uint32_t d_tgt = (uint32_t)bChannelDiag.frames880 - s_tgt;
     uint32_t d_921 = (uint32_t)bChannelDiag.frames921 - s_921;
@@ -113,6 +115,11 @@ static void canDiagTaskFn(void* /*pv*/) {
     L(buf);
     snprintf(buf, sizeof(buf), "  A Fail+%u MERRF+%u RX-OVR+%u EFLG-EV+%u | B Arb+%u BusErr+%u TxFail+%u",
         d_a_fail, d_a_merrf, d_a_ovr, d_a_eflg_ev, d_arb, d_berr, d_tfail);
+    L(buf);
+    snprintf(buf, sizeof(buf), "  A LoopGap last=%uus peak=%uus >2ms:+%u",
+        (unsigned)(uint32_t)aChannelDiag.loopGapLastUs,
+        (unsigned)(uint32_t)aChannelDiag.loopGapPeakUs,
+        (unsigned)d_a_gap_over2);
     L(buf);
     snprintf(buf, sizeof(buf), "  A 재수신:%u회 | 재수신→첫 Summon TX:%s%ums",
         (unsigned)(uint32_t)aChannelDiag.wakeCount,

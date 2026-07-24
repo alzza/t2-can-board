@@ -76,7 +76,7 @@ static void appSetup(std::unique_ptr<Driver> drv, const char *readyMsg)
         appDriver->enableInterrupt(canISR);
     }
 
-    Serial.println(readyMsg);
+    logRing.push(readyMsg, millis());
 
 #if defined(DRIVER_TWAI) && !defined(NATIVE_BUILD)
     // CAN 버스 안정화 대기. 웹 서버는 setup() 마지막에서 시작해
@@ -88,6 +88,20 @@ static void appSetup(std::unique_ptr<Driver> drv, const char *readyMsg)
 template <typename Driver>
 static void appLoop()
 {
+    const uint32_t appLoopNowUs = micros();
+    static uint32_t previousAppLoopUs = 0;
+    if (previousAppLoopUs != 0) {
+        const uint32_t gapUs = appLoopNowUs - previousAppLoopUs;
+        aChannelDiag.loopGapLastUs = gapUs;
+        if (gapUs > (uint32_t)aChannelDiag.loopGapPeakUs)
+            aChannelDiag.loopGapPeakUs = gapUs;
+        if (gapUs > (uint32_t)aChannelDiag.loopGapWindowPeakUs)
+            aChannelDiag.loopGapWindowPeakUs = gapUs;
+        if (gapUs > 2000U)
+            aChannelDiag.loopGapOver2msCount =
+                (uint32_t)aChannelDiag.loopGapOver2msCount + 1U;
+    }
+    previousAppLoopUs = appLoopNowUs;
     const uint32_t appLoopNowMs = millis();
     aChannelDiag.lastLoopMs = appLoopNowMs;
     summonGateMaintain(appLoopNowMs);
@@ -148,6 +162,9 @@ static void appLoop()
         if (_nowMs - _lastEflgMs >= 1000) {
             _lastEflgMs = _nowMs;
             uint8_t eflg = appDriver->getErrorFlags();
+            const uint32_t loopGapWindowPeakUs =
+                (uint32_t)aChannelDiag.loopGapWindowPeakUs;
+            aChannelDiag.loopGapWindowPeakUs = 0;
             aChannelDiag.mcpEflg = eflg;
             // 누적 OR: 세션 내 최악 상태 보존
             aChannelDiag.mcpEflgPeak = (uint8_t)aChannelDiag.mcpEflgPeak | eflg;
@@ -177,6 +194,12 @@ static void appLoop()
             // BUS-OFF 진입 감지 (TXBO 비트, bit5)
             // EFLG 0→비제로 전환: 에러 발생 이벤트 카운트
             static uint8_t _prevEflg = 0;
+            static bool _prevGuardActive = false;
+            const bool guardActiveBeforeUpdate = aTxGuardActive(_nowMs);
+            if (_prevGuardActive && !guardActiveBeforeUpdate) {
+                eventLogPush(EV_A_TX_GUARD_CLEAR, tec, rec,
+                             (uint32_t)(uint8_t)aChannelDiag.aTxGuardLastReason);
+            }
             if (eflg != 0 && _prevEflg == 0) {
                 aChannelDiag.mcpEflgEventCount = (uint32_t)aChannelDiag.mcpEflgEventCount + 1;
                 eventLogPush(EV_A_EFLG_SET, tec, rec, eflg);
@@ -192,7 +215,9 @@ static void appLoop()
                 logRing.push(buf, _nowMs);
             }
             if (eflg & 0xC0U) {
-                eventLogPush(EV_A_RX_OVERRUN, tec, rec, eflg);
+                const uint32_t rawGapUs = loopGapWindowPeakUs;
+                const uint32_t gapUs = rawGapUs > 0x00FFFFFFUL ? 0x00FFFFFFUL : rawGapUs;
+                eventLogPush(EV_A_RX_OVERRUN, tec, rec, eflg | (gapUs << 8));
             }
             _prevEflg = eflg;
 
@@ -261,6 +286,7 @@ static void appLoop()
                 aChannelDiag.aTxGuardLastReason = guardReason;
                 if (!wasGuardActive) {
                     aChannelDiag.aTxGuardCount = (uint32_t)aChannelDiag.aTxGuardCount + 1;
+                    eventLogPush(EV_A_TX_GUARD_SET, tec, rec, guardReason);
                     char buf[96];
                     snprintf(buf, sizeof(buf), "🛡️ [A-CH] TX guard %ums 시작: %s TEC=%u EFLG=0x%02X Fail=%u",
                              (unsigned)kATxGuardDurationMs,
@@ -271,6 +297,7 @@ static void appLoop()
                     logRing.push(buf, _nowMs);
                 }
             }
+            _prevGuardActive = aTxGuardActive(_nowMs);
         }
     }
 #endif

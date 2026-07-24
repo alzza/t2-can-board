@@ -185,15 +185,7 @@ private:
             return false;
         }
 
-        if (verbose) {
-            Serial.printf("[OK] 500kbps @ %dMHz 설정 완료 (SPI %lu Hz)\n",
-                  MCP2515_CRYSTAL_MHZ, (unsigned long)currentSpiFreqHz_);
-        }
-
         applyModeUnlocked();
-        if (verbose) {
-            Serial.printf("[OK] %s Mode 진입 완료\n", (bool)aMcpOneShotRuntime ? "Normal One-Shot" : "Normal");
-        }
         return true;
     }
 

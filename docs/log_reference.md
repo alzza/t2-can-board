@@ -505,59 +505,61 @@ Mode B phase는 아래처럼 읽으면 된다.
 
 ---
 
-## 7. 섹션 5 — 밀리초 이벤트 로그
+## 7. 채널별 이벤트 CSV v2
 
-```
-=== [5] 밀리초 이벤트 로그 ===
-# type: 0=BUSOFF 1=REC_OK 2=REC_FAIL ...
-wall_time,timestamp_ms,type,typeName,tec,rec,detail
-2026-05-08 19:19:22.321,38976,11,NAG_MODE,0,0,0
-2026-05-08 19:20:56.952,133607,11,NAG_MODE,0,0,1
+통합 로그의 섹션 5는 이벤트 개수 요약만 표시한다. 전체 이벤트 행은 Web UI의 **채널별 이벤트 CSV** 또는 `/api/events.csv`에서 저장한다.
+
+```csv
+schema_version,wall_time_first,wall_time_last,uptime_first_ms,uptime_last_ms,sequence,channel,severity,event,type,occurrences,tec,rec,detail,detail_text
+2,2026-07-24 19:37:13.459,2026-07-24 19:37:39.459,51801454,51827454,81,A,WARN,A_RX_OVERRUN,17,8,0,0,1230080,"eflg=0x80 state=RX_OVERRUN RX1OVR=1 RX0OVR=0 loop_gap_us=4800"
 ```
 
-5초 간격이 아니라 이벤트가 발생한 **정확한 시각**을 밀리초 단위로 기록한다.
+CSV 앞에 열 수가 다른 `#` 메타행을 두지 않는다. 첫 행부터 끝까지 같은 15열이며 UTF-8 BOM을 포함한다.
 
 | 컬럼 | 의미 |
 |------|------|
-| `wall_time` | 이벤트 발생 실제 시각 |
-| `timestamp_ms` | 기기 업타임 기준 발생 시각 |
-| `type` | 이벤트 타입 코드 (아래 표 참고) |
-| `typeName` | 이벤트 타입 이름 |
-| `tec` | 발생 당시 TWAI TEC 값 |
-| `rec` | 발생 당시 TWAI REC 값 |
-| `detail` | 이벤트별 추가 정보 (타입마다 다름) |
+| `schema_version` | 현재 형식은 `2` |
+| `wall_time_first` / `wall_time_last` | 동일 이벤트 묶음의 최초·최종 실제 시각 |
+| `uptime_first_ms` / `uptime_last_ms` | 실제 시각과 함께 보존하는 기기 업타임 |
+| `sequence` | 고유 이벤트 레코드 순번 |
+| `channel` | `A`, `B`, `A/B`, `SYSTEM` |
+| `severity` | `INFO`, `WARN`, `ERROR` |
+| `event` / `type` | 사람이 읽는 이벤트 이름과 숫자 코드 |
+| `occurrences` | 30초 안에 같은 반복 이벤트가 발생한 횟수 |
+| `tec` / `rec` | 발생 당시 해당 채널 CAN 오류 카운터 |
+| `detail` | 이벤트별 원시 추가값 |
+| `detail_text` | 원시값을 사람이 읽을 수 있게 해석한 결과 |
 
-#### 이벤트 타입 코드 전체 표
+반복 빈도가 높은 A EFLG·RX 오버런과 B alert는 30초 구간으로 묶는다. 단순히 버리지 않고 최초/최종 시각, 횟수, A 오버런 구간의 최대 `loop_gap_us`를 남긴다.
 
-| 코드 | 이름 | 발생 조건 | `detail` 의미 |
-|------|------|-----------|---------------|
-| **0** | BUSOFF | TWAI가 BUS-OFF 상태 진입 | 0 |
-| **1** | REC_OK | BUS-OFF 복구 성공 | 복구에 걸린 시간(ms) |
-| **2** | REC_FAIL | BUS-OFF 복구 실패 | 실패 원인 코드 |
-| **3** | REC_SOFT | Soft 복구 시도 (드라이버 재시작) | 0 |
-| **4** | ERR_PASS | TWAI 에러 패시브 상태 진입 (TEC 또는 REC ≥ 128) | 0 |
-| **5** | ARB_LOST | 버스 중재 패배 발생 | 0 |
-| **6** | BUS_ERR | 버스 에러 발생 (bit/stuff/CRC 등) | 0 |
-| **7** | TX_FAIL | TX 최종 실패 | 0 |
-| **8** | RX_FULL | TWAI 수신 버퍼 가득 참 | 0 |
-| **9** | TX_BACKOFF | TX 백오프 발동 (전송 억제) | 0 |
-| **10** | USER_MARK | 사용자가 웹 UI에서 마커 버튼 클릭 | 1=AP_WARNING |
-| **11** | **NAG_MODE** | **Nag 동작 모드 전환** | **0=A모드, 1=B모드** |
-| **12** | **MODEB_STATE** | **Mode B가 보는 DAS hands-on state가 바뀜** | `ap<<16 | oldHo<<8 | newHo` |
-| **13** | **MODEB_PHASE** | **Mode B 내부 phase가 바뀜** | `phase<<24 | ap<<16 | ho<<8 | decision` |
-| **14** | **MODEB_FIRST_ECHO** | **현재 DAS state 진입 후 첫 echo가 나감** | 첫 echo까지 걸린 시간(ms) |
+#### 이벤트 타입
 
-`MODEB_STATE`와 `MODEB_PHASE`의 `detail`은 숫자로 압축되어 있다. 예를 들어 `MODEB_PHASE` detail을 16진수로 봤을 때 `0x02040201`이면 phase 2, AP state 4, hands-on state 2, decision 1이라는 뜻이다. 이 이벤트와 `USER_MARK`의 `timestamp_ms` 차이를 비교하면 경고가 echo 전인지 후인지 알 수 있다.
+| 코드 | 이름 | 채널 | 의미 |
+|------|------|------|------|
+| 0~3 | `BUSOFF`, `REC_OK`, `REC_FAIL`, `REC_SOFT` | B | BUS-OFF와 복구 단계 |
+| 4~8 | `ERR_PASS`, `ARB_LOST`, `BUS_ERR`, `TX_FAIL`, `RX_FULL` | B | TWAI alert |
+| 10 | `USER_MARK` | A/B | 사용자가 차량 경고 구간 시작·종료 표시 |
+| 11~14 | `NAG_MODE`, `MODEB_STATE`, `MODEB_PHASE`, `MODEB_FIRST_ECHO` | B | Nag 모드와 상태 전이 |
+| 15~18 | `A_EFLG_SET`, `A_EFLG_CLEAR`, `A_RX_OVERRUN`, `A_WAKE_FIRST_TX` | A | MCP2515 오류와 재수신 지연 |
+| 19~21 | `CAPTURE_START`, `CAPTURE_STOP`, `CAPTURE_RESET` | SYSTEM | 수동 기록 제어 |
+| 22 | `FEATURE_STATE` | SYSTEM | A TX, Summon, TSLLC, Nag, One-Shot, TX Guard 상태 |
+| 23~24 | `A_TX_GUARD_SET`, `A_TX_GUARD_CLEAR` | A | A TX Guard 진입·해제 |
+| 25 | `A_SPI_TARGET` | A | 재부팅 후 적용할 SPI 목표 변경 |
 
-> **이 로그에서의 NAG_MODE 전환 이력:**
-> ```
-> 19:19:22  → Mode A 시작 (부팅 후 초기)
-> 19:20:56  → Mode B 전환 (에코 활성화)
-> 19:24:31  → Mode A 복귀
-> 19:25:58  → Mode B 재진입
-> 19:38:39  → Mode A 복귀 (AP 조건 변화)
-> ```
-> Mode B에서 A로 돌아가는 것은 AP가 비활성화되거나 조건이 바뀐 것이다.
+`ARB_LOST`는 다른 프레임에 우선권을 양보했다는 뜻이다. TEC/REC, BUS_ERR, TX_FAIL, BUS-OFF가 모두 0이면 이것만으로 물리 통신 오류로 판단하지 않는다.
+
+### 개별 A/B 시계열 CSV v2
+
+`/api/timeseries.csv`는 5초 간격 A/B 상태를 한 행에 저장한다.
+
+- `wall_time`과 `uptime_ms`를 함께 기록한다.
+- `a_`, `b_`, `system_` 접두사로 채널과 공통 값을 구분한다.
+- `capture_mode=AUTO`는 기본 최근 20분 버퍼, `MANUAL`은 사용자가 시작한 고정 구간이다.
+- A 오버런 분석 핵심 열은 `a_d_rx_overrun`, `a_d_eflg_events`, `a_loop_gap_last_us`, `a_loop_gap_peak_us`, `a_d_loop_gap_over_2ms`다.
+- A 송신 안전 플래그는 `a_tx_enabled`, `a_summon_enabled`, `a_tsllc_enabled`, `a_one_shot_enabled`, `a_tx_guard_enabled`에 샘플 시점 값으로 저장한다.
+- B Nag 플래그는 `b_nag_enabled`, `b_nag_mode`, `b_driver_state`에 저장한다.
+
+수동 기록을 정지하면 이후 샘플을 추가하지 않는다. 수동 기록을 시작하지 않은 상태에서는 자동 최근 20분 버퍼가 계속 갱신된다.
 
 ---
 
@@ -660,5 +662,5 @@ d880=0, dEcho=0  → 880 자체가 안 옴 → NO_880 상태
 
 ---
 
-*문서 최종 업데이트: 2026-05-08*  
-*참고 소스: `include/can_helpers.h`, `include/handlers.h`, `include/can_diag.h`*
+*문서 최종 업데이트: 2026-07-24*
+*참고 소스: `include/can_helpers.h`, `include/handlers.h`, `include/can_diag.h`, `include/event_log.h`, `include/timeseries.h`*

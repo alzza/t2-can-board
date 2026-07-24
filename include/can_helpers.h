@@ -798,6 +798,10 @@ struct AChannelDiagnostics {
     Shared<uint8_t>  aRecPeak{0};               // REC 피크값 (세션 내 최대값)
     Shared<uint32_t> lastFrameRxMs{0};          // 마지막 A채널 프레임 수신 시각
     Shared<uint32_t> lastTxMs{0};               // 마지막 TX 성공 시각
+    Shared<uint32_t> loopGapLastUs{0};           // A 폴링 호출 사이 최근 간격
+    Shared<uint32_t> loopGapPeakUs{0};           // 부팅 후 A 폴링 최대 공백
+    Shared<uint32_t> loopGapWindowPeakUs{0};     // 최근 EFLG 폴링 구간의 최대 공백
+    Shared<uint32_t> loopGapOver2msCount{0};     // 2ms를 넘긴 A 폴링 공백 횟수
     Shared<uint32_t> mcpEflgEventCount{0};      // EFLG 0→비제로 전환 횟수 (에러 발생 이벤트)
     Shared<uint32_t> mcpRecoveryAttemptCount{0}; // MCP2515 BUS-OFF 재초기화 시도 횟수
     Shared<uint32_t> mcpRecoverySuccessCount{0}; // MCP2515 BUS-OFF 재초기화 성공 횟수
