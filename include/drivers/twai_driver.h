@@ -18,7 +18,9 @@ public:
         lastInstallErr_ = ESP_OK;
         lastStartErr_ = ESP_OK;
         g_config_ = TWAI_GENERAL_CONFIG_DEFAULT(txPin_, rxPin_, TWAI_MODE_NORMAL);
-        g_config_.rx_queue_len = 32;
+        // B채널은 accept-all 수신 후 소프트웨어 필터를 적용한다. 실차의 순간
+        // 버스트를 흡수하되 오래된 프레임 체류를 과도하게 늘리지 않도록 128로 둔다.
+        g_config_.rx_queue_len = 128;
         g_config_.tx_queue_len = 16;
         // ESP_INTR_FLAG_IRAM은 CONFIG_TWAI_ISR_IN_IRAM이 켜진 빌드에서만 유효하다.
         // Arduino-ESP32 기본 S3 sdkconfig는 보통 비활성이라 무조건 설정하면
@@ -103,8 +105,8 @@ public:
         memcpy(msg.data, frame.data, dlc);
 
         // Short timeout (2ms): modified frames should not be dropped, but
-        // long blocks (10ms) risk overflowing the 32-deep RX queue.
-        // At 500kbps, ~8 frames arrive in 2ms — queue handles this fine.
+        // long blocks (10ms) risk building up the RX queue.
+        // At 500kbps, ~8 frames arrive in 2ms — 128-deep queue handles this fine.
         if (twai_transmit(&msg, pdMS_TO_TICKS(2)) != ESP_OK)
         {
             txSuppressedCount_++;

@@ -571,6 +571,11 @@ inline const char* userMarkerDetailName(uint32_t detail) {
 }
 
 inline constexpr uint16_t kNagFixedTargetId = 880;  // 4/10 정상 기준: B채널 Nag 대상 ID 고정
+inline constexpr uint32_t kNagWarmupMs = 15000;
+inline constexpr uint32_t kNagWarmupTargetFrames = 1000;
+inline constexpr uint32_t kNagEchoDeadlineUs = 6000;
+inline constexpr uint32_t kNagEchoMatchMaxAgeUs = 100000;
+inline constexpr uint8_t kNagRecentEchoSlots = 8;
 
 inline constexpr uint8_t kNagDecisionNone = 0;
 inline constexpr uint8_t kNagDecisionEcho = 1;
@@ -582,6 +587,16 @@ inline constexpr uint8_t kNagDecisionNo880 = 6;
 inline constexpr uint8_t kNagDecisionNo921 = 7;
 inline constexpr uint8_t kNagDecisionNoEcho = 8;
 inline constexpr uint8_t kNagDecisionApBlocked = 9;
+inline constexpr uint8_t kNagDecisionWarmup = 10;
+inline constexpr uint8_t kNagDecisionNo297 = 11;
+inline constexpr uint8_t kNagDecisionSteerBlocked = 12;
+inline constexpr uint8_t kNagDecisionModePause = 13;
+inline constexpr uint8_t kNagDecisionModeDelay = 14;
+
+inline constexpr uint8_t kNagReadinessCanWait = 0;
+inline constexpr uint8_t kNagReadinessWarmupTime = 1;
+inline constexpr uint8_t kNagReadinessWarmupFrames = 2;
+inline constexpr uint8_t kNagReadinessReady = 3;
 
 inline const char* nagDecisionName(uint8_t code) {
     switch (code) {
@@ -594,7 +609,21 @@ inline const char* nagDecisionName(uint8_t code) {
     case kNagDecisionNo921: return "NO_921";
     case kNagDecisionNoEcho: return "NO_ECHO";
     case kNagDecisionApBlocked: return "AP_BLOCK";
+    case kNagDecisionWarmup: return "WARMUP";
+    case kNagDecisionNo297: return "NO_297";
+    case kNagDecisionSteerBlocked: return "STEER_BLOCK";
+    case kNagDecisionModePause: return "MODE_PAUSE";
+    case kNagDecisionModeDelay: return "MODE_DELAY";
     default: return "NONE";
+    }
+}
+
+inline const char* nagReadinessName(uint8_t code) {
+    switch (code) {
+    case kNagReadinessWarmupTime: return "WARMUP_TIME";
+    case kNagReadinessWarmupFrames: return "WARMUP_880";
+    case kNagReadinessReady: return "READY";
+    default: return "CAN_WAIT";
     }
 }
 
@@ -664,11 +693,13 @@ inline bool dasHandsOnStateIsWarning(uint8_t state) {
 inline uint8_t nagIntervalDecision(uint32_t d880, uint32_t dDasStatus, uint32_t dEcho,
                                    uint32_t dDrop, uint32_t dSkipRuntime,
                                    uint32_t dSkipHandsOn, uint32_t dSkipDas,
-                                   bool runtimeOn, uint32_t dSkipAp = 0) {
+                                   bool runtimeOn, uint32_t dSkipAp = 0,
+                                   uint32_t dSkipWarmup = 0) {
     if (d880 == 0) return kNagDecisionNo880;
     if (!runtimeOn || dSkipRuntime > 0) return kNagDecisionRuntimeOff;
     if (dEcho > 0) return kNagDecisionEcho;
     if (dDrop > 0) return kNagDecisionLateDrop;
+    if (dSkipWarmup > 0) return kNagDecisionWarmup;
     if (dSkipAp > 0) return kNagDecisionApBlocked;
     if (dSkipHandsOn > 0) return kNagDecisionHandsOn;
     if (dSkipDas > 0) return kNagDecisionDasIdle;
@@ -692,7 +723,11 @@ struct BChannelDiagnostics {
     Shared<uint32_t> framesFilteredInTotal{0};   // SW 필터 통과 프레임 수 (감시 ID)
     Shared<uint32_t> framesFilteredOutTotal{0};  // SW 필터 제외 프레임 수
     Shared<uint32_t> echoCount{0};               // 발사한 에코 패킷 수
+    Shared<uint32_t> txAttemptCount{0};           // 조건 통과 후 TWAI 송신을 시도한 횟수
+    Shared<uint32_t> txSuccessCount{0};           // TWAI 송신 큐 등록 성공 횟수
+    Shared<uint32_t> echoConfirmCount{0};         // 최근 TX 이력과 일치한 버스 수신 에코 수
     Shared<uint32_t> skipRuntimeOrInactive{0};   // nag 비활성/런타임 OFF로 스킵된 880 수
+    Shared<uint32_t> skipWarmup{0};               // 부팅 준비 시간/880 누적 조건 미충족 스킵
     Shared<uint32_t> skipApState{0};             // Mode B AP state gate로 스킵된 880 수
     Shared<uint32_t> skipHandsOn{0};             // handsOn!=0 로 스킵된 880 수
     Shared<uint32_t> skipDasState{0};            // DAS 만족/대기/미지원 상태로 스킵된 880 수
@@ -700,7 +735,12 @@ struct BChannelDiagnostics {
     Shared<uint32_t> last921RxMs{0};             // 마지막 921 수신 시각
     Shared<uint32_t> last923RxMs{0};             // 마지막 923 수신 시각
     Shared<uint32_t> lastEchoTxMs{0};            // 마지막 echo 발사 시각
+    Shared<uint32_t> lastEchoRxMs{0};            // 최근 TX 프레임이 버스에서 재수신된 시각
     Shared<uint8_t>  nagLastDecision{kNagDecisionNone}; // 마지막 NagHandler 판정
+    Shared<bool>     nagReady{false};             // 15초 + ID 880 1000프레임 준비 게이트 완료
+    Shared<uint8_t>  nagReadiness{kNagReadinessCanWait}; // CAN_WAIT/WARMUP_TIME/WARMUP_880/READY
+    Shared<uint32_t> nagWarmupStartMs{0};         // TWAI 시작 시각
+    Shared<uint32_t> nagWarmupFramesSeen{0};      // TWAI 시작 뒤 실제 차량 ID 880 수신 수
     Shared<uint8_t> twaiStateCode{0};            // TWAI 상태 코드 (0=초기, 1=정상, 2=Bus Off, 3=복구중)
     Shared<uint32_t> busoffCount{0};             // 누적 BUS-OFF 발생 횟수
     Shared<uint32_t> recoveryAttemptCount{0};    // BUS-OFF 복구 시도 횟수
@@ -726,9 +766,22 @@ struct BChannelDiagnostics {
     Shared<uint32_t> bRxMissed{0};
     // v2 stats: 실시간 에코 품질 지표
     Shared<uint32_t> txFail{0};                  // driver.send() 실패 누적 수
-    Shared<uint32_t> echoLatUs{0};               // 최근 에코 레이턴시 (µs)
+    Shared<uint32_t> txLatencyUs{0};             // ID 880 수신→TWAI 송신 등록 지연 (µs)
+    Shared<uint32_t> echoLatUs{0};               // TWAI 송신→동일 프레임 버스 재수신 지연 (µs)
     Shared<uint8_t>  realHo{0};                  // 버스에서 읽은 실제 handsOn 값 (0..3)
     Shared<float>    realTorqueNm{0.0f};          // 버스에서 읽은 실제 토크 (Nm)
+    Shared<uint8_t>  lastTxHandsOn{0};            // 최근 주사 프레임의 handsOn 값
+    Shared<float>    lastTxTorqueNm{0.0f};         // 최근 주사 프레임의 토크 (Nm)
+    // 최근 실제 차량 프레임 원문. low는 data[0..3], high는 data[4..7] little-endian pack.
+    Shared<uint32_t> raw880Seq{0};
+    Shared<uint32_t> raw880Low{0};
+    Shared<uint32_t> raw880High{0};
+    Shared<uint32_t> rawDasSeq{0};
+    Shared<uint32_t> rawDasLow{0};
+    Shared<uint32_t> rawDasHigh{0};
+    Shared<uint32_t> raw297Seq{0};
+    Shared<uint32_t> raw297Low{0};
+    Shared<uint32_t> raw297High{0};
     // DAS_status 진단: 921/923 후보 모두 지원 (0xFF = 아직 DAS_status 미수신)
     Shared<uint8_t>  dasHandsOnStateRx{0xFF};    // (frame.data[5]>>2)&0x0F, 0xFF=미수신
     Shared<uint32_t> dasStatusSourceId{0};       // 마지막 DAS_status 소스 ID (921 또는 923)

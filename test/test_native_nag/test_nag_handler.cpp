@@ -343,6 +343,63 @@ void test_successful_echo_is_not_reprocessed()
     handler.handleMessageAt(ownEcho, mock, 101);
     TEST_ASSERT_EQUAL(0, mock.sent.size());
     TEST_ASSERT_EQUAL_UINT32(1, handler.framesSent);
+    TEST_ASSERT_EQUAL_UINT32(1, (uint32_t)bChannelDiag.echoConfirmCount);
+}
+
+void test_recent_echo_history_recognizes_older_delayed_echo()
+{
+    setMode(kNagMode1);
+    CanFrame first = makeEpasFrame(0, 0.31f, 0x01);
+    CanFrame second = makeEpasFrame(0, 0.32f, 0x02);
+    handler.handleMessageAt(first, mock, 100);
+    handler.handleMessageAt(second, mock, 101);
+    TEST_ASSERT_EQUAL(2, mock.sent.size());
+    CanFrame delayedFirstEcho = mock.sent[0];
+
+    mock.reset();
+    handler.handleMessageAt(delayedFirstEcho, mock, 102);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1, (uint32_t)bChannelDiag.echoConfirmCount);
+}
+
+void test_production_warmup_requires_time_and_one_thousand_880_frames()
+{
+    setMode(kNagMode1);
+    handler.onCanStarted(100);
+
+    CanFrame beforeTime = makeEpasFrame(0, 0.30f, 0x01);
+    handler.handleMessageAt(beforeTime, mock, 15099);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT8(kNagReadinessWarmupTime,
+                            (uint8_t)bChannelDiag.nagReadiness);
+
+    for (uint16_t i = 1; i < 999; ++i) {
+        CanFrame frame = makeEpasFrame(0, 0.30f, static_cast<uint8_t>(i & 0x0F));
+        handler.handleMessageAt(frame, mock, 15100);
+    }
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(999, (uint32_t)bChannelDiag.nagWarmupFramesSeen);
+    TEST_ASSERT_EQUAL_UINT8(kNagReadinessWarmupFrames,
+                            (uint8_t)bChannelDiag.nagReadiness);
+
+    CanFrame ready = makeEpasFrame(0, 0.30f, 0x0F);
+    handler.handleMessageAt(ready, mock, 15100);
+    TEST_ASSERT_TRUE((bool)bChannelDiag.nagReady);
+    TEST_ASSERT_EQUAL_UINT8(kNagReadinessReady,
+                            (uint8_t)bChannelDiag.nagReadiness);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+}
+
+void test_echo_later_than_six_milliseconds_is_dropped()
+{
+    setMode(kNagMode1);
+    CanFrame frame = makeEpasFrame(0, 0.33f, 0x01);
+    uint32_t oldRxUs = micros() - (kNagEchoDeadlineUs + 1000);
+    handler.handleMessageAt(frame, mock, 100, true, oldRxUs);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1, (uint32_t)bChannelDiag.echoDroppedLate);
+    TEST_ASSERT_EQUAL_UINT8(kNagDecisionLateDrop,
+                            (uint8_t)bChannelDiag.nagLastDecision);
 }
 
 void test_runtime_off_blocks_all_modes()
@@ -392,6 +449,9 @@ int main()
     RUN_TEST(test_all_modes_stay_inside_common_torque_cap);
     RUN_TEST(test_failed_send_does_not_increment_success_counters);
     RUN_TEST(test_successful_echo_is_not_reprocessed);
+    RUN_TEST(test_recent_echo_history_recognizes_older_delayed_echo);
+    RUN_TEST(test_production_warmup_requires_time_and_one_thousand_880_frames);
+    RUN_TEST(test_echo_later_than_six_milliseconds_is_dropped);
     RUN_TEST(test_runtime_off_blocks_all_modes);
     RUN_TEST(test_a_channel_eflg_health_classification_preserves_rx_overrun);
     return UNITY_END();

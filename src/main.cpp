@@ -152,6 +152,7 @@ void nagKillerTask(void* pvParameters) {
     uint32_t prevLogEcho = 0;
     uint32_t prevLogDrop = 0;
     uint32_t prevLogSkipRuntime = 0;
+    uint32_t prevLogSkipWarmup = 0;
     uint32_t prevLogSkipAp = 0;
     uint32_t prevLogSkipHandsOn = 0;
     uint32_t prevLogSkipDas = 0;
@@ -310,10 +311,12 @@ void nagKillerTask(void* pvParameters) {
             int rxLimit = 30; // 무한 루프(WDT Panic) 방지 제한
             uint8_t bFramesBeforeAService = 0;
             while (driverB->read(frame) && rxLimit > 0) {
+                const uint32_t frameRxMs = millis();
+                const uint32_t frameRxUs = micros();
                 bChannelDiag.frameIdReceived = frame.id;
                 bChannelDiag.framesReceivedTotal++;
-                bChannelDiag.lastFrameRxMs = millis();
-                signalObserverObserveFrame(kSignalObserverChannelB, frame, millis());
+                bChannelDiag.lastFrameRxMs = frameRxMs;
+                signalObserverObserveFrame(kSignalObserverChannelB, frame, frameRxMs);
 
                 // SW 필터: 880(EPAS3P) / 921·923(DAS_status 후보) / 297(SCCM_steer, Mode B용)
                 if ((frame.id == kNagFixedTargetId || frame.id == 921 || frame.id == 923 || frame.id == 297) && frame.dlc >= 4) {
@@ -326,18 +329,19 @@ void nagKillerTask(void* pvParameters) {
                     else if (frame.id == 921)          bChannelDiag.frames921++;
                     else if (frame.id == 923) {
                         bChannelDiag.frames923++;
-                        bChannelDiag.last923RxMs = millis();
+                        bChannelDiag.last923RxMs = frameRxMs;
                     }
                     else if (frame.id == 297)          {}  // frames297 는 handler 내부에서 증가
-                    // [legacy 제거] echo deadline(_rxMs) 가설은 무효화됨 → handler가 수신 시각을 별도로 추적할 필요 없음
-                    nagHandlerB.handleMessage(frame, *driverB);
+                    nagHandlerB.handleMessageAt(frame, *driverB, frameRxMs, true, frameRxUs);
                 } else {
                     bChannelDiag.framesFilteredOutTotal++;
                 }
                 rxLimit--;
-                // TWAI RX burst를 8개 처리할 때마다 MCP2515의 2-deep RX 버퍼를
-                // 즉시 비운다. B채널 accept-all burst가 A채널 폴링을 오래 막지 않게 한다.
-                if (++bFramesBeforeAService >= 8) {
+                // MCP2515는 하드웨어 RX 버퍼가 2개뿐이다. 실차 로그에서 B채널
+                // accept-all burst 중 RX1OVR가 반복됐으므로, B 프레임 2개마다
+                // A 버퍼를 우선 비운다. RAM 큐 증설은 이미 넘친 MCP2515 프레임을
+                // 되살릴 수 없으므로 이 간격 축소가 실제 보호 수단이다.
+                if (++bFramesBeforeAService >= 2) {
 #if defined(BOARD_T2CAN) && !defined(NATIVE_BUILD)
                     if (!gOtaRecoveryModeActive) appLoop<MCP2515Driver>();
 #endif
@@ -399,12 +403,14 @@ void nagKillerTask(void* pvParameters) {
                 bChannelDiag.twaiStateCode == 2 ? "BUS_OFF" :
                 bChannelDiag.twaiStateCode == 3 ? "RECOVERING" :
                 (driverB && !driverB->isDriverOK()) ? "NO_DRIVER" : "INIT";
-            char bBuf[220];
+            char bBuf[280];
             snprintf(bBuf, sizeof(bBuf),
-                "🔵 [B-CH] RX:%u|Filt:%u|Echo:%u|TxFail:%u|TEC:%u/REC:%u|880:%u|921:%u|923:%u|297:%u|DAS:%u@%u|Profile:%s|TWAI:%s",
+                "🔵 [B-CH] RX:%u|Filt:%u|Try/OK/Ack:%u/%u/%u|TxFail:%u|TEC:%u/REC:%u|880:%u|921:%u|923:%u|297:%u|DAS:%u@%u|Mode:%s|Ready:%s|TWAI:%s",
                 (unsigned)bChannelDiag.framesReceivedTotal,
                 (unsigned)bChannelDiag.framesFilteredInTotal,
-                (unsigned)bChannelDiag.echoCount,
+                (unsigned)bChannelDiag.txAttemptCount,
+                (unsigned)bChannelDiag.txSuccessCount,
+                (unsigned)bChannelDiag.echoConfirmCount,
                 (unsigned)bChannelDiag.txFail,
                 (unsigned)bChannelDiag.twaiTxErrNow,
                 (unsigned)bChannelDiag.twaiRxErrNow,
@@ -415,6 +421,7 @@ void nagKillerTask(void* pvParameters) {
                 (unsigned)bChannelDiag.dasHandsOnStateRx,
                 (unsigned)bChannelDiag.dasStatusSourceId,
                 nagModeName((uint8_t)bChannelDiag.nagMode),
+                nagReadinessName((uint8_t)bChannelDiag.nagReadiness),
                 twaiStr);
             logRing.push(bBuf, millis());
 
@@ -425,6 +432,7 @@ void nagKillerTask(void* pvParameters) {
             uint32_t curEcho = (uint32_t)bChannelDiag.echoCount;
             uint32_t curDrop = (uint32_t)bChannelDiag.echoDroppedLate;
             uint32_t curSkipRuntime = (uint32_t)bChannelDiag.skipRuntimeOrInactive;
+            uint32_t curSkipWarmup = (uint32_t)bChannelDiag.skipWarmup;
             uint32_t curSkipAp = (uint32_t)bChannelDiag.skipApState;
             uint32_t curSkipHandsOn = (uint32_t)bChannelDiag.skipHandsOn;
             uint32_t curSkipDas = (uint32_t)bChannelDiag.skipDasState;
@@ -436,18 +444,19 @@ void nagKillerTask(void* pvParameters) {
             uint32_t dEcho = curEcho - prevLogEcho;
             uint32_t dDrop = curDrop - prevLogDrop;
             uint32_t dSkipRuntime = curSkipRuntime - prevLogSkipRuntime;
+            uint32_t dSkipWarmup = curSkipWarmup - prevLogSkipWarmup;
             uint32_t dSkipAp = curSkipAp - prevLogSkipAp;
             uint32_t dSkipHandsOn = curSkipHandsOn - prevLogSkipHandsOn;
             uint32_t dSkipDas = curSkipDas - prevLogSkipDas;
             uint32_t dNoDas = curNoDas - prevLogNoDas;
             bool nagRuntimeOn = (bool)nagHandlerB.nagKillerActive && (bool)nagKillerRuntime;
             uint8_t intervalDecision = nagIntervalDecision(d880, d921 + d923, dEcho, dDrop,
-                dSkipRuntime, dSkipHandsOn, dSkipDas, nagRuntimeOn, dSkipAp);
+                dSkipRuntime, dSkipHandsOn, dSkipDas, nagRuntimeOn, dSkipAp, dSkipWarmup);
 
             // Verdict는 5초 구간 요약이다. Last는 아래 B-GATE에서 마지막 실제 핸들러 분기로 따로 남긴다.
-            char bNag[260];
+            char bNag[300];
             snprintf(bNag, sizeof(bNag),
-                "🥷 [B-NAG] 5s 880:+%u 921:+%u 923:+%u 297:+%u Echo:+%u Drop:+%u | Profile=%s AP=%u Phase=%u HO=%u DAS=0x%02X@%u Verdict=%s",
+                "🥷 [B-NAG] 5s 880:+%u 921:+%u 923:+%u 297:+%u Echo:+%u Drop:+%u | Mode=%s Ready=%s(%u/%u) AP=%u Phase=%u HO=%u DAS=0x%02X@%u Verdict=%s",
                 (unsigned)d880,
                 (unsigned)d921,
                 (unsigned)d923,
@@ -455,6 +464,9 @@ void nagKillerTask(void* pvParameters) {
                 (unsigned)dEcho,
                 (unsigned)dDrop,
                 nagModeName((uint8_t)bChannelDiag.nagMode),
+                nagReadinessName((uint8_t)bChannelDiag.nagReadiness),
+                (unsigned)bChannelDiag.nagWarmupFramesSeen,
+                (unsigned)kNagWarmupTargetFrames,
                 (unsigned)(uint8_t)bChannelDiag.dasAutopilotStateRx,
                 (unsigned)(uint8_t)bChannelDiag.modeBPhase,
                 (unsigned)(uint8_t)bChannelDiag.realHo,
@@ -463,10 +475,11 @@ void nagKillerTask(void* pvParameters) {
                 nagDecisionName(intervalDecision));
             logRing.push(bNag, millis());
 
-            char bGate[180];
+            char bGate[220];
             snprintf(bGate, sizeof(bGate),
-                "🚦 [B-GATE] Skip OFF/AP/HO/DAS:+%u/%u/%u/%u | NoDAS Echo:+%u | Last=%s",
+                "🚦 [B-GATE] Skip OFF/WARM/AP/HO/DAS:+%u/%u/%u/%u/%u | NoDAS Echo:+%u | Last=%s",
                 (unsigned)dSkipRuntime,
+                (unsigned)dSkipWarmup,
                 (unsigned)dSkipAp,
                 (unsigned)dSkipHandsOn,
                 (unsigned)dSkipDas,
@@ -481,6 +494,7 @@ void nagKillerTask(void* pvParameters) {
             prevLogEcho = curEcho;
             prevLogDrop = curDrop;
             prevLogSkipRuntime = curSkipRuntime;
+            prevLogSkipWarmup = curSkipWarmup;
             prevLogSkipAp = curSkipAp;
             prevLogSkipHandsOn = curSkipHandsOn;
             prevLogSkipDas = curSkipDas;
@@ -494,16 +508,21 @@ void nagKillerTask(void* pvParameters) {
             // EchoLat     : 마지막 에코 지연 (µs). 6000µs 초과 시 ECU 충돌 위험
             // EchoDrop    : 6ms 초과로 의도적 드롭된 에코 (정상 보호 동작)
             // SkipRT/AP/HO/DAS : 핸들러 진입 후 송신 스킵 사유별 누적
-            char bDeep[200];
+            char bDeep[260];
             snprintf(bDeep, sizeof(bDeep),
-                "🔬 [B-DEEP] ArbLost:%u|BusErr:%u|TxFailed:%u|RxMissed:%u|EchoLat:%uus|EchoDrop:%u|Skip RT:%u/AP:%u/HO:%u/DAS:%u",
+                "🔬 [B-DEEP] ArbLost:%u|BusErr:%u|TxFailed:%u|RxMissed:%u|Try/OK/Ack:%u/%u/%u|TxLat/EchoLat:%u/%uus|EchoDrop:%u|Skip RT/WARM/AP/HO/DAS:%u/%u/%u/%u/%u",
                 (unsigned)bChannelDiag.bArbLost,
                 (unsigned)bChannelDiag.bBusError,
                 (unsigned)bChannelDiag.bTxFailed,
                 (unsigned)bChannelDiag.bRxMissed,
+                (unsigned)bChannelDiag.txAttemptCount,
+                (unsigned)bChannelDiag.txSuccessCount,
+                (unsigned)bChannelDiag.echoConfirmCount,
+                (unsigned)bChannelDiag.txLatencyUs,
                 (unsigned)bChannelDiag.echoLatUs,
                 (unsigned)bChannelDiag.echoDroppedLate,
                 (unsigned)bChannelDiag.skipRuntimeOrInactive,
+                (unsigned)bChannelDiag.skipWarmup,
                 (unsigned)bChannelDiag.skipApState,
                 (unsigned)bChannelDiag.skipHandsOn,
                 (unsigned)bChannelDiag.skipDasState);
@@ -794,6 +813,7 @@ void setup() {
     driverB = std::make_unique<TWAIDriver>((gpio_num_t)T2CAN_TX, (gpio_num_t)T2CAN_RX);
     if (driverB && driverB->init()) {
         bChannelDiag.driverBInitialized = true;
+        nagHandlerB.onCanStarted(millis());
         logRing.push("🟢✅ [B-CH] TWAI 드라이버 초기화 성공", millis());
     } else {
         char initFailBuf[120];

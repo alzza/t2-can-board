@@ -52,6 +52,44 @@ static volatile uint32_t gWebApStationCount = 0;
 static volatile uint32_t gWebApStationChangeCount = 0;
 static volatile uint32_t gWebApStationLastChangeMs = 0;
 
+struct NagMarkerSnapshot {
+    uint32_t tMs;
+    uint32_t detail;
+    uint32_t txAttempts;
+    uint32_t txSuccess;
+    uint32_t echoConfirmed;
+    uint32_t txLatencyUs;
+    uint32_t echoLatencyUs;
+    uint32_t echoDrop;
+    uint16_t dasSourceId;
+    uint8_t mode;
+    uint8_t readiness;
+    uint8_t decision;
+    uint8_t apState;
+    uint8_t phase;
+    uint8_t realHo;
+    uint8_t dasState;
+    uint8_t txHo;
+    float steerDeg;
+    float realTorqueNm;
+    float txTorqueNm;
+    char raw880[24];
+    char rawDas[24];
+    char raw297[24];
+};
+
+static constexpr size_t kNagMarkerSnapshotCapacity = 8;
+static NagMarkerSnapshot gNagMarkerSnapshots[kNagMarkerSnapshotCapacity] = {};
+static uint32_t gNagMarkerSnapshotHead = 0;
+static portMUX_TYPE gNagMarkerSnapshotMux = portMUX_INITIALIZER_UNLOCKED;
+
+static void nagMarkerSnapshotPush(const NagMarkerSnapshot &snapshot) {
+    portENTER_CRITICAL(&gNagMarkerSnapshotMux);
+    gNagMarkerSnapshots[gNagMarkerSnapshotHead % kNagMarkerSnapshotCapacity] = snapshot;
+    ++gNagMarkerSnapshotHead;
+    portEXIT_CRITICAL(&gNagMarkerSnapshotMux);
+}
+
 static inline void webHealthMark(volatile uint32_t &count, volatile uint32_t &lastMs, uint32_t now) {
     count = (uint32_t)count + 1;
     lastMs = now;
@@ -71,6 +109,32 @@ static inline uint32_t webSafeAgeMs(uint32_t now, uint32_t lastMs) {
     if (!lastMs) return 0;
     uint32_t ageMs = now - lastMs;
     return (ageMs > 0x7FFFFFFFUL) ? 0 : ageMs;
+}
+
+static inline void formatCanPayload(uint32_t low, uint32_t high, char *out, size_t outSize) {
+    if (!out || outSize == 0) return;
+    snprintf(out, outSize, "%02X %02X %02X %02X %02X %02X %02X %02X",
+        (unsigned)(low & 0xFFU), (unsigned)((low >> 8) & 0xFFU),
+        (unsigned)((low >> 16) & 0xFFU), (unsigned)((low >> 24) & 0xFFU),
+        (unsigned)(high & 0xFFU), (unsigned)((high >> 8) & 0xFFU),
+        (unsigned)((high >> 16) & 0xFFU), (unsigned)((high >> 24) & 0xFFU));
+}
+
+static inline void formatCanPayloadStable(const Shared<uint32_t> &sequence,
+                                          const Shared<uint32_t> &lowWord,
+                                          const Shared<uint32_t> &highWord,
+                                          char *out, size_t outSize) {
+    uint32_t before = 0;
+    uint32_t after = 0;
+    uint32_t low = 0;
+    uint32_t high = 0;
+    do {
+        before = sequence.load(std::memory_order_acquire);
+        low = lowWord.load(std::memory_order_relaxed);
+        high = highWord.load(std::memory_order_relaxed);
+        after = sequence.load(std::memory_order_acquire);
+    } while ((before & 1U) != 0U || before != after);
+    formatCanPayload(low, high, out, outSize);
 }
 
 static inline bool webDownloadBusy(uint32_t now) {
@@ -1686,11 +1750,20 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(bch, "nag_mode", (uint32_t)nagModeClamp((uint8_t)bChannelDiag.nagMode));
     cJSON_AddStringToObject(bch, "nag_mode_name", nagModeName((uint8_t)bChannelDiag.nagMode));
     cJSON_AddNumberToObject(bch, "echo_count", (uint32_t)bChannelDiag.echoCount);
+    cJSON_AddNumberToObject(bch, "tx_attempt_count", (uint32_t)bChannelDiag.txAttemptCount);
+    cJSON_AddNumberToObject(bch, "tx_success_count", (uint32_t)bChannelDiag.txSuccessCount);
+    cJSON_AddNumberToObject(bch, "echo_confirm_count", (uint32_t)bChannelDiag.echoConfirmCount);
+    cJSON_AddNumberToObject(bch, "tx_latency_us", (uint32_t)bChannelDiag.txLatencyUs);
+    cJSON_AddNumberToObject(bch, "echo_latency_us", (uint32_t)bChannelDiag.echoLatUs);
     cJSON_AddNumberToObject(bch, "echo_drop_late", (uint32_t)bChannelDiag.echoDroppedLate);
     cJSON_AddNumberToObject(bch, "skip_runtime_or_inactive", (uint32_t)bChannelDiag.skipRuntimeOrInactive);
+    cJSON_AddNumberToObject(bch, "skip_warmup", (uint32_t)bChannelDiag.skipWarmup);
     cJSON_AddNumberToObject(bch, "skip_ap_state", (uint32_t)bChannelDiag.skipApState);
     cJSON_AddNumberToObject(bch, "skip_hands_on", (uint32_t)bChannelDiag.skipHandsOn);
     cJSON_AddNumberToObject(bch, "skip_das_state", (uint32_t)bChannelDiag.skipDasState);
+    cJSON_AddBoolToObject(bch, "nag_ready", (bool)bChannelDiag.nagReady);
+    cJSON_AddStringToObject(bch, "nag_readiness", nagReadinessName((uint8_t)bChannelDiag.nagReadiness));
+    cJSON_AddNumberToObject(bch, "nag_warmup_frames", (uint32_t)bChannelDiag.nagWarmupFramesSeen);
     cJSON_AddNumberToObject(bch, "twai_state_code", (uint32_t)bChannelDiag.twaiStateCode);
     cJSON_AddNumberToObject(bch, "last_frame_id", (uint32_t)bChannelDiag.frameIdReceived);
     cJSON_AddNumberToObject(bch, "last_frame_rx_ms", (uint32_t)bChannelDiag.lastFrameRxMs);
@@ -2020,7 +2093,11 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
     }
     cJSON_AddNumberToObject(root, "rx",       (uint32_t)bChannelDiag.frames880);
     cJSON_AddNumberToObject(root, "echo",     (uint32_t)bChannelDiag.echoCount);
+    cJSON_AddNumberToObject(root, "txAttempts", (uint32_t)bChannelDiag.txAttemptCount);
+    cJSON_AddNumberToObject(root, "txSuccess", (uint32_t)bChannelDiag.txSuccessCount);
+    cJSON_AddNumberToObject(root, "echoConfirmed", (uint32_t)bChannelDiag.echoConfirmCount);
     cJSON_AddNumberToObject(root, "txFail",   (uint32_t)bChannelDiag.txFail);
+    cJSON_AddNumberToObject(root, "txLatUs",  (uint32_t)bChannelDiag.txLatencyUs);
     cJSON_AddNumberToObject(root, "latUs",    (uint32_t)bChannelDiag.echoLatUs);
     cJSON_AddNumberToObject(root, "ho",       (uint8_t)bChannelDiag.realHo);
     cJSON_AddNumberToObject(root, "torqueNm", (double)(float)bChannelDiag.realTorqueNm);
@@ -2041,6 +2118,15 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
     uint8_t cs = (uint8_t)bChannelDiag.twaiStateCode;
     cJSON_AddStringToObject(root, "canState", (cs < 4) ? csStr[cs] : "unknown");
     cJSON_AddNumberToObject(root, "uptimeS",  millis() / 1000);
+    cJSON_AddBoolToObject(root, "nagReady", (bool)bChannelDiag.nagReady);
+    cJSON_AddNumberToObject(root, "nagReadinessCode", (uint8_t)bChannelDiag.nagReadiness);
+    cJSON_AddStringToObject(root, "nagReadiness", nagReadinessName((uint8_t)bChannelDiag.nagReadiness));
+    cJSON_AddNumberToObject(root, "warmupElapsedMs",
+        webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.nagWarmupStartMs));
+    cJSON_AddNumberToObject(root, "warmupRequiredMs", kNagWarmupMs);
+    cJSON_AddNumberToObject(root, "warmupFrames", (uint32_t)bChannelDiag.nagWarmupFramesSeen);
+    cJSON_AddNumberToObject(root, "warmupRequiredFrames", kNagWarmupTargetFrames);
+    cJSON_AddNumberToObject(root, "skipWarmup", (uint32_t)bChannelDiag.skipWarmup);
 
     uint8_t mode = nagModeClamp((uint8_t)bChannelDiag.nagMode);
     addNagModeJson(root, mode);
@@ -2053,6 +2139,8 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "modeBPhase",  (uint8_t)bChannelDiag.modeBPhase);
     cJSON_AddNumberToObject(root, "modeBInjects",(uint32_t)bChannelDiag.modeBInjectCount);
     cJSON_AddNumberToObject(root, "modeBLastNm", (double)(float)bChannelDiag.modeBLastTorqueNm);
+    cJSON_AddNumberToObject(root, "lastTxNm", (double)(float)bChannelDiag.lastTxTorqueNm);
+    cJSON_AddNumberToObject(root, "lastTxHo", (uint8_t)bChannelDiag.lastTxHandsOn);
     cJSON_AddNumberToObject(root, "modeBStateAgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.modeBStateEnterMs));
     cJSON_AddNumberToObject(root, "modeBPhaseAgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.modeBPhaseEnterMs));
     cJSON_AddNumberToObject(root, "modeBFirstEchoDelayMs", (uint32_t)bChannelDiag.modeBFirstEchoDelayMs);
@@ -2073,6 +2161,17 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "lastDasStatusAgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.lastDasStatusRxMs));
     cJSON_AddNumberToObject(root, "last297AgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.last297RxMs));
     cJSON_AddNumberToObject(root, "lastEchoAgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.lastEchoTxMs));
+    cJSON_AddNumberToObject(root, "lastEchoConfirmAgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.lastEchoRxMs));
+    char rawPayload[32];
+    formatCanPayloadStable(bChannelDiag.raw880Seq, bChannelDiag.raw880Low,
+                           bChannelDiag.raw880High, rawPayload, sizeof(rawPayload));
+    cJSON_AddStringToObject(root, "raw880", rawPayload);
+    formatCanPayloadStable(bChannelDiag.rawDasSeq, bChannelDiag.rawDasLow,
+                           bChannelDiag.rawDasHigh, rawPayload, sizeof(rawPayload));
+    cJSON_AddStringToObject(root, "rawDas", rawPayload);
+    formatCanPayloadStable(bChannelDiag.raw297Seq, bChannelDiag.raw297Low,
+                           bChannelDiag.raw297High, rawPayload, sizeof(rawPayload));
+    cJSON_AddStringToObject(root, "raw297", rawPayload);
 
     char *json = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
@@ -2442,31 +2541,81 @@ static esp_err_t userMarkerHandler(httpd_req_t *req) {
     uint8_t nagMode = nagModeClamp((uint8_t)bChannelDiag.nagMode);
 
     const char *detailName = userMarkerDetailName(detail);
-    char msg[352];
+    char raw880[32];
+    char rawDas[32];
+    char raw297[32];
+    formatCanPayloadStable(bChannelDiag.raw880Seq, bChannelDiag.raw880Low,
+                           bChannelDiag.raw880High, raw880, sizeof(raw880));
+    formatCanPayloadStable(bChannelDiag.rawDasSeq, bChannelDiag.rawDasLow,
+                           bChannelDiag.rawDasHigh, rawDas, sizeof(rawDas));
+    formatCanPayloadStable(bChannelDiag.raw297Seq, bChannelDiag.raw297Low,
+                           bChannelDiag.raw297High, raw297, sizeof(raw297));
+    NagMarkerSnapshot markerSnapshot = {};
+    markerSnapshot.tMs = now;
+    markerSnapshot.detail = detail;
+    markerSnapshot.txAttempts = (uint32_t)bChannelDiag.txAttemptCount;
+    markerSnapshot.txSuccess = (uint32_t)bChannelDiag.txSuccessCount;
+    markerSnapshot.echoConfirmed = (uint32_t)bChannelDiag.echoConfirmCount;
+    markerSnapshot.txLatencyUs = (uint32_t)bChannelDiag.txLatencyUs;
+    markerSnapshot.echoLatencyUs = (uint32_t)bChannelDiag.echoLatUs;
+    markerSnapshot.echoDrop = (uint32_t)bChannelDiag.echoDroppedLate;
+    markerSnapshot.dasSourceId = (uint16_t)(uint32_t)bChannelDiag.dasStatusSourceId;
+    markerSnapshot.mode = nagMode;
+    markerSnapshot.readiness = (uint8_t)bChannelDiag.nagReadiness;
+    markerSnapshot.decision = (uint8_t)bChannelDiag.nagLastDecision;
+    markerSnapshot.apState = (uint8_t)bChannelDiag.dasAutopilotStateRx;
+    markerSnapshot.phase = (uint8_t)bChannelDiag.modeBPhase;
+    markerSnapshot.realHo = (uint8_t)bChannelDiag.realHo;
+    markerSnapshot.dasState = (uint8_t)bChannelDiag.dasHandsOnStateRx;
+    markerSnapshot.txHo = (uint8_t)bChannelDiag.lastTxHandsOn;
+    markerSnapshot.steerDeg = (float)bChannelDiag.steeringAngleDeg;
+    markerSnapshot.realTorqueNm = (float)bChannelDiag.realTorqueNm;
+    markerSnapshot.txTorqueNm = (float)bChannelDiag.lastTxTorqueNm;
+    strncpy(markerSnapshot.raw880, raw880, sizeof(markerSnapshot.raw880) - 1);
+    strncpy(markerSnapshot.rawDas, rawDas, sizeof(markerSnapshot.rawDas) - 1);
+    strncpy(markerSnapshot.raw297, raw297, sizeof(markerSnapshot.raw297) - 1);
+    nagMarkerSnapshotPush(markerSnapshot);
+    char msg[192];
     snprintf(msg, sizeof(msg),
-        "[USER-MARK] %s NagMode=%s AP=%u Phase=%u 880=%u 921=%u 923=%u 297=%u HO=%u DAS=%s(0x%02X L%u warn=%u) Angle=%.1fdeg Real=%.2fNm MB=%.2fNm E=%u D=%u Last=%s TEC=%u/REC=%u",
+        "[USER-MARK] %s Mode=%s Ready=%s AP=%u Phase=%u HO=%u DAS=%s(0x%02X L%u warn=%u) Angle=%.1fdeg Last=%s TEC=%u/REC=%u",
         detailName,
         nagModeName(nagMode),
+        nagReadinessName((uint8_t)bChannelDiag.nagReadiness),
         (unsigned)(uint8_t)bChannelDiag.dasAutopilotStateRx,
         (unsigned)(uint8_t)bChannelDiag.modeBPhase,
-        (unsigned)bChannelDiag.frames880,
-        (unsigned)bChannelDiag.frames921,
-        (unsigned)bChannelDiag.frames923,
-        (unsigned)bChannelDiag.frames297,
         (unsigned)(uint8_t)bChannelDiag.realHo,
         dasHandsOnStateName((uint8_t)bChannelDiag.dasHandsOnStateRx),
         (unsigned)(uint8_t)bChannelDiag.dasHandsOnStateRx,
         (unsigned)dasHandsOnWarningLevel((uint8_t)bChannelDiag.dasHandsOnStateRx),
         dasHandsOnStateIsWarning((uint8_t)bChannelDiag.dasHandsOnStateRx) ? 1U : 0U,
         (double)(float)bChannelDiag.steeringAngleDeg,
-        (double)(float)bChannelDiag.realTorqueNm,
-        (double)(float)bChannelDiag.modeBLastTorqueNm,
-        (unsigned)bChannelDiag.echoCount,
-        (unsigned)bChannelDiag.echoDroppedLate,
         nagDecisionName((uint8_t)bChannelDiag.nagLastDecision),
         (unsigned)tec,
         (unsigned)rec);
     logRing.push(msg, now);
+    char txMsg[192];
+    snprintf(txMsg, sizeof(txMsg),
+        "[USER-MARK-TX] Try/OK/Ack=%u/%u/%u Lat=%u/%uus TX=%.2fNm/HO%u Real=%.2fNm Drop=%u",
+        (unsigned)bChannelDiag.txAttemptCount,
+        (unsigned)bChannelDiag.txSuccessCount,
+        (unsigned)bChannelDiag.echoConfirmCount,
+        (unsigned)bChannelDiag.txLatencyUs,
+        (unsigned)bChannelDiag.echoLatUs,
+        (double)(float)bChannelDiag.lastTxTorqueNm,
+        (unsigned)(uint8_t)bChannelDiag.lastTxHandsOn,
+        (double)(float)bChannelDiag.realTorqueNm,
+        (unsigned)bChannelDiag.echoDroppedLate);
+    logRing.push(txMsg, now);
+    char rawMsg[192];
+    snprintf(rawMsg, sizeof(rawMsg),
+        "[USER-MARK-RAW] C880/921/923/297=%u/%u/%u/%u DAS_ID=%u 880=[%s] DAS=[%s] 297=[%s]",
+        (unsigned)bChannelDiag.frames880,
+        (unsigned)bChannelDiag.frames921,
+        (unsigned)bChannelDiag.frames923,
+        (unsigned)bChannelDiag.frames297,
+        (unsigned)(uint32_t)bChannelDiag.dasStatusSourceId,
+        raw880, rawDas, raw297);
+    logRing.push(rawMsg, now);
 
     httpd_resp_set_type(req, "application/json");
     char body[192];
@@ -2633,10 +2782,12 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
             (unsigned)aChannelDiag.mcpEflgEventCount);
         httpd_resp_sendstr_chunk(req, line);
     snprintf(line, sizeof(line),
-        "B채널: RX=%u Filt=%u Echo=%u TxFail=%u TEC=%u REC=%u TECpeak=%u 880=%u 921=%u 923=%u 297=%u DAS=%u(%s/L%u/warn=%u)@%u Profile=%s TWAI=%s InitErr=%d/%d\r\n",
+        "B채널: RX=%u Filt=%u Try/OK/Ack=%u/%u/%u TxFail=%u TEC=%u REC=%u TECpeak=%u 880=%u 921=%u 923=%u 297=%u DAS=%u(%s/L%u/warn=%u)@%u Mode=%s Ready=%s(%u/%u) TWAI=%s InitErr=%d/%d\r\n",
         (unsigned)bChannelDiag.framesReceivedTotal,
         (unsigned)bChannelDiag.framesFilteredInTotal,
-        (unsigned)bChannelDiag.echoCount,
+        (unsigned)bChannelDiag.txAttemptCount,
+        (unsigned)bChannelDiag.txSuccessCount,
+        (unsigned)bChannelDiag.echoConfirmCount,
         (unsigned)bChannelDiag.txFail,
         (unsigned)bChannelDiag.twaiTxErrNow,
         (unsigned)bChannelDiag.twaiRxErrNow,
@@ -2651,20 +2802,25 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         dasHandsOnStateIsWarning((uint8_t)bChannelDiag.dasHandsOnStateRx) ? 1U : 0U,
         (unsigned)bChannelDiag.dasStatusSourceId,
         nagModeName((uint8_t)bChannelDiag.nagMode),
+        nagReadinessName((uint8_t)bChannelDiag.nagReadiness),
+        (unsigned)bChannelDiag.nagWarmupFramesSeen,
+        (unsigned)kNagWarmupTargetFrames,
         twS,
         gWebDriverB ? gWebDriverB->getLastInstallErr() : -1,
         gWebDriverB ? gWebDriverB->getLastStartErr() : -1);
     httpd_resp_sendstr_chunk(req, line);
     // B채널 심층 진단: TWAI 누적 카운터 + 에코 품질 + 스킵 사유
     snprintf(line, sizeof(line),
-        "B심층: ArbLost=%u BusErr=%u TxFailed=%u RxMissed=%u | EchoLat=%uus EchoDrop=%u | Skip RT=%u/AP=%u/HO=%u/DAS=%u\r\n",
+        "B심층: ArbLost=%u BusErr=%u TxFailed=%u RxMissed=%u | TxLat/EchoLat=%u/%uus EchoDrop=%u | Skip RT/WARM/AP/HO/DAS=%u/%u/%u/%u/%u\r\n",
         (unsigned)bChannelDiag.bArbLost,
         (unsigned)bChannelDiag.bBusError,
         (unsigned)bChannelDiag.bTxFailed,
         (unsigned)bChannelDiag.bRxMissed,
+        (unsigned)bChannelDiag.txLatencyUs,
         (unsigned)bChannelDiag.echoLatUs,
         (unsigned)bChannelDiag.echoDroppedLate,
         (unsigned)bChannelDiag.skipRuntimeOrInactive,
+        (unsigned)bChannelDiag.skipWarmup,
         (unsigned)bChannelDiag.skipApState,
         (unsigned)bChannelDiag.skipHandsOn,
         (unsigned)bChannelDiag.skipDasState);
@@ -2677,13 +2833,14 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         uint32_t age297 = (uint32_t)bChannelDiag.last297RxMs ? (now - (uint32_t)bChannelDiag.last297RxMs) : 0;
         uint32_t ageEcho = (uint32_t)bChannelDiag.lastEchoTxMs ? (now - (uint32_t)bChannelDiag.lastEchoTxMs) : 0;
         snprintf(line, sizeof(line),
-            "B나그판정: 880=%u(age=%ums) 921=%u(age=%ums) 923=%u(age=%ums) 297=%u(age=%ums) Echo=%u(age=%ums) | NagMode=%s AP=%u Phase=%u HO=%u Torque=%.2fNm DAS=%s(0x%02X/L%u/warn=%u)@%u Last=%s\r\n",
+            "B나그판정: 880=%u(age=%ums) 921=%u(age=%ums) 923=%u(age=%ums) 297=%u(age=%ums) Echo=%u(age=%ums) | Mode=%s Ready=%s AP=%u Phase=%u HO=%u Torque=%.2fNm DAS=%s(0x%02X/L%u/warn=%u)@%u Last=%s\r\n",
             (unsigned)bChannelDiag.frames880, (unsigned)age880,
             (unsigned)bChannelDiag.frames921, (unsigned)age921,
             (unsigned)bChannelDiag.frames923, (unsigned)age923,
             (unsigned)bChannelDiag.frames297, (unsigned)age297,
             (unsigned)bChannelDiag.echoCount, (unsigned)ageEcho,
             nagModeName((uint8_t)bChannelDiag.nagMode),
+            nagReadinessName((uint8_t)bChannelDiag.nagReadiness),
             (unsigned)(uint8_t)bChannelDiag.dasAutopilotStateRx,
             (unsigned)(uint8_t)bChannelDiag.modeBPhase,
             (unsigned)(uint8_t)bChannelDiag.realHo,
@@ -2696,8 +2853,9 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
             nagDecisionName((uint8_t)bChannelDiag.nagLastDecision));
         httpd_resp_sendstr_chunk(req, line);
         snprintf(line, sizeof(line),
-            "B차단사유: OFF=%u AP_BLOCK=%u HandsOn=%u DAS_IDLE=%u LateDrop=%u NoDAS_Echo=%u\r\n",
+            "B차단사유: OFF=%u WARMUP=%u AP_BLOCK=%u HandsOn=%u DAS_IDLE=%u LateDrop=%u NoDAS_Echo=%u\r\n",
             (unsigned)bChannelDiag.skipRuntimeOrInactive,
+            (unsigned)bChannelDiag.skipWarmup,
             (unsigned)bChannelDiag.skipApState,
             (unsigned)bChannelDiag.skipHandsOn,
             (unsigned)bChannelDiag.skipDasState,
@@ -2728,6 +2886,39 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
             (unsigned)(uint32_t)userMarkerLastDetail,
             userMarkerDetailName((uint32_t)userMarkerLastDetail));
         httpd_resp_sendstr_chunk(req, line);
+    }
+    {
+        NagMarkerSnapshot snapshots[kNagMarkerSnapshotCapacity] = {};
+        uint32_t markerHead = 0;
+        portENTER_CRITICAL(&gNagMarkerSnapshotMux);
+        markerHead = gNagMarkerSnapshotHead;
+        const uint32_t markerStored = std::min<uint32_t>(
+            markerHead, static_cast<uint32_t>(kNagMarkerSnapshotCapacity));
+        const uint32_t markerStart = markerHead > kNagMarkerSnapshotCapacity
+            ? markerHead - kNagMarkerSnapshotCapacity : 0;
+        for (uint32_t i = 0; i < markerStored; ++i)
+            snapshots[i] = gNagMarkerSnapshots[(markerStart + i) %
+                                               kNagMarkerSnapshotCapacity];
+        portEXIT_CRITICAL(&gNagMarkerSnapshotMux);
+        httpd_resp_sendstr_chunk(req,
+            "사용자마커원문: wall_time,timestamp_ms,marker,mode,ready,decision,ap,phase,ho,das,das_source,steer_deg,real_nm,tx_nm,tx_ho,tx_try,tx_ok,echo_confirm,tx_lat_us,echo_lat_us,drop,raw880,raw_das,raw297\r\n");
+        for (uint32_t i = 0; i < markerStored; ++i) {
+            const NagMarkerSnapshot &s = snapshots[i];
+            formatLogTimestamp(s.tMs, tsBuf, sizeof(tsBuf));
+            snprintf(line, sizeof(line),
+                "사용자마커원문: %s,%u,%s,%s,%s,%s,%u,%u,%u,%u,%u,%.1f,%.2f,%.2f,%u,%u,%u,%u,%u,%u,%u,%s,%s,%s\r\n",
+                tsBuf, (unsigned)s.tMs, userMarkerDetailName(s.detail),
+                nagModeName(s.mode), nagReadinessName(s.readiness),
+                nagDecisionName(s.decision), (unsigned)s.apState,
+                (unsigned)s.phase, (unsigned)s.realHo, (unsigned)s.dasState,
+                (unsigned)s.dasSourceId, (double)s.steerDeg,
+                (double)s.realTorqueNm, (double)s.txTorqueNm,
+                (unsigned)s.txHo, (unsigned)s.txAttempts,
+                (unsigned)s.txSuccess, (unsigned)s.echoConfirmed,
+                (unsigned)s.txLatencyUs, (unsigned)s.echoLatencyUs,
+                (unsigned)s.echoDrop, s.raw880, s.rawDas, s.raw297);
+            httpd_resp_sendstr_chunk(req, line);
+        }
     }
     {
         uint32_t now = millis();
