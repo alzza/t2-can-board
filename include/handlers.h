@@ -126,8 +126,16 @@ struct HW3Handler : public CarManagerBase
                 aChannelDiag.tsllcModifiedCount++;
                 framesSent++;
                 // sendCheck: ERROR_OK=true → aTxOk++, ALLTXBUSY/FAILTX=false → aTxFail++
-                if (driver.sendCheck(frame)) { aChannelDiag.aTxOk++; aChannelDiag.lastTxMs = millis(); }
-                else                           aChannelDiag.aTxFail++;
+                if (driver.sendCheck(frame)) {
+                    const uint32_t sentAtMs = millis();
+                    aChannelDiag.aTxOk++;
+                    aChannelDiag.tsllcTxOk++;
+                    aChannelDiag.lastTxMs = sentAtMs;
+                    aChannelDiag.lastTsllcTxMs = sentAtMs;
+                } else {
+                    aChannelDiag.aTxFail++;
+                    aChannelDiag.tsllcTxFail++;
+                }
                 canTxPermitEnd();
 
                 static unsigned long lastTsllcAction = 0;
@@ -147,6 +155,7 @@ struct HW3Handler : public CarManagerBase
 
             if (summonEnabled && !gateOpen) {
                 summonGateDiag.blocked = (uint32_t)summonGateDiag.blocked + 1;
+                summonGateDiag.lastBlockedMs = nowMs;
             }
 
             if (summonInject) {
@@ -167,6 +176,7 @@ struct HW3Handler : public CarManagerBase
                     aChannelDiag.aTxOk++;
                     aChannelDiag.lastTxMs = sentAtMs;
                     summonGateDiag.txOk = (uint32_t)summonGateDiag.txOk + 1;
+                    summonGateDiag.lastTxMs = sentAtMs;
                     if ((bool)aChannelDiag.wakeAwaitingSummonTx) {
                         const uint32_t wakeMs = (uint32_t)aChannelDiag.lastWakeRxMs;
                         const uint32_t wakeDelayMs = wakeMs > 0 ? sentAtMs - wakeMs : 0;
@@ -289,13 +299,32 @@ struct NagHandler : public CarManagerBase
             return;
         }
 
-        bool handsOnEligible = handsOn == 0 ||
-                               (selectedMode == kNagMode3 && handsOn == 1);
-        if (!handsOnEligible)
+        // 실제 운전자가 핸들을 잡은 상태에서는 모든 모드가 감시만 한다.
+        // Mode 3에서 handsOn=1을 허용하던 예외도 제거한다.
+        if (handsOn != 0)
         {
             bChannelDiag.skipHandsOn++;
             bChannelDiag.nagLastDecision = kNagDecisionHandsOn;
             return;
+        }
+
+        // Mode 1/2는 원본 선제 주입 또는 AP 전용을 사용자가 선택한다.
+        // AP 전용에서는 오래된 상태를 허용하지 않아 일반 주행 중 주입하지 않는다.
+        if ((selectedMode == kNagMode1 || selectedMode == kNagMode2) &&
+            (bool)nagApOnlyRuntime)
+        {
+            if (!dasStateSeen_ || now - lastDasStateMs_ > kContextFreshMs)
+            {
+                bChannelDiag.skipApState++;
+                bChannelDiag.nagLastDecision = kNagDecisionNo921;
+                return;
+            }
+            if (!nagApStateAllowsInjection(apState_))
+            {
+                bChannelDiag.skipApState++;
+                bChannelDiag.nagLastDecision = kNagDecisionApBlocked;
+                return;
+            }
         }
 
         uint16_t torque = kNagTorqueRawMax;
@@ -565,6 +594,8 @@ private:
             return true;
         }
 
+        // Mode 3만 DAS/AP/조향각 상태를 이용하는 조건부 경고 대응 모드다.
+        // Mode 1/2는 검증 원본처럼 선제 주입 패턴을 유지한다.
         if (!dasStateSeen_ || !handsOnStateSeen_ ||
             now - lastDasStateMs_ > kContextFreshMs)
         {
@@ -592,7 +623,6 @@ private:
             bChannelDiag.nagLastDecision = kNagDecisionApBlocked;
             return false;
         }
-
         float torqueNm = 0.0f;
         if (handsOnState_ == 2)
         {

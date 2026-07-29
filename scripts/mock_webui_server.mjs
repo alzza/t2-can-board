@@ -11,7 +11,7 @@ const webUiPath = path.join(repoRoot, 'web', 'web_ui.html');
 const nagModes = {
   1: { mode: 1, modeStr: 'MODE 1', modeSummary: '고정 +1.80Nm 에코. DAS/조향각 조건 없음.', requiresContext: false },
   2: { mode: 2, modeStr: 'MODE 2', modeSummary: '4개 토크를 200ms 간격으로 1초 순환하고 1.5초 휴지.', requiresContext: false },
-  3: { mode: 3, modeStr: 'MODE 3', modeSummary: 'AP·DAS·조향각 최근 수신 상태를 확인하는 조건부 상태기계(기본).', requiresContext: true },
+  3: { mode: 3, modeStr: 'MODE 3', modeSummary: '최신 원본에서 제거된 레거시 조건부 상태기계.', requiresContext: true },
 };
 
 const scenarios = new Set(['normal', 'a_warn', 'ap_block', 'bus_off', 'bus_err', 'no_frames']);
@@ -27,6 +27,7 @@ function defaultToggles() {
     summon_unlock_enabled: true,
     tsllc_enabled: true,
     nag_killer: true,
+    nag_ap_only: true,
     a_spi_8mhz: false,
     a_mcp_oneshot: false,
     a_tx_guard: false,
@@ -37,7 +38,7 @@ const state = {
   bootMs: Date.now(),
   scenario: scenarios.has(cli.scenario) ? cli.scenario : 'normal',
   theme: 'dark',
-  nagMode: 3,
+  nagMode: 2,
   logHead: 0,
   logs: [],
   rec: false,
@@ -58,7 +59,7 @@ const state = {
 
 function resetMockNvsState() {
   state.theme = 'dark';
-  state.nagMode = 3;
+  state.nagMode = 2;
   state.rec = false;
   state.recStartMs = 0;
   state.samples = 24;
@@ -111,7 +112,7 @@ function elapsedSeconds() {
 }
 
 function nagModeInfo() {
-  return nagModes[state.nagMode] || nagModes[3];
+  return nagModes[state.nagMode] || nagModes[2];
 }
 
 function pushLog(msg) {
@@ -122,7 +123,7 @@ function pushLog(msg) {
 
 function clampNagMode(value) {
   const mode = Number(value);
-  return mode >= 1 && mode <= 3 ? mode : 3;
+  return mode >= 1 && mode <= 3 ? mode : 2;
 }
 
 function send(res, status, contentType, body) {
@@ -313,7 +314,8 @@ function statusJson(url) {
     summon_unlock_enabled: state.toggles.summon_unlock_enabled,
     nag_killer: state.toggles.nag_killer,
     a_channel_tx: state.toggles.a_channel_tx,
-    tsllc_enabled: state.toggles.a_channel_tx && state.toggles.tsllc_enabled,
+    tsllc_enabled: state.toggles.tsllc_enabled,
+    nag_ap_only: state.toggles.nag_ap_only,
     theme: state.theme,
     uptime_ms: uptimeMs,
     uptime_s: Math.floor(uptimeMs / 1000),
@@ -365,6 +367,15 @@ function statusJson(url) {
       hardware: 'HW3',
       enable_bit: 46,
     },
+    tsllc: {
+      enabled: state.toggles.tsllc_enabled,
+      tx_master: state.toggles.a_channel_tx,
+      guard: false,
+      inject_ready: state.toggles.tsllc_enabled && state.toggles.a_channel_tx,
+      txOk: c.noFrames ? 0 : Math.floor(c.aFrames / 6),
+      txFail: 0,
+      last_tx_age_ms: c.noFrames ? 0 : 24,
+    },
     log_head: state.logHead,
     logs,
     web_health: {
@@ -403,6 +414,7 @@ function statusJson(url) {
       emergency_vehicle_detection: feature(false, false, false),
       summon_unlock: feature(state.toggles.summon_unlock_enabled),
       nag_killer: feature(state.toggles.nag_killer),
+      nag_ap_only: feature(state.toggles.nag_ap_only),
       a_channel_tx: feature(state.toggles.a_channel_tx),
       tsllc_enabled: feature(state.toggles.tsllc_enabled),
       a_spi_8mhz: feature(state.toggles.a_spi_8mhz),
@@ -422,6 +434,12 @@ function statusJson(url) {
         frames_390: c.noFrames ? 0 : Math.floor(c.aFrames / 7),
         frames_921: c.noFrames ? 0 : Math.floor(c.aFrames / 6),
         summon_unlock_modified: c.noFrames ? 0 : Math.floor(c.aFrames / 3),
+        summon_tx_ok: c.noFrames || state.scenario === 'ap_block' ? 0 : Math.floor(c.aFrames / 3),
+        summon_tx_fail: 0,
+        summon_blocked: state.scenario === 'ap_block' ? Math.floor(c.aFrames / 3) : 0,
+        tsllc_modified: c.noFrames ? 0 : Math.floor(c.aFrames / 6),
+        tsllc_tx_ok: c.noFrames ? 0 : Math.floor(c.aFrames / 6),
+        tsllc_tx_fail: 0,
         last_frame_id: c.noFrames ? 0 : 1021,
         last_loop_ms: uptimeMs,
         core_id: 0,
@@ -441,6 +459,9 @@ function statusJson(url) {
         mcp_last_recovery_ms: 0,
         tx_ok: c.noFrames ? 0 : Math.floor(c.aFrames / 2),
         tx_fail: c.noFrames ? 0 : 1,
+        tx_fail_window: 0,
+        tx_fail_window_peak: c.noFrames ? 0 : 1,
+        tx_fail_guard_threshold: 2,
         tec: 0,
         rec: 0,
         tec_peak: 0,
@@ -498,6 +519,8 @@ function statusJson(url) {
         last_das_status_rx_ms: uptimeMs,
         nag_mode: state.nagMode,
         nag_mode_name: nagModeInfo().modeStr,
+        nag_ap_only: state.toggles.nag_ap_only,
+        nag_ap_active: state.scenario !== 'ap_block',
         echo_count: c.echo,
         echo_drop_late: 0,
         skip_runtime_or_inactive: 0,
@@ -562,7 +585,8 @@ function statusJson(url) {
 function nagConfigJson() {
   return {
     ...nagModeInfo(),
-    defaultMode: state.nagMode === 3,
+    apOnly: state.toggles.nag_ap_only,
+    defaultMode: state.nagMode === 2,
     targetId: 880,
     torqueMinNm: -1.8,
     torqueMaxNm: 1.8,
@@ -595,6 +619,8 @@ function nagStatsJson() {
     canState,
     uptimeS: elapsedSeconds(),
     ...nagModeInfo(),
+    apOnly: state.toggles.nag_ap_only,
+    apActive: !apBlocked,
     targetId: 880,
     dasApState: apBlocked ? 1 : 3,
     steerAngleDeg: apBlocked ? -0.6 : 1.4,
@@ -698,6 +724,7 @@ async function handlePost(req, res, url) {
     ['/api/summon-unlock', 'summon_unlock_enabled'],
     ['/api/tsllc', 'tsllc_enabled'],
     ['/api/nag-killer', 'nag_killer'],
+    ['/api/nag-ap-only', 'nag_ap_only'],
     ['/api/a-spi-8mhz', 'a_spi_8mhz'],
     ['/api/a-oneshot', 'a_mcp_oneshot'],
     ['/api/a-tx-guard', 'a_tx_guard'],
@@ -802,10 +829,6 @@ async function handlePost(req, res, url) {
     state.samples = 0;
     state.recStartMs = 0;
     state.rec = false;
-    state.userMarkerActive = false;
-    state.userMarkerCount = 0;
-    state.userMarkerLastMs = 0;
-    state.userMarkerLastDetail = 0;
     sendJson(res, { ok: true });
     return;
   }
@@ -813,22 +836,16 @@ async function handlePost(req, res, url) {
   if (url.pathname === '/api/timeseries/rec') {
     state.rec = !!body.start;
     state.recStartMs = state.rec ? nowMs() : state.recStartMs;
-    if (state.rec) {
-      state.userMarkerActive = false;
-      state.userMarkerCount = 0;
-      state.userMarkerLastMs = 0;
-      state.userMarkerLastDetail = 0;
-    }
     sendJson(res, { ok: true, ...timeseriesStatusJson() });
     return;
   }
 
   if (url.pathname === '/api/user-marker') {
-    const requestedType = url.searchParams.get('type') || 'ap_warning';
+    const requestedType = url.searchParams.get('type') || 'toggle';
     const activeBefore = state.userMarkerActive;
     let detail = state.userMarkerActive ? 2 : 1;
-    if (requestedType === 'ap_warning_start' || requestedType === 'start') detail = 1;
-    else if (requestedType === 'ap_warning_end' || requestedType === 'end') detail = 2;
+    if (requestedType === 'start') detail = 1;
+    else if (requestedType === 'end') detail = 2;
     state.userMarkerActive = detail === 1;
     if (detail === 2 && activeBefore) state.userMarkerCount += 1;
     state.userMarkerLastMs = nowMs();
@@ -955,8 +972,8 @@ function start(port) {
 }
 
 function userMarkerDetailName(detail) {
-  if (detail === 1) return 'AP_WARNING_START';
-  if (detail === 2) return 'AP_WARNING_END';
+  if (detail === 1) return 'USER_MARK_START';
+  if (detail === 2) return 'USER_MARK_END';
   return 'NONE';
 }
 

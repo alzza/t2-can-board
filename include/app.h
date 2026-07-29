@@ -268,17 +268,26 @@ static void appLoop()
                 logRing.push(buf, _nowMs);
             }
 
+            const uint32_t currentATxFail = (uint32_t)aChannelDiag.aTxFail;
+            const uint32_t rawATxFailDelta = currentATxFail - _prevATxFail;
+            const uint8_t aTxFailDelta =
+                (uint8_t)(rawATxFailDelta > 255U ? 255U : rawATxFailDelta);
+            aChannelDiag.aTxFailWindowDelta = aTxFailDelta;
+            if (aTxFailDelta > (uint8_t)aChannelDiag.aTxFailWindowPeak) {
+                aChannelDiag.aTxFailWindowPeak = aTxFailDelta;
+            }
+
             uint8_t guardReason = kATxGuardReasonNone;
             if ((bool)aTxGuardRuntime) {
                 if (eflg & ((1 << 5) | (1 << 4) | (1 << 2))) {
                     guardReason = kATxGuardReasonEflg;
                 } else if (tec >= kATxGuardTecThreshold) {
                     guardReason = kATxGuardReasonTec;
-                } else if ((uint32_t)aChannelDiag.aTxFail != _prevATxFail) {
+                } else if (aTxFailDelta >= kATxGuardTxFailBurstThreshold) {
                     guardReason = kATxGuardReasonTxFail;
                 }
             }
-            _prevATxFail = (uint32_t)aChannelDiag.aTxFail;
+            _prevATxFail = currentATxFail;
 
             if (guardReason != kATxGuardReasonNone) {
                 bool wasGuardActive = aTxGuardActive(_nowMs);
@@ -287,13 +296,14 @@ static void appLoop()
                 if (!wasGuardActive) {
                     aChannelDiag.aTxGuardCount = (uint32_t)aChannelDiag.aTxGuardCount + 1;
                     eventLogPush(EV_A_TX_GUARD_SET, tec, rec, guardReason);
-                    char buf[96];
-                    snprintf(buf, sizeof(buf), "🛡️ [A-CH] TX guard %ums 시작: %s TEC=%u EFLG=0x%02X Fail=%u",
+                    char buf[120];
+                    snprintf(buf, sizeof(buf), "🛡️ [A-CH] TX guard %ums 시작: %s TEC=%u EFLG=0x%02X Fail=%u Fail1s=%u",
                              (unsigned)kATxGuardDurationMs,
                              aTxGuardReasonName(guardReason),
                              tec,
                              eflg,
-                             (unsigned)(uint32_t)aChannelDiag.aTxFail);
+                             (unsigned)currentATxFail,
+                             (unsigned)aTxFailDelta);
                     logRing.push(buf, _nowMs);
                 }
             }

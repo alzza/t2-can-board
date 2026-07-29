@@ -78,12 +78,15 @@ inline constexpr bool kDebugNagKillerEnabled = false;
 inline constexpr uint32_t kAMcpDefaultSpiFreqHz = T2CAN_SPI_FREQ_HZ;
 inline constexpr bool kAMcpOneShotDefaultEnabled = (T2CAN_MCP2515_ONE_SHOT_DEFAULT != 0);
 inline constexpr bool kATxGuardDefaultEnabled = (T2CAN_A_TX_GUARD_DEFAULT != 0);
+// Mode 1/2의 선제 주입 범위. true면 AP 상태 3~6에서만 주입한다.
+inline constexpr bool kNagApOnlyDefaultEnabled = true;
 
 inline Shared<bool> bypassTlsscRequirementRuntime{kBypassTlsscRequirementDefaultEnabled};
 inline Shared<bool> isaSpeedChimeSuppressRuntime{kIsaSpeedChimeSuppressDefaultEnabled};
 inline Shared<bool> emergencyVehicleDetectionRuntime{kEmergencyVehicleDetectionDefaultEnabled};
 inline Shared<bool> summonUnlockRuntime{kSummonUnlockDefaultEnabled};
 inline Shared<bool> nagKillerRuntime{kNagKillerDefaultEnabled};
+inline Shared<bool> nagApOnlyRuntime{kNagApOnlyDefaultEnabled};
 inline Shared<bool> tsllcRuntime{kTsllcDefaultEnabled};         // TSLLC 런타임 토글 (스톱사인/초록불 제어)
 inline Shared<bool> aChannelTxRuntime{true};     // A채널 1021 수정 송신 마스터 토글
 inline Shared<uint32_t> aMcpSpiFreqHz{kAMcpDefaultSpiFreqHz};
@@ -161,6 +164,8 @@ struct SummonGateDiagnostics {
     Shared<uint32_t> txOk{0};
     Shared<uint32_t> txFail{0};
     Shared<uint32_t> blocked{0};
+    Shared<uint32_t> lastTxMs{0};
+    Shared<uint32_t> lastBlockedMs{0};
 };
 
 inline SummonGateDiagnostics summonGateDiag;
@@ -547,16 +552,18 @@ inline constexpr uint8_t kATxGuardReasonEflg = 2;
 inline constexpr uint8_t kATxGuardReasonTxFail = 3;
 inline constexpr uint32_t kATxGuardDurationMs = 15000;
 inline constexpr uint8_t kATxGuardTecThreshold = 24;
+// One-shot 모드의 단발성 중재 손실은 TEC/MERRF 없이 TX Fail로 끝날 수 있다.
+// 1초 내 2회 이상 연속될 때만 TX_FAIL 보호모드를 시작하고, EFLG/TEC는 즉시 보호한다.
+inline constexpr uint8_t kATxGuardTxFailBurstThreshold = 2;
 inline constexpr uint32_t kAChannelWakeGapMs = 2000;
 inline constexpr uint32_t kAMcpBusOffRecoverIntervalMs = 1000;
 inline constexpr uint32_t kAMcpBusOffRestartFallbackMs = 10000;
 
 
-// 사용자가 차량 화면의 AP/Nag 경고를 직접 본 순간을 찍는 수동 마커.
-// eventLog에는 ms 단위 이벤트로, timeseries에는 5초 구간 델타로 함께 남긴다.
-inline constexpr uint32_t kUserMarkerApWarningStart = 1;
-inline constexpr uint32_t kUserMarkerApWarningEnd = 2;
-inline constexpr uint32_t kUserMarkerApWarning = kUserMarkerApWarningStart;
+// 로그 분석에서 임의 이벤트 구간을 표시하는 일반 수동 마커.
+// START와 END 한 쌍이 끝날 때 완료 카운트가 1 증가한다.
+inline constexpr uint32_t kUserMarkerStart = 1;
+inline constexpr uint32_t kUserMarkerEnd = 2;
 inline Shared<uint32_t> userMarkerCount{0};
 inline Shared<uint32_t> userMarkerLastMs{0};
 inline Shared<uint32_t> userMarkerLastDetail{0};
@@ -564,8 +571,8 @@ inline Shared<bool> userMarkerActive{false};
 
 inline const char* userMarkerDetailName(uint32_t detail) {
     switch (detail) {
-    case kUserMarkerApWarningStart: return "AP_WARNING_START";
-    case kUserMarkerApWarningEnd: return "AP_WARNING_END";
+    case kUserMarkerStart: return "USER_MARK_START";
+    case kUserMarkerEnd: return "USER_MARK_END";
     default: return "UNKNOWN";
     }
 }
@@ -688,6 +695,10 @@ inline bool dasHandsOnStateIsWarning(uint8_t state) {
     return dasHandsOnWarningLevel(state) >= 2;
 }
 
+inline bool nagApStateAllowsInjection(uint8_t apState) {
+    return apState >= 3 && apState <= 6;
+}
+
 // 5초 시계열/상태 로그용 구간 판정.
 // nagLastDecision은 마지막 880 프레임의 실제 분기이고, 이 함수는 "이번 5초"의 요약 verdict다.
 inline uint8_t nagIntervalDecision(uint32_t d880, uint32_t dDasStatus, uint32_t dEcho,
@@ -789,7 +800,7 @@ struct BChannelDiagnostics {
     Shared<uint32_t> nagFiredNoDas{0};           // DAS_status 미수신 상태에서 에코 발사 누적
     Shared<uint32_t> echoDroppedLate{0};         // 수신→에코 6ms 초과로 드롭된 에코 수 (ECU TX 충돌 방지)
     // ── Mode B (스마트 상태머신) 진단 필드 ──────────────────────────────────
-    Shared<uint8_t>  nagMode{3};                     // 1=고정, 2=순환, 3=조건부 상태기계(기본)
+    Shared<uint8_t>  nagMode{2};                     // 1=고정, 2=순환(기본), 3=레거시 조건부
     Shared<uint8_t>  dasAutopilotStateRx{0};         // DAS_status DAS_autopilotState (0|4@1+)
     Shared<float>    steeringAngleDeg{0.0f};         // ID 297 SCCM_steeringAngle (deg)
     Shared<bool>     steeringAngleValid{false};      // ID 297 validity == 1
@@ -826,6 +837,9 @@ struct AChannelDiagnostics {
     Shared<uint32_t> frames1021{0};              // UI_autopilotControl 프레임 수
     Shared<uint32_t> summonUnlockModifiedCount{0}; // 조건부 Summon Unlock 적용 횟수
     Shared<uint32_t> tsllcModifiedCount{0};       // TSLLC 주입 횟수 (스톱/초록불 비트 세팅)
+    Shared<uint32_t> tsllcTxOk{0};                // TSLLC 전용 송신 성공
+    Shared<uint32_t> tsllcTxFail{0};              // TSLLC 전용 송신 실패
+    Shared<uint32_t> lastTsllcTxMs{0};            // 최근 TSLLC 송신 성공 시각
     Shared<uint32_t> lastFrameIdReceived{0};     // 마지막 수신 프레임 ID
     Shared<uint32_t> lastLoopMs{0};              // 마지막 A루프 실행 시각
     Shared<int32_t> loopCoreId{-1};              // A채널 루프가 실행 중인 코어 ID
@@ -843,6 +857,8 @@ struct AChannelDiagnostics {
     //  · aRxOvrCount   : RX 버퍼 오버런 발생 횟수 (clear 후 재발 = 폴링 부족)
     Shared<uint32_t> aTxOk{0};
     Shared<uint32_t> aTxFail{0};
+    Shared<uint8_t>  aTxFailWindowDelta{0};     // 최근 1초 TX Fail 증가량
+    Shared<uint8_t>  aTxFailWindowPeak{0};      // 세션 내 1초 TX Fail 증가량 최대값
     Shared<uint8_t>  aTec{0};
     Shared<uint8_t>  aRec{0};
     Shared<uint8_t>  aTecPeak{0};
@@ -1026,7 +1042,9 @@ inline constexpr uint16_t kNagTorqueRawMin = 0x74E;
 inline constexpr uint8_t kNagMode1 = 1;
 inline constexpr uint8_t kNagMode2 = 2;
 inline constexpr uint8_t kNagMode3 = 3;
-inline constexpr uint8_t kNagModeDefault = kNagMode3;
+// 최신 검증 원본은 이전 Mode C를 제거했다. 실차에서 확인된 Mode 2를
+// 기본으로 사용하고, AP 전용 범위는 별도 안전 기본값으로 적용한다.
+inline constexpr uint8_t kNagModeDefault = kNagMode2;
 
 inline uint8_t nagModeClamp(uint8_t mode) {
     return (mode >= kNagMode1 && mode <= kNagMode3) ? mode : kNagModeDefault;
@@ -1042,9 +1060,9 @@ inline const char *nagModeName(uint8_t mode) {
 
 inline const char *nagModeSummary(uint8_t mode) {
     switch (nagModeClamp(mode)) {
-    case kNagMode1: return "고정 +1.80Nm 에코. DAS/조향각 조건 없음.";
-    case kNagMode2: return "4개 토크를 200ms 간격으로 1초 순환하고 1.5초 휴지.";
-    default: return "AP·DAS·조향각 최근 수신 상태를 확인하는 조건부 상태기계(기본).";
+    case kNagMode1: return "선제 고정 +1.80Nm 에코. 운전자 손 감지 시 중단.";
+    case kNagMode2: return "선제 1초 순환·1.5초 휴지. 운전자 손 감지 시 중단.";
+    default: return "최신 원본에서 제거된 레거시 조건부 상태기계.";
     }
 }
 

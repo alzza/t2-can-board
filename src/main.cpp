@@ -372,7 +372,7 @@ void nagKillerTask(void* pvParameters) {
             //  · TxFail↑           → 송신 큐 포화/하드 실패(H3)
             //  · RX-OVR↑ 누적     → A루프 폴링 부족
             snprintf(aBuf, sizeof(aBuf),
-                "🟢 [A-CH] RX:%u | 280:%u 390:%u 921:%u 1016:%u 1021:%u | Summon:%u Blocked:%u | TX:OK=%u/Fail=%u | TEC=%u/peak=%u | REC=%u | MERRF=%u | RX-OVR=%u | EFLG=0x%02X",
+                "🟢 [A-CH] RX:%u | 280:%u 390:%u 921:%u 1016:%u 1021:%u | Summon:%u Blocked:%u | TX:OK=%u/Fail=%u(1s:%u/peak:%u) | TEC=%u/peak=%u | REC=%u | MERRF=%u | RX-OVR=%u | EFLG=0x%02X",
                 (unsigned)aChannelDiag.framesReceivedTotal,
                 (unsigned)aChannelDiag.frames280,
                 (unsigned)aChannelDiag.frames390,
@@ -383,6 +383,8 @@ void nagKillerTask(void* pvParameters) {
                 (unsigned)summonGateDiag.blocked,
                 (unsigned)aChannelDiag.aTxOk,
                 (unsigned)aChannelDiag.aTxFail,
+                (unsigned)(uint8_t)aChannelDiag.aTxFailWindowDelta,
+                (unsigned)(uint8_t)aChannelDiag.aTxFailWindowPeak,
                 (unsigned)(uint8_t)aChannelDiag.aTec,
                 (unsigned)(uint8_t)aChannelDiag.aTecPeak,
                 (unsigned)(uint8_t)aChannelDiag.aRec,

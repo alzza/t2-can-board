@@ -126,12 +126,24 @@ void test_main_ui_uses_verified_nag_modes_and_removes_smart_profiles()
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "MODE 1"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "MODE 2"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "MODE 3"));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "MODE 3 · 기본"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "MODE 2 · AP 전용 · 권장"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "레거시 · 비권장"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"tNagApOnly\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "/api/nag-ap-only"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "/api/nag-mode?m="));
     TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "/api/nag-profile"));
     TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "name=\"nagProfile\""));
     TEST_ASSERT_FALSE(contains(WEB_UI_HTML, ">A안<"));
     TEST_ASSERT_FALSE(contains(WEB_UI_HTML, ">D안<"));
+}
+
+void test_main_ui_has_compact_primary_feature_switches()
+{
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"mSummon\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"mTsllc\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"mNag\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "EU Unlock / Summon"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "TSLLC / EAP"));
 }
 
 void test_main_ui_exposes_authoritative_channel_health_and_csv_diagnostics()
@@ -162,6 +174,21 @@ void test_main_ui_defaults_to_summary_and_important_live_logs()
     TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "enable_print"));
 }
 
+void test_main_ui_uses_generic_paired_user_marker()
+{
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "onclick=\"toggleUserMarker()\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "async function toggleUserMarker(){"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "fetch('/api/user-marker',{method:'POST'})"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "btn.textContent='USER_MARK';"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "USER_MARK_START"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "USER_MARK_END"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "d.user_marker_count!==undefined"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "AP_WARNING"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "markApWarning"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML,
+                               "updateUserMarkerUi({active:false,log_count:0,count:0})"));
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -175,8 +202,10 @@ int main()
     RUN_TEST(test_main_ui_uses_ino_summon_control_and_monitoring_fields);
     RUN_TEST(test_main_ui_removes_retired_can_injection_experiments);
     RUN_TEST(test_main_ui_uses_verified_nag_modes_and_removes_smart_profiles);
+    RUN_TEST(test_main_ui_has_compact_primary_feature_switches);
     RUN_TEST(test_main_ui_exposes_authoritative_channel_health_and_csv_diagnostics);
     RUN_TEST(test_main_ui_defaults_to_summary_and_important_live_logs);
+    RUN_TEST(test_main_ui_uses_generic_paired_user_marker);
 
     return UNITY_END();
 }

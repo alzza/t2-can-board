@@ -181,7 +181,9 @@ static constexpr char kNvsKeyAOneShot[]     = "a_oneshot";    // A MCP2515 one-s
 static constexpr char kNvsKeyATxGuard[]     = "a_tx_guard";   // A TX guard enable
 // NagConfig NVS 키 (15자 이하)
 static constexpr char kNvsKeyNagMode[]      = "nag_mode";
+static constexpr char kNvsKeyNagApOnly[]    = "nag_ap_only";
 static_assert(sizeof(kNvsKeyNagMode) - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeyNagApOnly) - 1 <= 15, "NVS key too long");
 static constexpr char kNvsKeyTheme[] = "theme";
 static_assert(sizeof(kNvsKeyTsllc) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyAChTx) - 1 <= 15, "NVS key too long");
@@ -550,6 +552,7 @@ static void applyOtaSafeFeatureRuntimeDefaults()
     emergencyVehicleDetectionRuntime = false;
     summonUnlockRuntime = false;
     nagKillerRuntime = false;
+    nagApOnlyRuntime = kNagApOnlyDefaultEnabled;
     tsllcRuntime = false;
     aChannelTxRuntime = false;
     uint8_t defaultMhz = (kAMcpDefaultSpiFreqHz >= 10000000UL) ? 10 : 8;
@@ -585,6 +588,7 @@ static esp_err_t writeOtaSafeFeatureSettings(nvs_handle_t handle)
     if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyAOneShot, kAMcpOneShotDefaultEnabled ? 1 : 0);
     if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyATxGuard, kATxGuardDefaultEnabled ? 1 : 0);
     if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyNagMode, kNagModeDefault);
+    if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyNagApOnly, kNagApOnlyDefaultEnabled ? 1 : 0);
     return err;
 }
 
@@ -688,6 +692,7 @@ static esp_err_t loadVehicleRuntimeSettingsBeforeCan()
     uint8_t oneShot = kAMcpOneShotDefaultEnabled ? 1 : 0;
     uint8_t txGuard = kATxGuardDefaultEnabled ? 1 : 0;
     uint8_t nagMode = kNagModeDefault;
+    uint8_t nagApOnly = kNagApOnlyDefaultEnabled ? 1 : 0;
     uint32_t busoffCooldown = 1000;
 
     err = nvsReadU8OrDefault(h, kNvsKeyIsaSpeedChime, isa, isa);
@@ -700,6 +705,7 @@ static esp_err_t loadVehicleRuntimeSettingsBeforeCan()
     if (err == ESP_OK) err = nvsReadU8OrDefault(h, kNvsKeyAOneShot, oneShot, oneShot);
     if (err == ESP_OK) err = nvsReadU8OrDefault(h, kNvsKeyATxGuard, txGuard, txGuard);
     if (err == ESP_OK) err = nvsReadU8OrDefault(h, kNvsKeyNagMode, nagMode, nagMode);
+    if (err == ESP_OK) err = nvsReadU8OrDefault(h, kNvsKeyNagApOnly, nagApOnly, nagApOnly);
     if (err == ESP_OK) err = nvsReadU32OrDefault(h, kNvsKeyBoCool, busoffCooldown, busoffCooldown);
     nvs_close(h);
     if (err != ESP_OK) return err;
@@ -712,6 +718,7 @@ static esp_err_t loadVehicleRuntimeSettingsBeforeCan()
     emergencyVehicleDetectionRuntime = emergency != 0;
     summonUnlockRuntime = summon != 0;
     nagKillerRuntime = nag != 0;
+    nagApOnlyRuntime = nagApOnly != 0;
     tsllcRuntime = tsllc != 0;
     aChannelTxRuntime = aTx != 0;
     aMcpSpiFreqHz = (uint32_t)spiMhz * 1000000UL;
@@ -824,7 +831,8 @@ static esp_err_t featureToggleHandler(httpd_req_t *req, Shared<bool> &target, bo
     snprintf(buf, sizeof(buf), "[Web] %s: %s", logName, enabled ? "ON" : "OFF");
     logRing.push(buf, millis());
     if ((&target == &summonUnlockRuntime) || (&target == &tsllcRuntime) ||
-        (&target == &nagKillerRuntime) || (&target == &aChannelTxRuntime)) {
+        (&target == &nagKillerRuntime) || (&target == &nagApOnlyRuntime) ||
+        (&target == &aChannelTxRuntime)) {
         eventLogPush(EV_FEATURE_STATE,
                      (uint16_t)bChannelDiag.twaiTxErrNow,
                      (uint16_t)bChannelDiag.twaiRxErrNow,
@@ -1348,7 +1356,9 @@ static esp_err_t statusHandler(httpd_req_t *req)
         kWebSupportsSummonUnlock ? (bool)summonUnlockRuntime : false;
     bool summonUnlockActive = aChannelTx && summonUnlockEnabled;
     bool nagKiller = kWebSupportsNagKiller ? (bool)nagKillerRuntime : false;
-    bool tsllcEnabled = kWebSupportsTsllc ? (aChannelTx && (bool)tsllcRuntime) : false;
+    bool tsllcEnabled = kWebSupportsTsllc ? (bool)tsllcRuntime : false;
+    bool nagApOnly = (bool)nagApOnlyRuntime;
+    bool aGuardActiveNow = aTxGuardActive(handlerStartMs);
     cJSON *root = cJSON_CreateObject();
     if (!root) {
         webHealthRecordDuration(gWebStatusLastDurMs, gWebStatusMaxDurMs, handlerStartMs);
@@ -1359,6 +1369,7 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "emergency_vehicle_detection", emergencyVehicleDetection);
     cJSON_AddBoolToObject(root, "summon_unlock_enabled", summonUnlockEnabled);
     cJSON_AddBoolToObject(root, "nag_killer", nagKiller);
+    cJSON_AddBoolToObject(root, "nag_ap_only", nagApOnly);
     cJSON_AddBoolToObject(root, "a_channel_tx", aChannelTx);
     cJSON_AddBoolToObject(root, "tsllc_enabled", tsllcEnabled);
     cJSON_AddBoolToObject(root, "can_boot_allowed", !gOtaRecoveryModeActive);
@@ -1374,6 +1385,9 @@ static esp_err_t statusHandler(httpd_req_t *req)
         cJSON_AddBoolToObject(summon, "active", summonUnlockActive);
         cJSON_AddBoolToObject(summon, "tx_master", aChannelTx);
         cJSON_AddBoolToObject(summon, "gate", gateOpen);
+        cJSON_AddBoolToObject(summon, "guard", aGuardActiveNow);
+        cJSON_AddBoolToObject(summon, "inject_ready",
+                              summonEnabled && aChannelTx && gateOpen && !aGuardActiveNow);
         cJSON_AddBoolToObject(summon, "ap", (bool)summonGateDiag.apActive);
         cJSON_AddBoolToObject(summon, "parked", (bool)summonGateDiag.parked);
         cJSON_AddBoolToObject(summon, "summon", (bool)summonGateDiag.summoning);
@@ -1393,6 +1407,10 @@ static esp_err_t statusHandler(httpd_req_t *req)
         cJSON_AddNumberToObject(summon, "txOk", (uint32_t)summonGateDiag.txOk);
         cJSON_AddNumberToObject(summon, "txFail", (uint32_t)summonGateDiag.txFail);
         cJSON_AddNumberToObject(summon, "blocked", (uint32_t)summonGateDiag.blocked);
+        cJSON_AddNumberToObject(summon, "last_tx_age_ms",
+                                webSafeAgeMs(handlerStartMs, (uint32_t)summonGateDiag.lastTxMs));
+        cJSON_AddNumberToObject(summon, "last_blocked_age_ms",
+                                webSafeAgeMs(handlerStartMs, (uint32_t)summonGateDiag.lastBlockedMs));
         cJSON_AddNumberToObject(summon, "wake_count", (uint32_t)aChannelDiag.wakeCount);
         cJSON_AddBoolToObject(summon, "wake_waiting_tx", (bool)aChannelDiag.wakeAwaitingSummonTx);
         cJSON_AddNumberToObject(summon, "wake_to_tx_ms", (uint32_t)aChannelDiag.wakeToSummonTxMs);
@@ -1402,6 +1420,20 @@ static esp_err_t statusHandler(httpd_req_t *req)
         cJSON_AddNumberToObject(summon, "uptimeS", handlerStartMs / 1000U);
         cJSON_AddStringToObject(summon, "hardware", "HW3");
         cJSON_AddNumberToObject(summon, "enable_bit", 46);
+    }
+
+    cJSON *tsllc = cJSON_AddObjectToObject(root, "tsllc");
+    if (tsllc) {
+        cJSON_AddBoolToObject(tsllc, "enabled", tsllcEnabled);
+        cJSON_AddBoolToObject(tsllc, "tx_master", aChannelTx);
+        cJSON_AddBoolToObject(tsllc, "guard", aGuardActiveNow);
+        cJSON_AddBoolToObject(tsllc, "inject_ready",
+                              tsllcEnabled && aChannelTx && !aGuardActiveNow);
+        cJSON_AddNumberToObject(tsllc, "txOk", (uint32_t)aChannelDiag.tsllcTxOk);
+        cJSON_AddNumberToObject(tsllc, "txFail", (uint32_t)aChannelDiag.tsllcTxFail);
+        cJSON_AddNumberToObject(tsllc, "last_tx_age_ms",
+                                webSafeAgeMs(handlerStartMs,
+                                             (uint32_t)aChannelDiag.lastTsllcTxMs));
     }
 
     cJSON_AddStringToObject(root, "theme", themeRuntime);
@@ -1527,6 +1559,7 @@ static esp_err_t statusHandler(httpd_req_t *req)
                     kWebSupportsSummonUnlock, summonUnlockEnabled,
                     kSummonUnlockBuildEnabled);
     addFeatureState(features, "nag_killer", kWebSupportsNagKiller, nagKiller, kNagKillerBuildEnabled);
+    addFeatureState(features, "nag_ap_only", kWebSupportsNagKiller, nagApOnly, kNagKillerBuildEnabled);
     addFeatureState(features, "a_channel_tx", true, aChannelTx, true);
     // TSLLC: 스톱사인/신호등 자동 정지 + 앞차 있을 때 초록불 자동 출발
     addFeatureState(features, "tsllc_enabled", kWebSupportsTsllc, tsllcEnabled, kTsllcBuildEnabled);
@@ -1623,6 +1656,13 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(ach, "id_1021_period_ms", (uint32_t)period1021Ms);
     cJSON_AddNumberToObject(ach, "summon_unlock_modified",
                             (uint32_t)aChannelDiag.summonUnlockModifiedCount);
+    cJSON_AddNumberToObject(ach, "summon_tx_ok", (uint32_t)summonGateDiag.txOk);
+    cJSON_AddNumberToObject(ach, "summon_tx_fail", (uint32_t)summonGateDiag.txFail);
+    cJSON_AddNumberToObject(ach, "summon_blocked", (uint32_t)summonGateDiag.blocked);
+    cJSON_AddNumberToObject(ach, "tsllc_modified",
+                            (uint32_t)aChannelDiag.tsllcModifiedCount);
+    cJSON_AddNumberToObject(ach, "tsllc_tx_ok", (uint32_t)aChannelDiag.tsllcTxOk);
+    cJSON_AddNumberToObject(ach, "tsllc_tx_fail", (uint32_t)aChannelDiag.tsllcTxFail);
     cJSON_AddNumberToObject(ach, "last_frame_id", (uint32_t)aChannelDiag.lastFrameIdReceived);
     cJSON_AddNumberToObject(ach, "last_loop_ms", (uint32_t)aChannelDiag.lastLoopMs);
     cJSON_AddNumberToObject(ach, "core_id", (int32_t)aChannelDiag.loopCoreId);
@@ -1644,6 +1684,12 @@ static esp_err_t statusHandler(httpd_req_t *req)
     // A채널 송수신 진단 카운터 (1초 EFLG 폴링 + handler 송신 결과)
     cJSON_AddNumberToObject(ach, "tx_ok",   (uint32_t)aChannelDiag.aTxOk);
     cJSON_AddNumberToObject(ach, "tx_fail", (uint32_t)aChannelDiag.aTxFail);
+    cJSON_AddNumberToObject(ach, "tx_fail_window",
+                            (uint32_t)(uint8_t)aChannelDiag.aTxFailWindowDelta);
+    cJSON_AddNumberToObject(ach, "tx_fail_window_peak",
+                            (uint32_t)(uint8_t)aChannelDiag.aTxFailWindowPeak);
+    cJSON_AddNumberToObject(ach, "tx_fail_guard_threshold",
+                            (uint32_t)kATxGuardTxFailBurstThreshold);
     cJSON_AddNumberToObject(ach, "tec",      (uint32_t)(uint8_t)aChannelDiag.aTec);
     cJSON_AddNumberToObject(ach, "rec",      (uint32_t)(uint8_t)aChannelDiag.aRec);
     cJSON_AddNumberToObject(ach, "tec_peak", (uint32_t)(uint8_t)aChannelDiag.aTecPeak);
@@ -1749,6 +1795,9 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(bch, "last_das_status_rx_ms", (uint32_t)bChannelDiag.lastDasStatusRxMs);
     cJSON_AddNumberToObject(bch, "nag_mode", (uint32_t)nagModeClamp((uint8_t)bChannelDiag.nagMode));
     cJSON_AddStringToObject(bch, "nag_mode_name", nagModeName((uint8_t)bChannelDiag.nagMode));
+    cJSON_AddBoolToObject(bch, "nag_ap_only", (bool)nagApOnlyRuntime);
+    cJSON_AddBoolToObject(bch, "nag_ap_active",
+                         nagApStateAllowsInjection((uint8_t)bChannelDiag.dasAutopilotStateRx));
     cJSON_AddNumberToObject(bch, "echo_count", (uint32_t)bChannelDiag.echoCount);
     cJSON_AddNumberToObject(bch, "tx_attempt_count", (uint32_t)bChannelDiag.txAttemptCount);
     cJSON_AddNumberToObject(bch, "tx_success_count", (uint32_t)bChannelDiag.txSuccessCount);
@@ -1936,6 +1985,12 @@ static esp_err_t nagKillerHandler(httpd_req_t *req)
     return featureToggleHandler(req, nagKillerRuntime, kWebSupportsNagKiller, kNvsKeyNagKiller, "NAG_KILLER");
 }
 
+static esp_err_t nagApOnlyHandler(httpd_req_t *req)
+{
+    return featureToggleHandler(req, nagApOnlyRuntime, kWebSupportsNagKiller,
+                                kNvsKeyNagApOnly, "NAG_AP_ONLY");
+}
+
 
 static esp_err_t tsllcHandler(httpd_req_t *req)
 {
@@ -2061,6 +2116,7 @@ static esp_err_t nagConfigGetHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "torqueMaxNm", 1.8);
     cJSON_AddNumberToObject(root, "contextFreshMs", 1000);
     cJSON_AddNumberToObject(root, "steeringMaxAbsDeg", 5.0);
+    cJSON_AddBoolToObject(root, "apOnly", (bool)nagApOnlyRuntime);
     char *json = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!json) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM"); return ESP_FAIL; }
@@ -2127,6 +2183,9 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "warmupFrames", (uint32_t)bChannelDiag.nagWarmupFramesSeen);
     cJSON_AddNumberToObject(root, "warmupRequiredFrames", kNagWarmupTargetFrames);
     cJSON_AddNumberToObject(root, "skipWarmup", (uint32_t)bChannelDiag.skipWarmup);
+    cJSON_AddBoolToObject(root, "apOnly", (bool)nagApOnlyRuntime);
+    cJSON_AddBoolToObject(root, "apActive",
+                         nagApStateAllowsInjection((uint8_t)bChannelDiag.dasAutopilotStateRx));
 
     uint8_t mode = nagModeClamp((uint8_t)bChannelDiag.nagMode);
     addNagModeJson(root, mode);
@@ -2242,7 +2301,7 @@ static esp_err_t nagUpdateHandler(httpd_req_t *req)
 }
 
 // ─── POST /api/nag-reset  ────────────────────────────────────────────────────
-// 검증된 기본 MODE 3으로 리셋
+// 실차 확인 및 최신 원본 기준 기본 MODE 2 + AP 전용으로 리셋
 static esp_err_t nagResetHandler(httpd_req_t *req)
 {
     if (!rateLimitOk()) {
@@ -2256,8 +2315,10 @@ static esp_err_t nagResetHandler(httpd_req_t *req)
     nagConfig = nc;
     portEXIT_CRITICAL(&nagCfgMux);
     nagCfgSave(nc);
+    nagApOnlyRuntime = kNagApOnlyDefaultEnabled;
+    nvsWriteBool(kNvsKeyNagApOnly, nagApOnlyRuntime);
     bChannelDiag.nagMode = nc.mode;
-    logRing.push("[NAG] 설정 리셋 → MODE 3(기본)", millis());
+    logRing.push("[NAG] 설정 리셋 → MODE 2 + AP 전용(기본)", millis());
     return nagConfigGetHandler(req);
 }
 
@@ -2512,23 +2573,23 @@ static void shortBuildId(const char *buildId, char *out, size_t out_n) {
     out[i] = '\0';
 }
 
-// POST /api/user-marker?type=ap_warning
-// 운전자가 차량 화면 경고 구간의 시작/종료 순간을 사후 분석 로그에 찍는 수동 마커.
+// POST /api/user-marker
+// 사용자가 임의 이벤트 구간의 시작/종료 지점을 사후 분석 로그에 찍는 일반 마커.
 static esp_err_t userMarkerHandler(httpd_req_t *req) {
     uint32_t now = millis();
     bool activeBefore = (bool)userMarkerActive;
-    uint32_t detail = activeBefore ? kUserMarkerApWarningEnd : kUserMarkerApWarningStart;
+    uint32_t detail = activeBefore ? kUserMarkerEnd : kUserMarkerStart;
     char queryBuf[64] = {};
     if (httpd_req_get_url_query_str(req, queryBuf, sizeof(queryBuf)) == ESP_OK) {
         char typeBuf[24] = {};
         if (httpd_query_key_value(queryBuf, "type", typeBuf, sizeof(typeBuf)) == ESP_OK) {
-            if (strcmp(typeBuf, "ap_warning_start") == 0 || strcmp(typeBuf, "start") == 0) detail = kUserMarkerApWarningStart;
-            else if (strcmp(typeBuf, "ap_warning_end") == 0 || strcmp(typeBuf, "end") == 0) detail = kUserMarkerApWarningEnd;
+            if (strcmp(typeBuf, "start") == 0) detail = kUserMarkerStart;
+            else if (strcmp(typeBuf, "end") == 0) detail = kUserMarkerEnd;
         }
     }
-    bool activeAfter = detail == kUserMarkerApWarningStart;
+    bool activeAfter = detail == kUserMarkerStart;
     // 이벤트 링이 alert 폭주로 밀려도 timeseries의 dUserMark가 20분 동안 완료 구간 기준점을 보존한다.
-    if (detail == kUserMarkerApWarningEnd && activeBefore) {
+    if (detail == kUserMarkerEnd && activeBefore) {
         userMarkerCount = (uint32_t)userMarkerCount + 1;
     }
     userMarkerLastMs = now;
@@ -2750,9 +2811,12 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
     uint32_t aNow = millis();
     bool aGuardActive = aTxGuardActive(aNow);
     snprintf(line, sizeof(line),
-        "A진단: TX OK=%u Fail=%u | TEC=%u/peak=%u REC=%u | MERRF=%u | RX-OVR=%u | EFLG=0x%02X/peak=0x%02X | BUS-OFF=%u | Cfg=SPI%lu->%lu/OS%s/Guard%s | Guard=%s/%ums/%s skip=%u count=%u\r\n",
+        "A진단: TX OK=%u Fail=%u Fail1s=%u/peak=%u/th=%u | TEC=%u/peak=%u REC=%u | MERRF=%u | RX-OVR=%u | EFLG=0x%02X/peak=0x%02X | BUS-OFF=%u | Cfg=SPI%lu->%lu/OS%s/Guard%s | Guard=%s/%ums/%s skip=%u count=%u\r\n",
         (unsigned)aChannelDiag.aTxOk,
         (unsigned)aChannelDiag.aTxFail,
+        (unsigned)(uint8_t)aChannelDiag.aTxFailWindowDelta,
+        (unsigned)(uint8_t)aChannelDiag.aTxFailWindowPeak,
+        (unsigned)kATxGuardTxFailBurstThreshold,
         (unsigned)(uint8_t)aChannelDiag.aTec,
         (unsigned)(uint8_t)aChannelDiag.aTecPeak,
         (unsigned)(uint8_t)aChannelDiag.aRec,
@@ -2781,6 +2845,37 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
             (unsigned long)(aNow - (uint32_t)aChannelDiag.lastTxMs),
             (unsigned)aChannelDiag.mcpEflgEventCount);
         httpd_resp_sendstr_chunk(req, line);
+    snprintf(line, sizeof(line),
+        "기능설정: Summon=%s Gate=%s Ready=%s | TSLLC=%s Ready=%s | Nag=%s %s Scope=%s AP=%u Ready=%s\r\n",
+        (bool)summonUnlockRuntime ? "ON" : "OFF",
+        summonGateOpen() ? "OPEN" : "BLOCKED",
+        ((bool)summonUnlockRuntime && (bool)aChannelTxRuntime &&
+         summonGateOpen() && !aGuardActive) ? "YES" : "NO",
+        (bool)tsllcRuntime ? "ON" : "OFF",
+        ((bool)tsllcRuntime && (bool)aChannelTxRuntime && !aGuardActive)
+            ? "YES" : "NO",
+        (bool)nagKillerRuntime ? "ON" : "OFF",
+        nagModeName((uint8_t)bChannelDiag.nagMode),
+        (bool)nagApOnlyRuntime ? "AP_ONLY" : "ORIGINAL",
+        (unsigned)(uint8_t)bChannelDiag.dasAutopilotStateRx,
+        (bool)bChannelDiag.nagReady ? "YES" : "NO");
+    httpd_resp_sendstr_chunk(req, line);
+    snprintf(line, sizeof(line),
+        "기능활동: Summon TX=%u/%u Blocked=%u Last=%ums | TSLLC TX=%u/%u Modified=%u Last=%ums | Nag TX=%u Last=%ums\r\n",
+        (unsigned)summonGateDiag.txOk,
+        (unsigned)summonGateDiag.txFail,
+        (unsigned)summonGateDiag.blocked,
+        (unsigned)((uint32_t)summonGateDiag.lastTxMs
+            ? aNow - (uint32_t)summonGateDiag.lastTxMs : 0U),
+        (unsigned)aChannelDiag.tsllcTxOk,
+        (unsigned)aChannelDiag.tsllcTxFail,
+        (unsigned)aChannelDiag.tsllcModifiedCount,
+        (unsigned)((uint32_t)aChannelDiag.lastTsllcTxMs
+            ? aNow - (uint32_t)aChannelDiag.lastTsllcTxMs : 0U),
+        (unsigned)bChannelDiag.echoCount,
+        (unsigned)((uint32_t)bChannelDiag.lastEchoTxMs
+            ? aNow - (uint32_t)bChannelDiag.lastEchoTxMs : 0U));
+    httpd_resp_sendstr_chunk(req, line);
     snprintf(line, sizeof(line),
         "B채널: RX=%u Filt=%u Try/OK/Ack=%u/%u/%u TxFail=%u TEC=%u REC=%u TECpeak=%u 880=%u 921=%u 923=%u 297=%u DAS=%u(%s/L%u/warn=%u)@%u Mode=%s Ready=%s(%u/%u) TWAI=%s InitErr=%d/%d\r\n",
         (unsigned)bChannelDiag.framesReceivedTotal,
@@ -2960,7 +3055,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         tsSnapRecording ? "ON" : "OFF", (unsigned)tsN);
     httpd_resp_sendstr_chunk(req, line);
     httpd_resp_sendstr_chunk(req,
-        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,dasStateName,dasStateGroup,dasWarnLevel,dasWarning,nagMode,nagModeDefault,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,f297,apState,modeBPhase,steerDeg,realTorqueNm,modeBInject,modeBLastNm,age880Ms,ageDasMs,age297Ms,ageEchoMs,modeBStateAgeMs,modeBPhaseAgeMs,modeBFirstEchoDelayMs,modeBDelayTargetMs,d297,dModeBInject,aFrames,aFrameHz,aEflg,aEflgState,aEflgPeak,aTec,aRec,aTecPeak,aRecPeak,aTxOk,aTxFail,aMerrf,aRxOvr,aEflgEvents,aFrameAgeMs,aLoopAgeMs,aGuardActive,aGuardReason,aGuardRemainingMs,aWakeCount,aWakeToSummonTxMs,aWakeAwaitingTx,dAFrames,dATxOk,dATxFail,dAMerrf,dARxOvr,dAEflgEvents\r\n");
+        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,dasStateName,dasStateGroup,dasWarnLevel,dasWarning,nagMode,nagModeDefault,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,f297,apState,modeBPhase,steerDeg,realTorqueNm,modeBInject,modeBLastNm,age880Ms,ageDasMs,age297Ms,ageEchoMs,modeBStateAgeMs,modeBPhaseAgeMs,modeBFirstEchoDelayMs,modeBDelayTargetMs,d297,dModeBInject,aFrames,aFrameHz,aEflg,aEflgState,aEflgPeak,aTec,aRec,aTecPeak,aRecPeak,aTxOk,aTxFail,aMerrf,aRxOvr,aEflgEvents,aFrameAgeMs,aLoopAgeMs,aGuardActive,aGuardReason,aGuardRemainingMs,aWakeCount,aWakeToSummonTxMs,aWakeAwaitingTx,dAFrames,dATxOk,dATxFail,dAMerrf,dARxOvr,dAEflgEvents,aDriverOk,aTxEnabled,summonEnabled,tsllcEnabled,aOneShotEnabled,aTxGuardEnabled,aSpiMhz,aSpiTargetMhz,bDriverState,nagEnabled,aLoopGapLastUs,aLoopGapPeakUs,aLoopGapOver2ms,dALoopGapOver2ms,summonGateOpen,summonInjectReady,summonTxOk,summonTxFail,summonBlocked,dSummonTxOk,dSummonTxFail,dSummonBlocked,tsllcInjectReady,tsllcTxOk,tsllcTxFail,dTsllcTxOk,dTsllcTxFail,nagApOnly,nagApActive,nagInjecting,nagTxOk,dNagTxOk\r\n");
     {
         if (tsN == 0) {
             httpd_resp_sendstr_chunk(req, "(시계열 없음)\r\n");
@@ -3005,7 +3100,9 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                     (unsigned)s.d297, (unsigned)s.dModeBInject);
                 if (used < 0 || (size_t)used >= sizeof(line)) continue;
                 snprintf(line + used, sizeof(line) - (size_t)used,
-                    ",%u,%.1f,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+                    ",%u,%.1f,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+                    "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+                    "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
                     (unsigned)s.aFrames, (double)s.aFrameHz,
                     (unsigned)s.aEflg, aMcpEflgStateName(s.aEflg), (unsigned)s.aEflgPeak,
                     (unsigned)s.aTec, (unsigned)s.aRec, (unsigned)s.aTecPeak, (unsigned)s.aRecPeak,
@@ -3016,7 +3113,23 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                     (unsigned)s.aGuardRemainingMs,
                     (unsigned)s.aWakeCount, (unsigned)s.aWakeToSummonTxMs, (unsigned)s.aWakeAwaitingTx,
                     (unsigned)s.dAFrames, (unsigned)s.dATxOk, (unsigned)s.dATxFail,
-                    (unsigned)s.dAMerrf, (unsigned)s.dARxOvr, (unsigned)s.dAEflgEvents);
+                    (unsigned)s.dAMerrf, (unsigned)s.dARxOvr, (unsigned)s.dAEflgEvents,
+                    (unsigned)s.aDriverOk, (unsigned)s.aTxEnabled,
+                    (unsigned)s.summonEnabled, (unsigned)s.tsllcEnabled,
+                    (unsigned)s.aOneShotEnabled, (unsigned)s.aTxGuardEnabled,
+                    (unsigned)s.aSpiMhz, (unsigned)s.aSpiTargetMhz,
+                    (unsigned)s.bDriverState, (unsigned)s.nagEnabled,
+                    (unsigned)s.aLoopGapLastUs, (unsigned)s.aLoopGapPeakUs,
+                    (unsigned)s.aLoopGapOver2ms, (unsigned)s.dALoopGapOver2ms,
+                    (unsigned)s.summonGateOpen, (unsigned)s.summonInjectReady,
+                    (unsigned)s.summonTxOk, (unsigned)s.summonTxFail,
+                    (unsigned)s.summonBlocked, (unsigned)s.dSummonTxOk,
+                    (unsigned)s.dSummonTxFail, (unsigned)s.dSummonBlocked,
+                    (unsigned)s.tsllcInjectReady, (unsigned)s.tsllcTxOk,
+                    (unsigned)s.tsllcTxFail, (unsigned)s.dTsllcTxOk,
+                    (unsigned)s.dTsllcTxFail, (unsigned)s.nagApOnly,
+                    (unsigned)s.nagApActive, (unsigned)s.nagInjecting,
+                    (unsigned)s.modeBInject, (unsigned)s.dModeBInject);
                 if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) {
                     if (snap) free(snap);
                     logsBundleSerialTrace("fail section4", handlerStartMs);
@@ -3917,6 +4030,8 @@ static void webServerInit(TWAIDriver* drv = nullptr)
         .uri = "/api/summon-unlock", .method = HTTP_POST, .handler = summonUnlockHandler, .user_ctx = NULL};
     httpd_uri_t uriNagKiller = {
         .uri = "/api/nag-killer", .method = HTTP_POST, .handler = nagKillerHandler, .user_ctx = NULL};
+    httpd_uri_t uriNagApOnly = {
+        .uri = "/api/nag-ap-only", .method = HTTP_POST, .handler = nagApOnlyHandler, .user_ctx = NULL};
     httpd_uri_t uriTsllc = {
         .uri = "/api/tsllc", .method = HTTP_POST, .handler = tsllcHandler, .user_ctx = NULL};
     httpd_uri_t uriAChannelTx = {
@@ -4005,6 +4120,7 @@ static void webServerInit(TWAIDriver* drv = nullptr)
     httpd_register_uri_handler(webServer, &uriEmergencyVehicleDetection);
     httpd_register_uri_handler(webServer, &uriSummonUnlock);
     httpd_register_uri_handler(webServer, &uriNagKiller);
+    httpd_register_uri_handler(webServer, &uriNagApOnly);
     httpd_register_uri_handler(webServer, &uriTsllc);
     httpd_register_uri_handler(webServer, &uriAChannelTx);
     httpd_register_uri_handler(webServer, &uriASpi8Mhz);

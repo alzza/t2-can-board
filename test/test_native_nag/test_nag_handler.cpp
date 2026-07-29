@@ -90,27 +90,34 @@ void setUp()
     bChannelDiag = BChannelDiagnostics();
     nagCfgDefaults(nagConfig);
     nagKillerRuntime = true;
+    nagApOnlyRuntime = false;
     handler = NagHandler();
 }
 
 void tearDown() {}
 
-void test_nag_defaults_off_with_mode3_selected()
+void test_nag_defaults_off_with_mode2_ap_only_selected()
 {
     NagConfig defaults;
     nagCfgDefaults(defaults);
     TEST_ASSERT_FALSE(kNagKillerDefaultEnabled);
-    TEST_ASSERT_EQUAL_UINT8(kNagMode3, defaults.mode);
-    TEST_ASSERT_EQUAL_STRING("MODE 3", nagModeName(defaults.mode));
+    TEST_ASSERT_TRUE(kNagApOnlyDefaultEnabled);
+    TEST_ASSERT_EQUAL_UINT8(kNagMode2, defaults.mode);
+    TEST_ASSERT_EQUAL_STRING("MODE 2", nagModeName(defaults.mode));
 }
 
-void test_nag_mode_clamp_accepts_1_to_3_and_defaults_invalid_to_3()
+void test_a_tx_guard_requires_two_failures_in_one_second()
+{
+    TEST_ASSERT_EQUAL_UINT8(2, kATxGuardTxFailBurstThreshold);
+}
+
+void test_nag_mode_clamp_accepts_1_to_3_and_defaults_invalid_to_2()
 {
     TEST_ASSERT_EQUAL_UINT8(kNagMode1, nagModeClamp(kNagMode1));
     TEST_ASSERT_EQUAL_UINT8(kNagMode2, nagModeClamp(kNagMode2));
     TEST_ASSERT_EQUAL_UINT8(kNagMode3, nagModeClamp(kNagMode3));
-    TEST_ASSERT_EQUAL_UINT8(kNagMode3, nagModeClamp(0));
-    TEST_ASSERT_EQUAL_UINT8(kNagMode3, nagModeClamp(99));
+    TEST_ASSERT_EQUAL_UINT8(kNagMode2, nagModeClamp(0));
+    TEST_ASSERT_EQUAL_UINT8(kNagMode2, nagModeClamp(99));
 }
 
 void test_nag_filter_contains_hw3_context_ids()
@@ -184,6 +191,73 @@ void test_mode2_does_not_require_das_or_steering_context()
     CanFrame frame = makeEpasFrame(0, 0.33f, 0x01);
     handler.handleMessageAt(frame, mock, 100);
     TEST_ASSERT_EQUAL(1, mock.sent.size());
+}
+
+void test_mode2_ap_only_blocks_without_fresh_ap_context()
+{
+    setMode(kNagMode2);
+    nagApOnlyRuntime = true;
+    CanFrame frame = makeEpasFrame(0, 0.33f, 0x01);
+    handler.handleMessageAt(frame, mock, 100);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT8(kNagDecisionNo921,
+                            (uint8_t)bChannelDiag.nagLastDecision);
+}
+
+void test_mode2_ap_only_blocks_general_drive_and_allows_active_ap()
+{
+    setMode(kNagMode2);
+    nagApOnlyRuntime = true;
+
+    CanFrame driveDas = makeDasFrame(1, 923, 2);
+    handler.handleMessageAt(driveDas, mock, 100);
+    CanFrame blocked = makeEpasFrame(0, 0.33f, 0x01);
+    handler.handleMessageAt(blocked, mock, 100);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT8(kNagDecisionApBlocked,
+                            (uint8_t)bChannelDiag.nagLastDecision);
+
+    CanFrame apDas = makeDasFrame(1, 923, 3);
+    handler.handleMessageAt(apDas, mock, 200);
+    CanFrame allowed = makeEpasFrame(0, 0.33f, 0x02);
+    handler.handleMessageAt(allowed, mock, 200);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+}
+
+void test_mode1_original_scope_ignores_ap_when_ap_only_is_off()
+{
+    setMode(kNagMode1);
+    nagApOnlyRuntime = false;
+    CanFrame driveDas = makeDasFrame(1, 923, 1);
+    handler.handleMessageAt(driveDas, mock, 100);
+    CanFrame frame = makeEpasFrame(0, 0.33f, 0x01);
+    handler.handleMessageAt(frame, mock, 100);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+}
+
+void test_mode3_monitors_without_injection_outside_warning_states()
+{
+    setMode(kNagMode3);
+    sendContextAt(100, 1, 0.0f, 923, 3);
+    CanFrame frame = makeEpasFrame(0, 0.33f, 0x01);
+    handler.handleMessageAt(frame, mock, 100);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT8(kNagDecisionDasIdle,
+                            (uint8_t)bChannelDiag.nagLastDecision);
+}
+
+void test_all_modes_block_when_driver_hands_are_detected()
+{
+    for (uint8_t mode = kNagMode1; mode <= kNagMode3; ++mode) {
+        setUp();
+        setMode(mode);
+        sendContextAt(100, 2, 0.0f, 923, 3);
+        CanFrame frame = makeEpasFrame(1, 0.33f, 0x01);
+        handler.handleMessageAt(frame, mock, 100);
+        TEST_ASSERT_EQUAL(0, mock.sent.size());
+        TEST_ASSERT_EQUAL_UINT8(kNagDecisionHandsOn,
+                                (uint8_t)bChannelDiag.nagLastDecision);
+    }
 }
 
 void test_mode3_blocks_without_fresh_context()
@@ -308,8 +382,8 @@ void test_all_modes_stay_inside_common_torque_cap()
         setUp();
         setMode(mode);
         if (mode == kNagMode3) {
-            sendContextAt(100, 3, 0.0f);
-            sendContextAt(1100, 3, 0.0f);
+            sendContextAt(100, 3, 0.0f, 923, 3);
+            sendContextAt(1100, 3, 0.0f, 923, 3);
         }
         CanFrame frame = makeEpasFrame(0, 0.33f, mode);
         handler.handleMessageAt(frame, mock, mode == kNagMode3 ? 1100 : 100);
@@ -428,14 +502,20 @@ void test_a_channel_eflg_health_classification_preserves_rx_overrun()
 int main()
 {
     UNITY_BEGIN();
-    RUN_TEST(test_nag_defaults_off_with_mode3_selected);
-    RUN_TEST(test_nag_mode_clamp_accepts_1_to_3_and_defaults_invalid_to_3);
+    RUN_TEST(test_nag_defaults_off_with_mode2_ap_only_selected);
+    RUN_TEST(test_a_tx_guard_requires_two_failures_in_one_second);
+    RUN_TEST(test_nag_mode_clamp_accepts_1_to_3_and_defaults_invalid_to_2);
     RUN_TEST(test_nag_filter_contains_hw3_context_ids);
     RUN_TEST(test_mode1_fixed_echo_matches_verified_frame_rules);
     RUN_TEST(test_mode1_does_not_require_das_or_steering_context);
     RUN_TEST(test_mode1_blocks_real_hands_on);
     RUN_TEST(test_mode2_cycles_four_torques_then_pauses);
     RUN_TEST(test_mode2_does_not_require_das_or_steering_context);
+    RUN_TEST(test_mode2_ap_only_blocks_without_fresh_ap_context);
+    RUN_TEST(test_mode2_ap_only_blocks_general_drive_and_allows_active_ap);
+    RUN_TEST(test_mode1_original_scope_ignores_ap_when_ap_only_is_off);
+    RUN_TEST(test_mode3_monitors_without_injection_outside_warning_states);
+    RUN_TEST(test_all_modes_block_when_driver_hands_are_detected);
     RUN_TEST(test_mode3_blocks_without_fresh_context);
     RUN_TEST(test_mode3_blocks_stale_das_or_steering_context);
     RUN_TEST(test_mode3_accepts_923_as_current_project_das_fallback);

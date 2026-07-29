@@ -108,6 +108,23 @@ struct TsSample {
     uint8_t  aSpiTargetMhz;
     uint8_t  bDriverState;
     uint8_t  nagEnabled;
+    // 기능 토글과 실제 주입 결과를 같은 시점에서 검증하기 위한 상태.
+    uint8_t  summonGateOpen;
+    uint8_t  summonInjectReady;
+    uint8_t  tsllcInjectReady;
+    uint8_t  nagApOnly;
+    uint8_t  nagApActive;
+    uint8_t  nagInjecting;
+    uint32_t summonTxOk;
+    uint32_t summonTxFail;
+    uint32_t summonBlocked;
+    uint32_t tsllcTxOk;
+    uint32_t tsllcTxFail;
+    uint16_t dSummonTxOk;
+    uint16_t dSummonTxFail;
+    uint16_t dSummonBlocked;
+    uint16_t dTsllcTxOk;
+    uint16_t dTsllcTxFail;
     uint32_t aLoopGapLastUs;
     uint32_t aLoopGapPeakUs;
     uint32_t aLoopGapOver2ms;
@@ -147,6 +164,11 @@ inline volatile uint32_t tsBaseAMerrf = 0;
 inline volatile uint32_t tsBaseARxOvr = 0;
 inline volatile uint32_t tsBaseAEflgEvents = 0;
 inline volatile uint32_t tsBaseALoopGapOver2ms = 0;
+inline volatile uint32_t tsBaseSummonTxOk = 0;
+inline volatile uint32_t tsBaseSummonTxFail = 0;
+inline volatile uint32_t tsBaseSummonBlocked = 0;
+inline volatile uint32_t tsBaseTsllcTxOk = 0;
+inline volatile uint32_t tsBaseTsllcTxFail = 0;
 
 inline volatile uint32_t tsPrevEcho = 0;
 inline volatile uint32_t tsPrevF880 = 0;
@@ -168,6 +190,13 @@ inline volatile uint32_t tsPrevAMerrf = 0;
 inline volatile uint32_t tsPrevARxOvr = 0;
 inline volatile uint32_t tsPrevAEflgEvents = 0;
 inline volatile uint32_t tsPrevALoopGapOver2ms = 0;
+inline volatile uint32_t tsPrevSummonTxOk = 0;
+inline volatile uint32_t tsPrevSummonTxFail = 0;
+inline volatile uint32_t tsPrevSummonBlocked = 0;
+inline volatile uint32_t tsPrevTsllcTxOk = 0;
+inline volatile uint32_t tsPrevTsllcTxFail = 0;
+inline volatile bool tsFeatureActivitySeen = false;
+inline volatile uint32_t tsFeatureActivityLast = 0;
 
 inline uint32_t tsDelta(uint32_t current, uint32_t base) {
     return current - base;
@@ -214,7 +243,7 @@ static void timeseriesTaskFn(void*) {
         // 기본 상태에서는 자동 최근 20분 버퍼가 계속 동작한다.
         if (manualStartMs != 0 && !manualRecording) continue;
 
-        TsSample s;
+        TsSample s{};
         s.t_ms     = millis();
         s.captureMode = manualStartMs != 0 ? 1U : 0U;
         s.busoff   = tsDelta((uint32_t)bChannelDiag.busoffCount, (uint32_t)tsBaseBusoff);
@@ -243,6 +272,11 @@ static void timeseriesTaskFn(void*) {
         uint32_t curARxOvr = (uint32_t)aChannelDiag.aRxOvrCount;
         uint32_t curAEflgEvents = (uint32_t)aChannelDiag.mcpEflgEventCount;
         uint32_t curALoopGapOver2ms = (uint32_t)aChannelDiag.loopGapOver2msCount;
+        uint32_t curSummonTxOk = (uint32_t)summonGateDiag.txOk;
+        uint32_t curSummonTxFail = (uint32_t)summonGateDiag.txFail;
+        uint32_t curSummonBlocked = (uint32_t)summonGateDiag.blocked;
+        uint32_t curTsllcTxOk = (uint32_t)aChannelDiag.tsllcTxOk;
+        uint32_t curTsllcTxFail = (uint32_t)aChannelDiag.tsllcTxFail;
         s.echoCnt  = tsDelta(curEcho, (uint32_t)tsBaseEcho);
         s.f880     = tsDelta(cur880, (uint32_t)tsBaseF880);
         s.f921     = tsDelta(cur921, (uint32_t)tsBaseF921);
@@ -281,6 +315,16 @@ static void timeseriesTaskFn(void*) {
         s.dAMerrf = tsDelta16(curAMerrf, (uint32_t)tsPrevAMerrf);
         s.dARxOvr = tsDelta16(curARxOvr, (uint32_t)tsPrevARxOvr);
         s.dAEflgEvents = tsDelta16(curAEflgEvents, (uint32_t)tsPrevAEflgEvents);
+        s.summonTxOk = tsDelta(curSummonTxOk, (uint32_t)tsBaseSummonTxOk);
+        s.summonTxFail = tsDelta(curSummonTxFail, (uint32_t)tsBaseSummonTxFail);
+        s.summonBlocked = tsDelta(curSummonBlocked, (uint32_t)tsBaseSummonBlocked);
+        s.tsllcTxOk = tsDelta(curTsllcTxOk, (uint32_t)tsBaseTsllcTxOk);
+        s.tsllcTxFail = tsDelta(curTsllcTxFail, (uint32_t)tsBaseTsllcTxFail);
+        s.dSummonTxOk = tsDelta16(curSummonTxOk, (uint32_t)tsPrevSummonTxOk);
+        s.dSummonTxFail = tsDelta16(curSummonTxFail, (uint32_t)tsPrevSummonTxFail);
+        s.dSummonBlocked = tsDelta16(curSummonBlocked, (uint32_t)tsPrevSummonBlocked);
+        s.dTsllcTxOk = tsDelta16(curTsllcTxOk, (uint32_t)tsPrevTsllcTxOk);
+        s.dTsllcTxFail = tsDelta16(curTsllcTxFail, (uint32_t)tsPrevTsllcTxFail);
         s.aLoopGapLastUs = (uint32_t)aChannelDiag.loopGapLastUs;
         s.aLoopGapPeakUs = (uint32_t)aChannelDiag.loopGapPeakUs;
         s.aLoopGapOver2ms = tsDelta(curALoopGapOver2ms, (uint32_t)tsBaseALoopGapOver2ms);
@@ -331,8 +375,19 @@ static void timeseriesTaskFn(void*) {
         s.aSpiTargetMhz = (uint8_t)((uint32_t)aMcpRequestedSpiFreqHz / 1000000UL);
         s.bDriverState = (uint8_t)bChannelDiag.twaiStateCode;
         s.nagEnabled = (bool)nagKillerRuntime ? 1U : 0U;
+        s.summonGateOpen = summonGateOpen() ? 1U : 0U;
+        s.summonInjectReady =
+            s.summonEnabled && s.aTxEnabled && s.summonGateOpen && !s.aGuardActive;
+        s.tsllcInjectReady = s.tsllcEnabled && s.aTxEnabled && !s.aGuardActive;
+        s.nagApOnly = (bool)nagApOnlyRuntime ? 1U : 0U;
+        s.nagApActive = nagApStateAllowsInjection(s.apState) ? 1U : 0U;
+        s.nagInjecting = s.dModeBInject > 0 ? 1U : 0U;
         const uint32_t aGuardUntil = (uint32_t)aChannelDiag.aTxGuardUntilMs;
         s.aGuardRemainingMs = aGuardUntil > s.t_ms ? tsDelta16(aGuardUntil, s.t_ms) : 0;
+        const uint32_t featureActivity = eventFeatureActivityDetail(
+            s.dSummonTxOk > 0, s.dTsllcTxOk > 0, s.dModeBInject > 0,
+            s.summonGateOpen != 0, s.aGuardActive != 0, s.nagApActive != 0);
+        bool emitFeatureActivity = false;
         portENTER_CRITICAL(&tsMux);
         tsBuf[tsHead] = s;
         tsPrevEcho = curEcho;
@@ -355,9 +410,25 @@ static void timeseriesTaskFn(void*) {
         tsPrevARxOvr = curARxOvr;
         tsPrevAEflgEvents = curAEflgEvents;
         tsPrevALoopGapOver2ms = curALoopGapOver2ms;
+        tsPrevSummonTxOk = curSummonTxOk;
+        tsPrevSummonTxFail = curSummonTxFail;
+        tsPrevSummonBlocked = curSummonBlocked;
+        tsPrevTsllcTxOk = curTsllcTxOk;
+        tsPrevTsllcTxFail = curTsllcTxFail;
+        if (!tsFeatureActivitySeen || tsFeatureActivityLast != featureActivity) {
+            tsFeatureActivitySeen = true;
+            tsFeatureActivityLast = featureActivity;
+            emitFeatureActivity = true;
+        }
         tsHead = (tsHead + 1) % TS_CAP;
         if (tsCount < TS_CAP) ++tsCount;
         portEXIT_CRITICAL(&tsMux);
+        if (emitFeatureActivity) {
+            eventLogPush(EV_FEATURE_ACTIVITY,
+                         (uint16_t)bChannelDiag.twaiTxErrNow,
+                         (uint16_t)bChannelDiag.twaiRxErrNow,
+                         featureActivity);
+        }
     }
 }
 
@@ -398,6 +469,11 @@ inline void timeseriesReset(bool beginManualRecording = false) {
     tsBaseARxOvr = (uint32_t)aChannelDiag.aRxOvrCount;
     tsBaseAEflgEvents = (uint32_t)aChannelDiag.mcpEflgEventCount;
     tsBaseALoopGapOver2ms = (uint32_t)aChannelDiag.loopGapOver2msCount;
+    tsBaseSummonTxOk = (uint32_t)summonGateDiag.txOk;
+    tsBaseSummonTxFail = (uint32_t)summonGateDiag.txFail;
+    tsBaseSummonBlocked = (uint32_t)summonGateDiag.blocked;
+    tsBaseTsllcTxOk = (uint32_t)aChannelDiag.tsllcTxOk;
+    tsBaseTsllcTxFail = (uint32_t)aChannelDiag.tsllcTxFail;
     tsPrevEcho = (uint32_t)bChannelDiag.echoCount;
     tsPrevF880 = (uint32_t)bChannelDiag.frames880;
     tsPrevF921 = (uint32_t)bChannelDiag.frames921;
@@ -418,8 +494,16 @@ inline void timeseriesReset(bool beginManualRecording = false) {
     tsPrevARxOvr = (uint32_t)aChannelDiag.aRxOvrCount;
     tsPrevAEflgEvents = (uint32_t)aChannelDiag.mcpEflgEventCount;
     tsPrevALoopGapOver2ms = (uint32_t)aChannelDiag.loopGapOver2msCount;
+    tsPrevSummonTxOk = (uint32_t)summonGateDiag.txOk;
+    tsPrevSummonTxFail = (uint32_t)summonGateDiag.txFail;
+    tsPrevSummonBlocked = (uint32_t)summonGateDiag.blocked;
+    tsPrevTsllcTxOk = (uint32_t)aChannelDiag.tsllcTxOk;
+    tsPrevTsllcTxFail = (uint32_t)aChannelDiag.tsllcTxFail;
+    tsFeatureActivitySeen = false;
+    tsFeatureActivityLast = 0;
     portEXIT_CRITICAL(&tsMux);
-    userMarkerActive = false;
+    // USER_MARK는 부팅 세션 전체의 분석 기준점이다. 로그 초기화나 새 기록
+    // 시작으로 지우지 않으며 RAM 상태이므로 보드 재부팅 때만 초기화된다.
     eventLogReset();
     busOffLog.clear();
 }
@@ -479,9 +563,12 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
         "a_rx_overrun,a_eflg_events,a_frame_age_ms,a_loop_age_ms,a_guard_active,a_guard_reason,a_guard_remaining_ms,"
         "a_wake_count,a_wake_to_summon_tx_ms,a_wake_awaiting_tx,a_d_frames,a_d_tx_ok,a_d_tx_fail,a_d_merrf,a_d_rx_overrun,a_d_eflg_events,"
         "a_driver_ok,a_tx_enabled,a_summon_enabled,a_tsllc_enabled,a_one_shot_enabled,a_tx_guard_enabled,a_spi_mhz,a_spi_target_mhz,"
-        "b_driver_state,b_nag_enabled,a_loop_gap_last_us,a_loop_gap_peak_us,a_loop_gap_over_2ms,a_d_loop_gap_over_2ms\r\n";
+        "b_driver_state,b_nag_enabled,a_loop_gap_last_us,a_loop_gap_peak_us,a_loop_gap_over_2ms,a_d_loop_gap_over_2ms,"
+        "a_summon_gate_open,a_summon_inject_ready,a_summon_tx_ok,a_summon_tx_fail,a_summon_blocked,"
+        "a_d_summon_tx_ok,a_d_summon_tx_fail,a_d_summon_blocked,a_tsllc_inject_ready,a_tsllc_tx_ok,a_tsllc_tx_fail,"
+        "a_d_tsllc_tx_ok,a_d_tsllc_tx_fail,b_nag_ap_only,b_nag_ap_active,b_nag_injecting,b_nag_tx_ok,b_d_nag_tx_ok\r\n";
     httpd_resp_sendstr_chunk(req, hdr);
-    char line[1408];
+    char line[1792];
     char wallTime[40];
     size_t start = (n < TS_CAP) ? 0 : head;  // oldest first
     for (size_t i = 0; i < n; ++i) {
@@ -523,7 +610,8 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
         if (used < 0 || (size_t)used >= sizeof(line)) continue;
         snprintf(line + used, sizeof(line) - (size_t)used,
             ",%u,%.1f,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
-            "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+            "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+            "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
             (unsigned)s.aFrames, (double)s.aFrameHz,
             (unsigned)s.aEflg, aMcpEflgStateName(s.aEflg), (unsigned)s.aEflgPeak,
             (unsigned)s.aTec, (unsigned)s.aRec, (unsigned)s.aTecPeak, (unsigned)s.aRecPeak,
@@ -541,7 +629,16 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
             (unsigned)s.aSpiMhz, (unsigned)s.aSpiTargetMhz,
             (unsigned)s.bDriverState, (unsigned)s.nagEnabled,
             (unsigned)s.aLoopGapLastUs, (unsigned)s.aLoopGapPeakUs,
-            (unsigned)s.aLoopGapOver2ms, (unsigned)s.dALoopGapOver2ms);
+            (unsigned)s.aLoopGapOver2ms, (unsigned)s.dALoopGapOver2ms,
+            (unsigned)s.summonGateOpen, (unsigned)s.summonInjectReady,
+            (unsigned)s.summonTxOk, (unsigned)s.summonTxFail,
+            (unsigned)s.summonBlocked, (unsigned)s.dSummonTxOk,
+            (unsigned)s.dSummonTxFail, (unsigned)s.dSummonBlocked,
+            (unsigned)s.tsllcInjectReady, (unsigned)s.tsllcTxOk,
+            (unsigned)s.tsllcTxFail, (unsigned)s.dTsllcTxOk,
+            (unsigned)s.dTsllcTxFail, (unsigned)s.nagApOnly,
+            (unsigned)s.nagApActive, (unsigned)s.nagInjecting,
+            (unsigned)s.modeBInject, (unsigned)s.dModeBInject);
         if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) return ESP_FAIL;
     }
     httpd_resp_sendstr_chunk(req, NULL);

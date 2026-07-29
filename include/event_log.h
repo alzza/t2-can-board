@@ -24,7 +24,7 @@ enum CanEventType : uint8_t {
     EV_ALERT_TX_FAIL  = 7, // 단일 송신 실패 (ss=true 일 때)
     EV_ALERT_RX_FULL  = 8, // RX 큐 오버플로
     EV_TX_BACKOFF     = 9, // TX 백오프 진입
-    EV_USER_MARK      = 10, // 사용자가 경고 발생 시점 표시 버튼을 누름
+    EV_USER_MARK      = 10, // 사용자가 분석 구간 시작/종료 지점을 표시
     EV_NAG_MODE       = 11, // Nag mode 전환 (detail: 1=MODE1, 2=MODE2, 3=MODE3)
     EV_MODEB_STATE    = 12, // Mode B DAS hands-on state 전이 (detail: ap<<16 | old<<8 | new)
     EV_MODEB_PHASE    = 13, // Mode B phase 전이 (detail: phase<<24 | ap<<16 | ho<<8 | decision)
@@ -40,6 +40,7 @@ enum CanEventType : uint8_t {
     EV_A_TX_GUARD_SET = 23, // A채널 TX Guard 진입
     EV_A_TX_GUARD_CLEAR = 24, // A채널 TX Guard 해제
     EV_A_SPI_TARGET = 25, // A채널 SPI 목표 속도 변경(재부팅 적용)
+    EV_FEATURE_ACTIVITY = 26, // 5초 구간 기능별 실제 주입 활동 전이
     EV_TYPE_COUNT
 };
 
@@ -87,6 +88,7 @@ inline const char* eventTypeName(uint8_t type) {
     case EV_A_TX_GUARD_SET: return "A_TX_GUARD_SET";
     case EV_A_TX_GUARD_CLEAR: return "A_TX_GUARD_CLEAR";
     case EV_A_SPI_TARGET: return "A_SPI_TARGET";
+    case EV_FEATURE_ACTIVITY: return "FEATURE_ACTIVITY";
     default: return "UNKNOWN";
     }
 }
@@ -117,6 +119,7 @@ inline uint8_t eventChannel(uint8_t type) {
     case EV_MODEB_FIRST_ECHO:
         return EV_CH_B;
     case EV_USER_MARK:
+    case EV_FEATURE_ACTIVITY:
         return EV_CH_AB;
     default:
         return EV_CH_SYSTEM;
@@ -188,6 +191,22 @@ inline uint32_t eventFeatureStateDetail() {
     if ((bool)nagKillerRuntime) detail |= 1U << 3;
     if ((bool)aMcpOneShotRuntime) detail |= 1U << 4;
     if ((bool)aTxGuardRuntime) detail |= 1U << 5;
+    if ((bool)nagApOnlyRuntime) detail |= 1U << 6;
+    return detail;
+}
+
+inline uint32_t eventFeatureActivityDetail(bool summonTx, bool tsllcTx, bool nagTx,
+                                           bool summonGate, bool aGuard,
+                                           bool apActive)
+{
+    uint32_t detail = 0;
+    if (summonTx) detail |= 1U << 0;
+    if (tsllcTx) detail |= 1U << 1;
+    if (nagTx) detail |= 1U << 2;
+    if (summonGate) detail |= 1U << 3;
+    if (aGuard) detail |= 1U << 4;
+    if (apActive) detail |= 1U << 5;
+    if ((bool)nagApOnlyRuntime) detail |= 1U << 6;
     return detail;
 }
 
@@ -282,10 +301,19 @@ inline const char* eventDetailText(uint8_t type, uint32_t detail, char* out, siz
         break;
     case EV_FEATURE_STATE:
         snprintf(out, outLen,
-                 "A_TX=%u SUMMON=%u TSLLC=%u NAG=%u ONE_SHOT=%u TX_GUARD=%u",
+                 "A_TX=%u SUMMON=%u TSLLC=%u NAG=%u ONE_SHOT=%u TX_GUARD=%u NAG_AP_ONLY=%u",
                  (unsigned)((detail >> 0) & 1U), (unsigned)((detail >> 1) & 1U),
                  (unsigned)((detail >> 2) & 1U), (unsigned)((detail >> 3) & 1U),
-                 (unsigned)((detail >> 4) & 1U), (unsigned)((detail >> 5) & 1U));
+                 (unsigned)((detail >> 4) & 1U), (unsigned)((detail >> 5) & 1U),
+                 (unsigned)((detail >> 6) & 1U));
+        break;
+    case EV_FEATURE_ACTIVITY:
+        snprintf(out, outLen,
+                 "SUMMON_TX=%u TSLLC_TX=%u NAG_TX=%u SUMMON_GATE=%u A_GUARD=%u AP_ACTIVE=%u NAG_AP_ONLY=%u",
+                 (unsigned)((detail >> 0) & 1U), (unsigned)((detail >> 1) & 1U),
+                 (unsigned)((detail >> 2) & 1U), (unsigned)((detail >> 3) & 1U),
+                 (unsigned)((detail >> 4) & 1U), (unsigned)((detail >> 5) & 1U),
+                 (unsigned)((detail >> 6) & 1U));
         break;
     case EV_A_TX_GUARD_SET:
     case EV_A_TX_GUARD_CLEAR:

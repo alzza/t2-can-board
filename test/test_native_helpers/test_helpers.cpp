@@ -1,6 +1,7 @@
 #include <unity.h>
 #include "can_frame_types.h"
 #include "can_helpers.h"
+#include "event_log.h"
 
 void setUp()
 {
@@ -8,6 +9,12 @@ void setUp()
     isaSpeedChimeSuppressRuntime = kIsaSpeedChimeSuppressDefaultEnabled;
     emergencyVehicleDetectionRuntime = kEmergencyVehicleDetectionDefaultEnabled;
     summonUnlockRuntime = kSummonUnlockDefaultEnabled;
+    tsllcRuntime = false;
+    nagKillerRuntime = false;
+    aChannelTxRuntime = false;
+    aMcpOneShotRuntime = false;
+    aTxGuardRuntime = false;
+    nagApOnlyRuntime = false;
 }
 void tearDown() {}
 
@@ -335,6 +342,30 @@ void test_runtime_defaults_match_build_configuration()
     TEST_ASSERT_TRUE(summonUnlockRuntime);
 }
 
+void test_user_marker_names_are_generic()
+{
+    TEST_ASSERT_EQUAL_STRING("USER_MARK_START", userMarkerDetailName(kUserMarkerStart));
+    TEST_ASSERT_EQUAL_STRING("USER_MARK_END", userMarkerDetailName(kUserMarkerEnd));
+    TEST_ASSERT_EQUAL_STRING("UNKNOWN", userMarkerDetailName(0));
+}
+
+void test_feature_state_detail_includes_nag_ap_only()
+{
+    aChannelTxRuntime = true;
+    summonUnlockRuntime = true;
+    tsllcRuntime = true;
+    nagKillerRuntime = true;
+    nagApOnlyRuntime = true;
+    TEST_ASSERT_EQUAL_HEX32(0x4F, eventFeatureStateDetail());
+}
+
+void test_feature_activity_detail_maps_each_feature()
+{
+    nagApOnlyRuntime = true;
+    TEST_ASSERT_EQUAL_HEX32(0x6D,
+        eventFeatureActivityDetail(true, false, true, true, false, true));
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -375,6 +406,9 @@ int main()
     RUN_TEST(test_runtime_bypass_tlssc_off_reads_frame);
     RUN_TEST(test_runtime_bypass_tlssc_off_still_reads_real_bit);
     RUN_TEST(test_runtime_defaults_match_build_configuration);
+    RUN_TEST(test_user_marker_names_are_generic);
+    RUN_TEST(test_feature_state_detail_includes_nag_ap_only);
+    RUN_TEST(test_feature_activity_detail_maps_each_feature);
 
     return UNITY_END();
 }

@@ -154,11 +154,14 @@ public:
         return 0;
     }
 
-    // EFLG.RX0OVR/RX1OVR 클리어 — sticky 비트라 SW가 명시적으로 0 써야 함.
+    // EFLG.RX0OVR/RX1OVR와 ERRIF만 클리어한다.
+    // 라이브러리의 clearRXnOVR()는 CANINTF 전체를 0으로 만들어, 이 순간 새로
+    // 도착한 RX0IF/RX1IF까지 지우고 수신 버퍼를 읽지 못하게 할 수 있다.
     void clearRxOverrun() override
     {
         Lock lock(mutex_);
-        mcp_->clearRXnOVR();
+        mcp_->clearRXnOVRFlags();
+        mcp_->clearERRIF();
     }
 
     bool recoverBusOff() override

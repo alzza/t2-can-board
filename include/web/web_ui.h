@@ -468,6 +468,10 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
 .health-mini>div{border:1px solid var(--bd);border-radius:9px;background:rgba(0,0,0,.1);padding:7px;min-width:0}
 .health-mini .k{font-size:9px;color:var(--tx4);text-transform:uppercase}.health-mini .v{font-size:11px;color:var(--tx2);font-weight:800;margin-top:3px;overflow-wrap:anywhere}
 .main-section-title{font-size:10px;font-weight:900;letter-spacing:.11em;text-transform:uppercase;color:var(--tx3);margin:0 0 7px}
+.main-toggle-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:14px}
+.main-toggle-card{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:62px;border:1px solid var(--bd);border-radius:13px;background:var(--card);padding:10px 12px;min-width:0}
+.main-toggle-card .t{font-size:12px;font-weight:900;color:var(--tx);overflow-wrap:anywhere}
+.main-toggle-card .d{font-size:9px;line-height:1.35;color:var(--tx4);margin-top:3px}
 .main-feature-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:12px}
 .main-live-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:12px}
 .main-feature-grid .stat,.main-live-grid .stat{min-height:80px;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center}
@@ -476,6 +480,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
 .diag-download-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;width:100%}
 .diag-download-grid .btn{margin-top:0;text-decoration:none;display:flex;align-items:center;justify-content:center;text-align:center}
 @media(max-width:620px){
+  .main-toggle-grid{grid-template-columns:1fr}
   .main-feature-grid,.main-live-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media(max-width:430px){
@@ -524,7 +529,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   <div class="header-actions">
     <a id="log-save-btn" href="/api/logs-bundle" data-download-url="/api/logs-bundle" download="canmod_logs.txt" onclick="return handleDownloadAction(event,this)">&#128190; 전체 저장</a>
     <span class="user-mark-wrap">
-      <button id="userMarkBtn" class="user-mark-btn" onclick="markApWarning()">USER_MARK</button>
+      <button id="userMarkBtn" class="user-mark-btn" onclick="toggleUserMarker()">USER_MARK</button>
       <span id="userMarkCount" class="user-mark-count">0회</span>
     </span>
   </div>
@@ -567,6 +572,21 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
       <div><div class="k">BUS-OFF</div><div class="v" id="s-main-busoff">0</div></div>
       <div><div class="k">Nag 준비</div><div class="v" id="s-main-b-ready">확인 중</div></div>
     </div>
+  </div>
+</div>
+<div class="main-section-title">주요 기능 스위치</div>
+<div class="main-toggle-grid">
+  <div class="main-toggle-card">
+    <div><div class="t">EU Unlock / Summon</div><div class="d">동일한 mux 1 프레임 · HW3 bit 46</div></div>
+    <label class="sw"><input type="checkbox" id="mSummon" onchange="togSwitch('/api/summon-unlock',this)"><span class="sl"></span></label>
+  </div>
+  <div class="main-toggle-card">
+    <div><div class="t">TSLLC / EAP</div><div class="d">A채널 mux 0 조건부 수정</div></div>
+    <label class="sw"><input type="checkbox" id="mTsllc" onchange="togSwitch('/api/tsllc',this)"><span class="sl"></span></label>
+  </div>
+  <div class="main-toggle-card">
+    <div><div class="t">Nag Killer</div><div class="d" id="mNagScope">B채널 · 주입 범위 확인 중</div></div>
+    <label class="sw"><input type="checkbox" id="mNag" onchange="togSwitch('/api/nag-killer',this)"><span class="sl"></span></label>
   </div>
 </div>
 <div class="main-section-title">기능 상태</div>
@@ -703,6 +723,13 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
     </div>
     <label class="sw"><input type="checkbox" id="tNag" onchange="togSwitch('/api/nag-killer',this)"><span class="sl"></span></label>
   </div>
+  <div class="row child-row">
+    <div class="labelWrap">
+      <span class="label">모드 1/2 주입 범위 · 오토파일럿 전용</span>
+      <span class="meta" id="metaNagApOnly">ON(권장): AP 상태 3~6에서만 주입 · OFF: 검증 원본의 선제 주입 범위</span>
+    </div>
+    <label class="sw"><input type="checkbox" id="tNagApOnly" onchange="togSwitch('/api/nag-ap-only',this)"><span class="sl"></span></label>
+  </div>
   <!-- HW3 Nag Killer MODE 1/2/3 선택 + 실시간 통계 -->
   <div class="row child-row" id="nagModePanel">
     <div style="width:100%">
@@ -711,14 +738,14 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
           <div style="font-size:10px;font-weight:800;letter-spacing:.08em;color:var(--tx3)">HW3 · ID 880</div>
           <div style="font-size:16px;font-weight:900;color:var(--tx);margin-top:2px">Nag 동작 모드</div>
         </div>
-        <span class="nag-mode-badge" id="nagModeLabel">MODE 3 · 기본</span>
+        <span class="nag-mode-badge" id="nagModeLabel">MODE 2 · AP 전용 · 권장</span>
       </div>
       <div class="nag-mode-grid" role="radiogroup" aria-label="Nag Killer mode">
         <label class="nag-mode-card"><input type="radio" name="nagMode" value="1" onchange="setNagMode(1)"><span class="nag-mode-face"><span class="nag-mode-kicker">MODE 1</span><span class="nag-mode-title">고정 에코</span><span class="nag-mode-copy">+1.80Nm 고정 토크. DAS/조향각 조건 없음.</span></span></label>
-        <label class="nag-mode-card"><input type="radio" name="nagMode" value="2" onchange="setNagMode(2)"><span class="nag-mode-face"><span class="nag-mode-kicker">MODE 2</span><span class="nag-mode-title">순환 에코</span><span class="nag-mode-copy">4단계 토크를 1초 순환하고 1.5초 휴지.</span></span></label>
-        <label class="nag-mode-card"><input type="radio" name="nagMode" value="3" onchange="setNagMode(3)"><span class="nag-mode-face"><span class="nag-mode-kicker">MODE 3</span><span class="nag-mode-title">조건부 상태기계</span><span class="nag-mode-copy">AP·DAS·조향각 최근 수신 상태를 확인한 후만 주입.</span><span class="nag-mode-badge">기본 · 권장</span></span></label>
+        <label class="nag-mode-card"><input type="radio" name="nagMode" value="2" onchange="setNagMode(2)"><span class="nag-mode-face"><span class="nag-mode-kicker">MODE 2</span><span class="nag-mode-title">순환 에코</span><span class="nag-mode-copy">4단계 토크를 1초 순환하고 1.5초 휴지.</span><span class="nag-mode-badge">기본 · 권장</span></span></label>
+        <label class="nag-mode-card"><input type="radio" name="nagMode" value="3" onchange="setNagMode(3)"><span class="nag-mode-face"><span class="nag-mode-kicker">MODE 3</span><span class="nag-mode-title">조건부 상태기계</span><span class="nag-mode-copy">AP·DAS·조향각 최근 수신 상태를 확인한 후만 주입.</span><span class="nag-mode-badge">레거시 · 비권장</span></span></label>
       </div>
-      <div id="nagModeDesc" class="nag-mode-desc">MODE 3: 조건을 모두 확인할 때만 주입하는 기본 모드입니다.</div>
+      <div id="nagModeDesc" class="nag-mode-desc">MODE 2 + AP 전용: AP 상태 3~6에서 원본 순환 패턴을 사용합니다.</div>
       <div id="nagDescB" style="font-size:11px;line-height:1.6;margin-bottom:8px;padding:8px 9px;background:rgba(0,0,0,.12);border-radius:9px">
         <div class="profile-mini-grid">
           <div class="stat"><div class="k">입력</div><div class="v" id="nmInput">880</div></div>
@@ -769,7 +796,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
     <div class="diag-signal-group">
       <div class="diag-lbl">A채널</div>
       <div class="diag-row">
-        <span class="chip ok" id="d-a-tx"     title="TX 결과 OK/Fail. Fail↑ → 송신 큐 포화 또는 하드 실패">TX 0/0</span>
+        <span class="chip ok" id="d-a-tx"     title="TX 누적 OK/Fail과 최근 1초 실패/피크. 단발 실패는 기록만 하고 임계값 이상일 때 보호합니다.">TX 0/0 · 1s 0/0</span>
         <span class="chip ok" id="d-a-tec"    title="TEC 현재/피크. ≥96 경고, ≥128 에러패시브">TEC 0/0</span>
         <span class="chip ok" id="d-a-merrf"  title="MERRF 누적. ↑ = ACK 부재 또는 동일 ID 충돌">MERRF 0</span>
         <span class="chip ok" id="d-a-rxovr"  title="RX 버퍼 오버런 누적. clear 후 재발 시 폴링 부족">RX-OVR 0</span>
@@ -942,7 +969,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
     <button class="btn" id="diagBtn" onclick="startCanDiag()">CAN 진단</button>
     <button class="btn" onclick="resetTimeseries()">🗑 로그 초기화</button>
     <button class="btn" id="recBtn" onclick="toggleTimeseriesRec()">⏺ 기록 시작</button>
-    <button class="btn user-mark-btn" id="markBtn" onclick="markApWarning()">USER_MARK</button>
+    <button class="btn user-mark-btn" id="markBtn" onclick="toggleUserMarker()">USER_MARK</button>
     <span id="recStatus" style="font-size:12px;color:var(--muted)"></span>
     <span id="diagStatus" style="font-size:12px;color:var(--muted)"></span>
   </div>
@@ -1272,22 +1299,32 @@ function toggleTheme(){
   if(btn)btn.textContent=next==='dark'?'\u2600 Light':'\ud83c\udf19 Dark';
   fetch('/api/set-theme',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({theme:next})}).catch(function(){});
 }
-var _nagMode=3;
+var _nagMode=2;
+var _nagApOnly=true;
 var _nagModePhaseLabels=['idle','fixed','cycle','state2 대기','state2 walk','state3 대기','state3 wave'];
 var _nagModeFallback={
-  1:{label:'MODE 1',summary:'고정 +1.80Nm 에코. DAS/조향각 조건을 사용하지 않습니다.',input:'880',pattern:'+1.80Nm',timing:'연속',context:'없음'},
-  2:{label:'MODE 2',summary:'4개 토크를 200ms 간격으로 1초 순환한 뒤 1.5초 쉬었다가 반복합니다.',input:'880',pattern:'4-step',timing:'1.0/1.5초',context:'없음'},
-  3:{label:'MODE 3',summary:'AP 3~6, 921/923·297 최근 수신 상태(1초 이내), 조향각 ±5°를 확인하는 조건부 상태기계입니다.',input:'880+921/923+297',pattern:'walk / wave',timing:'2.0/1.0초',context:'AP·DAS·297'}
+  1:{label:'MODE 1',summary:'고정 +1.80Nm 에코. 주입 범위 토글로 원본 또는 AP 전용을 선택합니다.',input:'880 + AP(선택)',pattern:'+1.80Nm',timing:'연속',context:'원본 / AP 전용'},
+  2:{label:'MODE 2',summary:'4개 토크를 200ms 간격으로 1초 순환한 뒤 1.5초 쉬며, 주입 범위를 선택합니다.',input:'880 + AP(선택)',pattern:'4-step',timing:'1.0/1.5초',context:'원본 / AP 전용'},
+  3:{label:'MODE 3',summary:'최신 원본에서 제거된 레거시 모드. AP 3~6, 921/923·297 최근 수신, 조향각 ±5°를 확인합니다.',input:'880+921/923+297',pattern:'walk / wave',timing:'2.0/1.0초',context:'레거시'}
 };
+function updateNagApOnlyUi(enabled){
+  _nagApOnly=!!enabled;
+  var toggle=document.getElementById('tNagApOnly');if(toggle)toggle.checked=_nagApOnly;
+  var scope=_nagApOnly?'AP 전용':'원본 범위';
+  var meta=document.getElementById('metaNagApOnly');
+  if(meta)meta.textContent=(_nagApOnly?'ON(권장): AP 상태 3~6에서만 주입':'OFF: 검증 원본처럼 일반주행에서도 선제 주입')+' · 모드 1/2에만 적용';
+  var main=document.getElementById('mNagScope');if(main)main.textContent='B채널 · '+scope;
+}
 function updateNagModeUi(d){
   var mode=(d&&d.mode!==undefined)?Number(d.mode):_nagMode;
-  if(!(mode>=1&&mode<=3))mode=3;
+  if(!(mode>=1&&mode<=3))mode=2;
   _nagMode=mode;
   var info=_nagModeFallback[mode];
   var radios=document.querySelectorAll('input[name="nagMode"]');
   for(var i=0;i<radios.length;i++)radios[i].checked=Number(radios[i].value)===mode;
-  var badge=document.getElementById('nagModeLabel');if(badge)badge.textContent=info.label+(mode===3?' · 기본':'');
-  var meta=document.getElementById('metaNag');if(meta)meta.textContent=info.label+' · '+(mode===3?'DAS/297 조건부':'880 원본 규칙');
+  if(d&&d.apOnly!==undefined)updateNagApOnlyUi(!!d.apOnly);
+  var badge=document.getElementById('nagModeLabel');if(badge)badge.textContent=info.label+(mode===3?' · 레거시':' · '+(_nagApOnly?'AP 전용':'원본 범위')+(mode===2&&_nagApOnly?' · 권장':''));
+  var meta=document.getElementById('metaNag');if(meta)meta.textContent=info.label+' · '+(mode===3?'최신 원본에서 제거된 레거시':'880 '+(_nagApOnly?'AP 전용':'원본 범위'));
   var mainMode=document.getElementById('s-main-profile');if(mainMode){mainMode.textContent=info.label;mainMode.className='stat-val v-acc';fitMainStat(mainMode,info.label);}
   var desc=document.getElementById('nagModeDesc');if(desc)desc.textContent=(d&&d.modeSummary)||info.summary;
   var e=document.getElementById('nmInput');if(e)e.textContent=info.input;
@@ -1321,6 +1358,7 @@ function tickNagStats(){
     if(d.boSoftMode!==undefined&&_boSoftMode!==!!d.boSoftMode){_boSoftMode=!!d.boSoftMode;updateBoModeUi();}
     var boFallbackInfo=document.getElementById('boFallbackInfo');if(boFallbackInfo)boFallbackInfo.textContent='Hard fallback '+(d.boSoftFallback||0)+'회';
     if(d.mode!==undefined)updateNagModeUi(d);
+    if(d.apOnly!==undefined)updateNagApOnlyUi(!!d.apOnly);
     // Nag MODE 1/2/3 상태 업데이트
     var eApst=document.getElementById('ns_apst');if(eApst){eApst.textContent=nagApStateText(d);eApst.title=nagApStateTitle(d)+' · 921='+n(d.frames921)+' 923='+n(d.frames923)+' last='+n(d.lastDasStatusAgeMs)+'ms';}
     var mainAp=document.getElementById('s-main-ap');if(mainAp){var mainApText=nagApStateMainText(d);mainAp.textContent=mainApText;mainAp.className=statusClass(apStateAllowsInject(d.dasApState)?'ok':'warn');mainAp.title=nagApStateMainTitle(d)+' · 921='+n(d.frames921)+' 923='+n(d.frames923)+' last='+n(d.lastDasStatusAgeMs)+'ms';fitMainStat(mainAp,mainApText);}
@@ -1535,6 +1573,7 @@ function updateMainGuidance(d){
   var age=n(d&&d.lastDasStatusAgeMs);
   var nagToggle=document.getElementById('tNag');
   var nagOn=!!(nagToggle&&nagToggle.checked);
+  var apScope=(_nagMode===1||_nagMode===2)&&_nagApOnly;
   var activeDecision='NONE';
 
   if(!nagOn){
@@ -1551,7 +1590,7 @@ function updateMainGuidance(d){
     }else{
       secondary='CAN 시작 후 안전 대기 중입니다. '+Math.min(15,Math.floor(n(d&&d.warmupElapsedMs)/1000))+' / 15초';
     }
-  } else if(_nagMode===3&&(!d||d.dasApState===undefined||age===0||age>3000)){
+  } else if((_nagMode===3||apScope)&&(!d||d.dasApState===undefined||age===0||age>3000)){
     level='warn';
     activeDecision='NO_921';
     primary='상태 수신 대기 중입니다.';
@@ -1577,11 +1616,11 @@ function updateMainGuidance(d){
     var nm=Math.abs(Number(d.modeBLastNm||d.torqueNm||0));
     primary='현재 가상 토크 주입 중입니다.';
     secondary='현재 '+nm.toFixed(2)+'Nm 가상 토크를 주입 중입니다.';
-  } else if(_nagMode===3&&(!apStateAllowsInject(ap)||decision==='AP_BLOCK')){
+  } else if((_nagMode===3||apScope)&&(!apStateAllowsInject(ap)||decision==='AP_BLOCK')){
     level='warn';
     activeDecision='AP_BLOCK';
     primary='오토스티어 조건이 아니어서 대기 중입니다.';
-    secondary='AP 상태가 주입 허용 구간(3-6)으로 바뀌면 대응합니다.';
+    secondary='AP 상태가 주입 허용 구간(3-6)으로 바뀌면 주입합니다.';
   } else if(decision==='MODE_PAUSE'){
     level='dim';
     activeDecision='MODE_PAUSE';
@@ -1601,7 +1640,7 @@ function updateMainGuidance(d){
     level='dim';
     activeDecision=(decision&&decision!=='NONE')?decision:'NO_ECHO';
     primary='현재 주입 대기 중입니다.';
-    secondary='경고 발생 시에만 가상 토크 주입을 시작합니다.';
+    secondary=_nagMode===3?'경고 조건이 맞을 때만 가상 토크 주입을 시작합니다.':'선택한 주입 범위와 모드 주기에 따라 동작합니다.';
   }
 
   card.className='main-guidance '+level;
@@ -1705,7 +1744,8 @@ function updateChannelStatus(d){
   setTxt('bRecStat',n(b.recovery_attempt_count)+' / '+n(b.recovery_success_count)+' / '+n(b.recovery_fail_count),'val');
   setTxt('bRecMs',n(b.last_recovery_duration_ms)+' ms','val');
   setTxt('bErrPeak',n(b.twai_rx_err_peak)+' / '+n(b.twai_tx_err_peak),'val');
-  setChip('d-a-tx','TX '+n(a.tx_ok)+'/'+n(a.tx_fail),n(a.tx_fail)?'warn':'ok');
+  var aFail1s=n(a.tx_fail_window),aFailTh=n(a.tx_fail_guard_threshold)||2;
+  setChip('d-a-tx','TX '+n(a.tx_ok)+'/'+n(a.tx_fail)+' · 1s '+aFail1s+'/'+n(a.tx_fail_window_peak),aFail1s>=aFailTh?'warn':'ok');
   var aTec=n(a.tec),aTecPeak=n(a.tec_peak);setChip('d-a-tec','TEC '+aTec+'/'+aTecPeak,aTec>=128||aTecPeak>=128?'err':aTec>=96||aTecPeak>=96?'warn':'ok');
   setChip('d-a-merrf','MERRF '+n(a.merrf),n(a.merrf)?'warn':'ok');
   setChip('d-a-rxovr','RX-OVR '+n(a.rx_ovr),n(a.rx_ovr)?'warn':'ok');
@@ -1744,6 +1784,7 @@ async function poll(){
     var elNag=document.getElementById('nag');
     if(elNag){elNag.textContent=d.nag_killer?'활성':'비활성';elNag.className='val '+(d.nag_killer?'on':'off');}
     var tSummon=document.getElementById('tSummon');if(tSummon)tSummon.checked=!!d.summon_unlock_enabled;
+    var mSummon=document.getElementById('mSummon');if(mSummon)mSummon.checked=!!d.summon_unlock_enabled;
     var su=d.summon_unlock||{};
     var suMainText=!su.enabled?'OFF':!su.tx_master?'TX OFF':su.gate?'OPEN':'BLOCKED';
     setTxt('s-main-summon',suMainText,'stat-val '+(su.active&&su.gate?'v-ok':su.enabled?'v-err':'v-dim'));
@@ -1768,9 +1809,12 @@ async function poll(){
     var suReason=document.getElementById('summonGateReason');
     if(suReason)suReason.textContent='Gate '+(su.gate?'OPEN':'BLOCKED')+' · '+(su.block_reason||'--')+' · HW3 bit46';
     var tTsllc=document.getElementById('tTsllc');if(tTsllc)tTsllc.checked=!!d.tsllc_enabled;
+    var mTsllc=document.getElementById('mTsllc');if(mTsllc)mTsllc.checked=!!d.tsllc_enabled;
     var tAChannelTx=document.getElementById('tAChannelTx');if(tAChannelTx)tAChannelTx.checked=!!d.a_channel_tx;
     var tNag=document.getElementById('tNag');if(tNag)tNag.checked=!!d.nag_killer;
+    var mNag=document.getElementById('mNag');if(mNag)mNag.checked=!!d.nag_killer;
     var tBNagMaster=document.getElementById('tBNagMaster');if(tBNagMaster)tBNagMaster.checked=!!d.nag_killer;
+    if(d.nag_ap_only!==undefined)updateNagApOnlyUi(!!d.nag_ap_only);
     if(d.features){
       var tASpi8=document.getElementById('tASpi8');if(tASpi8)tASpi8.checked=!!(d.features.a_spi_8mhz&&d.features.a_spi_8mhz.enabled);
       var tAOneShot=document.getElementById('tAOneShot');if(tAOneShot)tAOneShot.checked=!!(d.features.a_mcp_oneshot&&d.features.a_mcp_oneshot.enabled);
@@ -1831,7 +1875,6 @@ async function resetTimeseries(){
   try{var r=await fetch('/api/timeseries/reset',{method:'POST'});
     var d=await r.json();
     st.textContent=d.ok?'✓ 로그 초기화 완료':'초기화 실패';
-    if(d.ok)updateUserMarkerUi({active:false,log_count:0,count:0});
     updateRecStatus();
   }catch(e){st.textContent='서버 오류';}
 }
@@ -1843,18 +1886,18 @@ function fmtElapsed(ms){
 function updateUserMarkerUi(d){
   d=d||{};
   var hasActive=d.user_marker_active!==undefined||d.active!==undefined;
-  var hasCount=d.user_marker_log_count!==undefined||d.log_count!==undefined||d.count!==undefined;
+  var hasCount=d.user_marker_count!==undefined||d.count!==undefined||d.user_marker_log_count!==undefined||d.log_count!==undefined;
   var btns=[document.getElementById('userMarkBtn'),document.getElementById('markBtn')];
   var currentBtn=btns[0]||btns[1];
   var active=hasActive?!!(d.user_marker_active!==undefined?d.user_marker_active:d.active):!!(currentBtn&&currentBtn.classList&&currentBtn.classList.contains('active'));
-  var count=hasCount?(d.user_marker_log_count!==undefined?d.user_marker_log_count:(d.log_count!==undefined?d.log_count:d.count)):null;
+  var count=hasCount?(d.user_marker_count!==undefined?d.user_marker_count:(d.count!==undefined?d.count:(d.user_marker_log_count!==undefined?d.user_marker_log_count:d.log_count))):null;
   for(var i=0;i<btns.length;i++){
     var btn=btns[i];
     if(!btn)continue;
     btn.disabled=false;
     btn.textContent='USER_MARK';
     btn.classList.toggle('active',active);
-    btn.title=active?'경고 구간 기록 중. 다시 누르면 AP_WARNING_END가 기록됩니다.':'경고 첫 표시 순간에 누르면 AP_WARNING_START가 기록됩니다.';
+    btn.title=active?'분석 구간 시작 지점이 기록됐습니다. 다시 누르면 USER_MARK_END로 종료합니다.':'분석할 이벤트나 구간의 시작 지점에 USER_MARK_START를 기록합니다.';
   }
   var c=document.getElementById('userMarkCount');
   if(c&&count!==null)c.textContent=n(count)+'회';
@@ -1876,12 +1919,11 @@ async function toggleTimeseriesRec(){
   try{await fetch('/api/timeseries/rec',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({start:starting})});
     updateRecStatus();
-    if(starting)updateUserMarkerUi({active:false,log_count:0,count:0});
     if(starting){if(!recTimer)recTimer=setInterval(updateRecStatus,1000);}
     else{if(recTimer){clearInterval(recTimer);recTimer=null;}}
   }catch(e){}
 }
-async function markApWarning(){
+async function toggleUserMarker(){
   var btn=document.getElementById('userMarkBtn')||document.getElementById('markBtn');
   var st=document.getElementById('diagStatus');
   var wasActive=btn&&btn.classList?btn.classList.contains('active'):false;
@@ -1892,7 +1934,7 @@ async function markApWarning(){
   var btns=[document.getElementById('userMarkBtn'),document.getElementById('markBtn')];
   for(var i=0;i<btns.length;i++){if(btns[i])btns[i].disabled=true;}
   try{
-    var r=await fetch('/api/user-marker?type=ap_warning',{method:'POST'});
+    var r=await fetch('/api/user-marker',{method:'POST'});
     var d=await r.json();
     updateUserMarkerUi(d);
     if(st)st.textContent=d.ok?('✓ '+d.detail_text+' 기록됨 · '+d.timestamp_ms+'ms · '+d.log_count+'회'):'마커 실패';

@@ -6,6 +6,33 @@
 
 ## [Unreleased]
 
+## [1.3.6] - 2026-07-30
+
+### 변경
+
+- 최신 `nag-killer` 원본에서 이전 Mode C가 제거된 점과 실차 결과를 반영해 MODE 2 + AP 전용을 새 기본·권장값으로 지정하고 MODE 3은 레거시 비권장으로 유지.
+- MODE 1/2에 검증 원본 선제 주입 범위와 AP 상태 3~6 전용 범위를 선택하는 Web UI/API/NVS 토글 추가.
+- 실제 EPAS hands-on 값이 0이 아니면 모든 모드가 수정 송신하지 않도록 공통 안전 조건을 통일.
+- `USER_MARK`를 AP 경고 전용이 아닌 일반 로그 분석 구간 마커로 정의하고 `USER_MARK_START/END` 한 쌍당 완료 횟수를 1 증가.
+- USER_MARK 완료 횟수, 진행 상태와 원문은 로그 초기화와 새 기록 시작에도 유지하고 보드 재부팅 때만 초기화.
+- 메인 화면에 EU Unlock/Summon, TSLLC, Nag Killer 스위치를 배치하고 Nag 주입 범위를 함께 표시.
+- `Summon-Unlock`과 `nag-killer` 최신 원본 주소·확인 커밋을 프로젝트 컨텍스트 노트에 고정.
+
+### 추가
+
+- Summon/TSLLC/Nag의 기능 스위치, 주입 준비, 실제 송신 증분을 전체 로그·시계열 CSV·이벤트 CSV·자가 진단 CSV에 공통 기록.
+- A채널 TX Fail의 최근 1초 증가량·세션 피크·보호 임계값을 상태 API, Web UI, CANMOD 로그와 자가 진단에 추가.
+
+### 수정
+
+- MCP2515 수신 오버런 정리 시 `CANINTF` 전체를 지우던 라이브러리 경로를 사용하지 않고 `RX0OVR/RX1OVR`와 `ERRIF`만 지워, 새로 도착한 `RX0IF/RX1IF`가 유실될 수 있는 문제를 수정.
+- One-shot의 TEC/MERRF 없는 단발 TX 실패는 이력만 남기고, 1초 안에 2회 이상 실패할 때만 TX Fail 사유의 15초 Guard를 시작하도록 과민 차단을 완화. EFLG·TEC 이상은 기존처럼 즉시 보호.
+- Web UI의 누적 TX Fail이 한 번 증가한 뒤 영구 경고로 보이던 표시를 최근 1초 실패량이 Guard 임계값에 도달했을 때만 경고하도록 수정.
+
+### 확인
+
+- `Summon-Unlock` 2026-07-29 최신 원본은 대시보드 파일만 추가됐으며 `Parked || Summoning`, mux 1 bit 19, HW3 bit 46 포팅 로직에는 변경 없음.
+
 ## [1.3.5] - 2026-07-24
 
 ### 변경

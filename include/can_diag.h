@@ -63,7 +63,25 @@ static void canDiagTaskFn(void* /*pv*/) {
         L("  \u26a0\ufe0f \uc8fc\uc758: Nag Killer \uae30\ub2a5\uc774 \ud604\uc7ac OFF \uc0c1\ud0dc\uc785\ub2c8\ub2e4. "
           "(\uc774\ud6c4 [4/6] \ub2e8\uacc4\uc5d0\uc11c \uc5d0\ucf54\uac00 \ubc1c\uc0dd\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4)");
     }
-    snprintf(buf, sizeof(buf), "  NagMode:%s | \ub300\uc0c1ID: 0x%03X", nagModeName(nagMode), targetId);
+    snprintf(buf, sizeof(buf), "  NagMode:%s Scope:%s | 대상ID: 0x%03X",
+        nagModeName(nagMode), (bool)nagApOnlyRuntime ? "AP_ONLY" : "ORIGINAL",
+        targetId);
+    L(buf);
+    snprintf(buf, sizeof(buf), "  기능 SW: Summon=%s TSLLC=%s Nag=%s | A-TX=%s Guard=%s",
+        (bool)summonUnlockRuntime ? "ON" : "OFF",
+        (bool)tsllcRuntime ? "ON" : "OFF",
+        (bool)nagKillerRuntime ? "ON" : "OFF",
+        (bool)aChannelTxRuntime ? "ON" : "OFF",
+        aTxGuardActive(now1) ? "ON" : "OFF");
+    L(buf);
+    snprintf(buf, sizeof(buf), "  기능 준비: Summon=%s(gate=%s) TSLLC=%s Nag=%s(AP=%u)",
+        ((bool)summonUnlockRuntime && (bool)aChannelTxRuntime &&
+         summonGateOpen() && !aTxGuardActive(now1)) ? "YES" : "NO",
+        summonGateOpen() ? "OPEN" : "BLOCKED",
+        ((bool)tsllcRuntime && (bool)aChannelTxRuntime &&
+         !aTxGuardActive(now1)) ? "YES" : "NO",
+        (bool)bChannelDiag.nagReady ? "YES" : "NO",
+        (unsigned)(uint8_t)bChannelDiag.dasAutopilotStateRx);
     L(buf);
     vTaskDelay(pdMS_TO_TICKS(200));
 
@@ -77,8 +95,14 @@ static void canDiagTaskFn(void* /*pv*/) {
     uint32_t s_a_ovr = (uint32_t)aChannelDiag.aRxOvrCount;
     uint32_t s_a_eflg_ev = (uint32_t)aChannelDiag.mcpEflgEventCount;
     uint32_t s_a_gap_over2 = (uint32_t)aChannelDiag.loopGapOver2msCount;
+    uint32_t s_summon_ok = (uint32_t)summonGateDiag.txOk;
+    uint32_t s_summon_fail = (uint32_t)summonGateDiag.txFail;
+    uint32_t s_summon_block = (uint32_t)summonGateDiag.blocked;
+    uint32_t s_tsllc_ok = (uint32_t)aChannelDiag.tsllcTxOk;
+    uint32_t s_tsllc_fail = (uint32_t)aChannelDiag.tsllcTxFail;
     uint32_t s_tot = (uint32_t)bChannelDiag.framesReceivedTotal;
     uint32_t s_tgt = (uint32_t)bChannelDiag.frames880;  // nagTargetId 기준 카운터
+    uint32_t s_nag_ok = (uint32_t)bChannelDiag.echoCount;
     uint32_t s_921 = (uint32_t)bChannelDiag.frames921;
     uint32_t s_923 = (uint32_t)bChannelDiag.frames923;
     // (a) ArbLost/BusErr/TxFail 스냅샷
@@ -100,8 +124,14 @@ static void canDiagTaskFn(void* /*pv*/) {
     uint32_t d_a_ovr = (uint32_t)aChannelDiag.aRxOvrCount - s_a_ovr;
     uint32_t d_a_eflg_ev = (uint32_t)aChannelDiag.mcpEflgEventCount - s_a_eflg_ev;
     uint32_t d_a_gap_over2 = (uint32_t)aChannelDiag.loopGapOver2msCount - s_a_gap_over2;
+    uint32_t d_summon_ok = (uint32_t)summonGateDiag.txOk - s_summon_ok;
+    uint32_t d_summon_fail = (uint32_t)summonGateDiag.txFail - s_summon_fail;
+    uint32_t d_summon_block = (uint32_t)summonGateDiag.blocked - s_summon_block;
+    uint32_t d_tsllc_ok = (uint32_t)aChannelDiag.tsllcTxOk - s_tsllc_ok;
+    uint32_t d_tsllc_fail = (uint32_t)aChannelDiag.tsllcTxFail - s_tsllc_fail;
     uint32_t d_tot = (uint32_t)bChannelDiag.framesReceivedTotal - s_tot;
     uint32_t d_tgt = (uint32_t)bChannelDiag.frames880 - s_tgt;
+    uint32_t d_nag_ok = (uint32_t)bChannelDiag.echoCount - s_nag_ok;
     uint32_t d_921 = (uint32_t)bChannelDiag.frames921 - s_921;
     uint32_t d_923 = (uint32_t)bChannelDiag.frames923 - s_923;
     uint32_t d_arb  = (uint32_t)bChannelDiag.bArbLost  - s_arb;
@@ -113,8 +143,12 @@ static void canDiagTaskFn(void* /*pv*/) {
         aMcpEflgStateName((uint8_t)aChannelDiag.mcpEflg),
         d_tot, targetId, d_tgt);
     L(buf);
-    snprintf(buf, sizeof(buf), "  A Fail+%u MERRF+%u RX-OVR+%u EFLG-EV+%u | B Arb+%u BusErr+%u TxFail+%u",
-        d_a_fail, d_a_merrf, d_a_ovr, d_a_eflg_ev, d_arb, d_berr, d_tfail);
+    snprintf(buf, sizeof(buf), "  A Fail+%u (1s:%u peak:%u th:%u) MERRF+%u RX-OVR+%u EFLG-EV+%u | B Arb+%u BusErr+%u TxFail+%u",
+        d_a_fail,
+        (unsigned)(uint8_t)aChannelDiag.aTxFailWindowDelta,
+        (unsigned)(uint8_t)aChannelDiag.aTxFailWindowPeak,
+        (unsigned)kATxGuardTxFailBurstThreshold,
+        d_a_merrf, d_a_ovr, d_a_eflg_ev, d_arb, d_berr, d_tfail);
     L(buf);
     snprintf(buf, sizeof(buf), "  A LoopGap last=%uus peak=%uus >2ms:+%u",
         (unsigned)(uint32_t)aChannelDiag.loopGapLastUs,
@@ -125,6 +159,11 @@ static void canDiagTaskFn(void* /*pv*/) {
         (unsigned)(uint32_t)aChannelDiag.wakeCount,
         (bool)aChannelDiag.wakeAwaitingSummonTx ? "측정중/" : "",
         (unsigned)(uint32_t)aChannelDiag.wakeToSummonTxMs);
+    L(buf);
+    snprintf(buf, sizeof(buf), "  5초 기능활동: Summon +%u/%u Block+%u | TSLLC +%u/%u | Nag TX +%u",
+        (unsigned)d_summon_ok, (unsigned)d_summon_fail,
+        (unsigned)d_summon_block, (unsigned)d_tsllc_ok,
+        (unsigned)d_tsllc_fail, (unsigned)d_nag_ok);
     L(buf);
     if (d_arb > 5 || d_berr > 5) {
         L("  \u26a0\ufe0f  \ucda9\ub3cc/\ube44\ud2b8 \uc5d0\ub7ec \uc99d\uac00 \u2192 \ub3d9\uc77c ID \uacbd\uc7c1 \ub610\ub294 \ubb3c\ub9ac \uacc4\uce35 \ub178\uc774\uc988 \uc758\uc2ec");

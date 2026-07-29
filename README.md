@@ -40,6 +40,16 @@ LILYGO T2-CAN ESP32-S3에서 동작하는 Tesla HW3용 듀얼 CAN 펌웨어입�
 | Nag Killer | CAN-B | EPAS 토크 프레임 ID 880을 조건에 맞춰 수정·재송신 |
 | Web UI·OTA | Wi-Fi | 실시간 CAN 상태, 런타임 토글, OTA 및 복구 UI |
 
+### 외부 검증 원본
+
+CAN 로직을 변경하거나 실차 로그를 판정할 때 다음 최신 원본을 먼저 비교합니다.
+
+- [Nag Killer 저장소](https://github.com/06066060606060/nag-killer) / [기준 INO](https://github.com/06066060606060/nag-killer/blob/main/Nag-killer.ino)
+- [Summon Unlock 저장소](https://github.com/06066060606060/Summon-Unlock) / [기준 INO](https://github.com/06066060606060/Summon-Unlock/blob/main/summon_unlock.ino)
+
+Web UI·BLE·Wi-Fi 구현 차이와 CAN 알고리즘 차이를 분리해서 검토하며, 원본에
+없는 CAN ID·비트·주기·송신 조건은 사용자 확인 없이 추가하지 않습니다.
+
 ## 빠른 시작
 
 ### 1. PlatformIO 설치
@@ -155,16 +165,19 @@ HW4 INO 경로는 bit 47을 사용하지만, 이 저장소의 기본 빌드는 H
 1. **자가 진단 결과 CSV**를 저장합니다. 진단을 실행하지 않았다면 `NOT_RUN` 안내 행이 저장됩니다.
 2. **A/B 상태 시계열 CSV**를 저장합니다.
 3. **채널별 이벤트 CSV**를 저장합니다.
-4. 가능하면 경고가 보인 즉시 `USER_MARK`를 누르고 **전체 로그 저장**도 실행합니다.
+4. 분석할 이벤트나 구간의 시작과 종료 지점에서 각각 `USER_MARK`를 누른 뒤 **전체 로그 저장**도 실행합니다.
 
-`RX_OVERRUN`은 MCP2515의 2개 수신 버퍼가 소프트웨어가 비우기 전에 가득 찼다는 뜻입니다. 경고를 숨기거나 임계값을 완화하지 않으며, 반복 발생 여부는 CSV의 `a_rx_overrun`, `a_eflg`, `a_loop_gap_last_us`, `a_loop_gap_peak_us`, `a_d_loop_gap_over_2ms` 열로 판단합니다. 오버런 이벤트의 `detail_text`에는 당시 최대 `loop_gap_us`가 함께 저장됩니다.
+`RX_OVERRUN`은 MCP2515의 2개 수신 버퍼가 소프트웨어가 비우기 전에 가득 찼다는 뜻입니다. 경고를 숨기거나 임계값을 완화하지 않으며, 반복 발생 여부는 CSV의 `a_rx_overrun`, `a_eflg`, `a_loop_gap_last_us`, `a_loop_gap_peak_us`, `a_d_loop_gap_over_2ms` 열로 판단합니다. 오버런 이벤트의 `detail_text`에는 당시 최대 `loop_gap_us`가 함께 저장됩니다. 오버런 정리 시에는 EFLG의 오버런 비트와 ERRIF만 지우고, 새 프레임 도착을 알리는 RX0IF/RX1IF는 보존합니다.
 
 새 저장 형식은 모든 행에 실제 시각과 업타임을 함께 기록하고, `a_`, `b_`, `system_` 접두사로 채널을 구분합니다. 기본 상태에서는 최근 20분을 자동 보관합니다. **기록 시작**은 기존 로그를 지우고 수동 구간을 시작하며, **기록 정지**는 이후 샘플 추가를 멈춰 그 구간을 고정합니다.
 
-실차에서 관찰된 `EFLG=0x80/0xC0`은 TEC/REC·MERRF 증가가 없는 RX 버퍼 오버런이었습니다. 펌웨어는 Core 1의 주기 USB 시리얼 출력을 제거하고 B채널 수신 burst 8프레임마다 A채널을 다시 처리하며, 1ms 태스크 양보 직전에도 A 버퍼를 비웁니다. TEC/REC 또는 MERRF가 함께 증가하지 않는 한 배선·종단 오류로 단정하지 마십시오.
+실차에서 관찰된 `EFLG=0x80/0xC0`은 TEC/REC·MERRF 증가가 없는 RX 버퍼 오버런이었습니다. 펌웨어는 Core 1의 주기 USB 시리얼 출력을 제거하고 B채널 수신 burst 2프레임마다 A채널을 다시 처리하며, 1ms 태스크 양보 직전에도 A 버퍼를 비웁니다. TEC/REC 또는 MERRF가 함께 증가하지 않는 한 배선·종단 오류로 단정하지 마십시오.
+
+MCP2515 one-shot과 TX Guard는 계속 켜는 것을 권장합니다. One-shot에서는 동일 ID와의 중재 손실 같은 단발 실패가 TEC/MERRF 증가 없이 기록될 수 있으므로, 누적 Fail만으로 현재 통신 장애를 판정하지 않습니다. Web UI의 `TX … · 1s 현재/피크`를 확인하며, TX Fail 사유의 Guard는 최근 1초에 2회 이상 실패할 때 시작합니다. BUS-OFF/EFLG 또는 TEC 임계값 이상은 이 기준과 관계없이 즉시 Guard를 시작합니다.
+
 - CAN 오류, TEC 상승, TX Fail, BUS-OFF가 보이면 A TX 마스터를 먼저 OFF하고 원인을 확인하십시오.
 
-진단 화면은 A/B 상태 요약을 항상 표시하고, 채널별 상세 카운터와 BUS-OFF 이력은 필요할 때 펼칩니다. Web 실시간 로그는 기본적으로 경고·오류, BUS-OFF/복구, TX Guard, 기능 변경, `USER_MARK`만 보여줍니다. **전체**를 선택하면 최근 수신한 일반 상태 로그도 확인할 수 있으며, **전체 로그 저장** 파일에는 화면 필터와 관계없이 모든 로그가 포함됩니다.
+진단 화면은 A/B 상태 요약을 항상 표시하고, 채널별 상세 카운터와 BUS-OFF 이력은 필요할 때 펼칩니다. Web 실시간 로그는 기본적으로 경고·오류, BUS-OFF/복구, TX Guard, 기능 변경, `USER_MARK`만 보여줍니다. `USER_MARK`는 차량 상태를 자동 판정하지 않는 일반 분석 마커입니다. 첫 클릭은 `USER_MARK_START`, 다음 클릭은 `USER_MARK_END`를 남기며 START↔END 한 쌍이 끝날 때 완료 횟수가 1회 증가합니다. 로그 초기화나 새 기록 시작으로 마커 상태·횟수·원문은 지워지지 않고 보드 재부팅 때만 초기화됩니다. **전체**를 선택하면 최근 수신한 일반 상태 로그도 확인할 수 있으며, **전체 로그 저장** 파일에는 화면 필터와 관계없이 모든 로그가 포함됩니다.
 
 Serial은 115200 baud에서 부팅·OTA·초기화 실패·BUS-OFF/복구·TEC/REC 임계값 전환만 출력합니다. 제거된 `Enable Log` 스위치와 `enable_print` API는 실제 출력 경로를 제어하지 않던 불용 항목이었습니다.
 
@@ -178,17 +191,29 @@ TSLLC는 Summon 게이트와 별도입니다. Web UI에서 TSLLC를 ON으로 설
 
 ## HW3 Nag Killer 사용 조건
 
-Nag Killer는 CAN-B의 ID 880 원본 프레임을 선택한 모드에 따라 수정해 재송신합니다. 빌드에 기능이 포함되어 있어도 새 NVS, NVS 초기화, OTA 안전 초기화에서는 토글이 **OFF**, 선택 모드가 **MODE 3(기본)**으로 시작합니다. 일반 재부팅에서는 사용자가 저장한 MODE 1/2/3 선택을 보존합니다.
+Nag Killer는 CAN-B의 ID 880 원본 프레임을 선택한 모드에 따라 수정해 재송신합니다. 빌드에 기능이 포함되어 있어도 새 NVS, NVS 초기화, OTA 안전 초기화에서는 토글이 **OFF**, 선택 모드는 **MODE 2**, 주입 범위는 **오토파일럿 전용(기본)**으로 시작합니다. 일반 재부팅에서는 사용자가 저장한 모드와 주입 범위를 보존합니다.
 
-Web UI에서 Nag를 켜기 전에 CAN-B가 정상 수신 중이고 `BUS-OFF=0`, TEC/REC와 TX Fail이 증가하지 않는지 확인하십시오. 모드별 조건은 다음과 같습니다.
+Web UI에서 Nag를 켜기 전에 CAN-B가 정상 수신 중이고 `BUS-OFF=0`, TEC/REC와 TX Fail이 증가하지 않는지 확인하십시오. 모든 모드는 ID 880의 실제 EPAS `handsOn=0`일 때만 주입하며, 운전자의 손이 감지되면 즉시 감시 전용으로 전환합니다.
 
 | 모드 | 동작 | 필수 조건 |
 |---|---|---|
-| MODE 1 | +1.80 Nm 고정 에코 | ID 880 DLC 8, 실제 `handsOn=0` |
-| MODE 2 | `+1.80, +1.50, -1.50, -1.80 Nm` 200ms 순환, 1초 burst + 1.5초 pause | ID 880 DLC 8, 실제 `handsOn=0` |
-| MODE 3(기본) | DAS state 2: 2초 후 0.50~1.80 Nm random walk, state 3: 1초 후 ±1.80 Nm 삼각파 | 921/923·297 age ≤1초, AP 3~6, 297 validity=1, 조향각 ±5°, DAS state 2/3 |
+| MODE 1 | +1.80 Nm 고정 에코 | ID 880 DLC 8, 실제 `handsOn=0`, 선택한 주입 범위 |
+| MODE 2(기본·권장) | `+1.80, +1.50, -1.50, -1.80 Nm` 200ms 순환, 1초 주입 + 1.5초 휴지 | ID 880 DLC 8, 실제 `handsOn=0`, 선택한 주입 범위 |
+| MODE 3(레거시·비권장) | DAS state 2: 2초 후 0.50~1.80 Nm random walk, state 3: 1초 후 ±1.80 Nm 삼각파 | 실제 `handsOn=0`, 921/923·297 age ≤1초, AP 3~6, DAS state 2/3, 297 validity=1, 조향각 ±5° |
 
-MODE 1/2는 검증된 원본과 같이 921/923·297 최근 수신 유효시간 게이트를 사용하지 않습니다. MODE 3만 어느 하나라도 마지막 수신 후 1초를 넘거나 297 validity가 1이 아니면 과거 상태를 재사용하지 않고 주입을 차단합니다. 모든 모드에 raw `0x74E~0x8B6`(-1.80~+1.80 Nm) 상한, 전체 프레임 자기 에코 차단, `twai_transmit()` 성공 후 카운터 집계가 공통 적용됩니다.
+MODE 1/2의 **주입 범위** 토글은 다음 두 동작을 제공합니다.
+
+- **오토파일럿 전용 ON(기본·권장)**: 최근 1초 안에 수신한 DAS AP 상태가 3~6일 때만 원본 토크 패턴을 주입합니다. 일반주행에서는 감시만 합니다.
+- **오토파일럿 전용 OFF**: 검증 원본처럼 DAS·조향각 조건 없이 ID 880과 실제 `handsOn=0`만으로 선제 패턴을 사용합니다.
+
+2026-07-29 기준 최신 Nag Killer 원본은 이전 Mode C를 알고리즘과 UI에서 제거했습니다. 현재 MODE 3은 이전 포팅과 실차 로그 비교를 위한 레거시 경로이며, 신규 권장 모드가 아닙니다. MODE 3만 어느 하나라도 마지막 수신 후 1초를 넘거나 297 validity가 1이 아니면 과거 상태를 재사용하지 않고 주입을 차단합니다.
+
+모든 모드에 raw `0x74E~0x8B6`(-1.80~+1.80 Nm) 상한, 최근 송신 전체 프레임 자기 에코 차단, `twai_transmit()` 성공 후 카운터 집계가 공통 적용됩니다. 원본의 `handsOn<=1`보다 보수적으로 실제 `handsOn=0`만 허용하는 것은 사용자가 확정한 공통 안전 조건입니다.
+
+시계열 CSV는 각 5초 구간의 Summon/TSLLC/Nag 실제 송신 증분, Summon 게이트,
+TX Guard, AP 전용 설정과 AP 활성 상태를 함께 기록합니다. 이벤트 CSV의
+`FEATURE_STATE`는 스위치 변경을, `FEATURE_ACTIVITY`는 실제 송신 활동 전이를
+기록하며, 전체 로그와 자가 진단에도 같은 기능 설정·준비·송신 카운터가 포함됩니다.
 
 ## Signal Observer JSON
 
