@@ -83,9 +83,9 @@ void test_main_ui_keeps_can_nag_tsllc_and_summon_status_together()
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"s-main-b\""));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"s-main-busoff\""));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"s-main-summon\""));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "Autosteer Nag Killer"));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "TSLLC (stop signs/lights)"));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "Conditional Summon Unlock (HW3)"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "Nag Killer"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "TSLLC / EAP"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "EU Unlock / Summon (HW3)"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "/api/summon-unlock"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "A 채널 (MCP2515 · Summon/TSLLC)"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "B 채널 (TWAI · Nag Killer)"));
@@ -189,6 +189,22 @@ void test_main_ui_uses_generic_paired_user_marker()
                                "updateUserMarkerUi({active:false,log_count:0,count:0})"));
 }
 
+void test_main_ui_has_readable_iphone_safari_layout()
+{
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "<html lang=\"ko\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML,
+                              "width=device-width,initial-scale=1,viewport-fit=cover"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "user-scalable=no"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "-webkit-text-size-adjust:100%"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "--fs-xs:12px;--fs-sm:13px"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "min-height:44px"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "env(safe-area-inset-top)"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "@media(max-width:430px)"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, ".main-health-grid{grid-template-columns:1fr}"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML,
+                              "/* ── iPhone/Safari: PC와 동일한 시각 체계, 모바일에 맞는 한 열 배치 ── */"));
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -206,6 +222,7 @@ int main()
     RUN_TEST(test_main_ui_exposes_authoritative_channel_health_and_csv_diagnostics);
     RUN_TEST(test_main_ui_defaults_to_summary_and_important_live_logs);
     RUN_TEST(test_main_ui_uses_generic_paired_user_marker);
+    RUN_TEST(test_main_ui_has_readable_iphone_safari_layout);
 
     return UNITY_END();
 }

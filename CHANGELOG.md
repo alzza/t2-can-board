@@ -25,6 +25,7 @@
 
 ### 수정
 
+- iPhone Safari에서 9~11px 글꼴이 혼재하고 화면이 과도하게 압축되던 Web UI를 12~16px 공통 타이포그래피, 44px 터치 영역, Safe Area, Safari 글자 크기 보정 및 모바일 한 열 카드 배치로 재구성.
 - MCP2515 수신 오버런 정리 시 `CANINTF` 전체를 지우던 라이브러리 경로를 사용하지 않고 `RX0OVR/RX1OVR`와 `ERRIF`만 지워, 새로 도착한 `RX0IF/RX1IF`가 유실될 수 있는 문제를 수정.
 - One-shot의 TEC/MERRF 없는 단발 TX 실패는 이력만 남기고, 1초 안에 2회 이상 실패할 때만 TX Fail 사유의 15초 Guard를 시작하도록 과민 차단을 완화. EFLG·TEC 이상은 기존처럼 즉시 보호.
 - Web UI의 누적 TX Fail이 한 번 증가한 뒤 영구 경고로 보이던 표시를 최근 1초 실패량이 Guard 임계값에 도달했을 때만 경고하도록 수정.

@@ -319,7 +319,7 @@ function statusJson(url) {
     theme: state.theme,
     uptime_ms: uptimeMs,
     uptime_s: Math.floor(uptimeMs / 1000),
-    firmware_version: 'mock-1.2.0',
+    firmware_version: 'mock-1.3.6',
     firmware_build_id: 'MOCK-LOCAL-WEBUI',
     firmware_build_short: 'MOCK-LOCAL',
     firmware_build_env: 'mock_webui',
@@ -696,7 +696,7 @@ function logsBundleText() {
   return [
     '=== CanMod Mock 통합 로그 ===',
     `Generated: ${new Date().toISOString()}`,
-    'Firmware: mock-1.2.0',
+    'Firmware: mock-1.3.6',
     `Scenario: ${state.scenario}`,
     `NagMode: ${nagModeInfo().modeStr}`,
     '',

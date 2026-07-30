@@ -99,6 +99,11 @@ pio run -e lilygo_t2can -t upload
 - 차량 재수신부터 첫 Summon TX 성공까지의 지연 표시.
 - 프레임을 송신하지 않는 Signal Observer JSON 업로드.
 - OTA 업로드, 60초 확인, rollback·복구 UI.
+- iPhone Safari Safe Area와 글자 크기 보정을 적용하고, PC와 동일한 색상·카드·상태 체계를 모바일 한 열 배치로 제공.
+
+Web UI의 일반 본문·보조 정보는 최소 12px, 주요 조작 영역은 44px 이상을
+사용합니다. iPhone에서는 채널과 제어 카드를 한 열로 재배치하지만 상태 색상,
+정보 우선순위와 조작 방식은 PC 화면과 동일합니다.
 
 ## HW3 Summon Unlock과 EU Unlock 사용법
 
