@@ -30,10 +30,10 @@
  *  │   └─ CAN-B 폴링 (매 iter, TWAI accept-all + SW 필터)                     │
  *  │       └─ TWAIDriver::read() → twai_receive(timeout=0)                    │
  *  │           ├─ RX 제한: iter당 최대 30프레임 처리로 WDT 보호               │
- *  │           ├─ SW 필터: 880(EPAS) · 921/923(DAS) · 297(SCCM)               │
+ *  │           ├─ SW 필터: 880(EPAS) · 921/923(DAS)                          │
  *  │           ├─ NagHandler                                                  │
- *  │           │   ├─ Nag MODE 1/2/3: 검증 규칙 기반 ID 880 echo              │
- *  │           │   ├─ Modes: MODE 1 / MODE 2 / MODE 3(기본)                      │
+ *  │           │   ├─ Nag MODE 1/2: 검증 규칙 기반 ID 880 echo                │
+ *  │           │   ├─ Modes: MODE 1 / MODE 2(기본)                            │
  *  │           │   └─ checksum: (sum + 0x73) & 0xFF                           │
  *  │           ├─ BUS-OFF 복구: soft(twai_initiate_recovery) → hard fallback  │
  *  │           └─ TEC ≥ 96 조기 경고 / BUS-OFF 이벤트 로그 push               │
@@ -79,7 +79,7 @@
  * ═══════════════════════════════════════════════════════════════════════════
  *  NVS (namespace "canmod")  — 전원 OFF 후에도 설정 유지
  * ═══════════════════════════════════════════════════════════════════════════
- *  isa_speed_chime  emerg_veh_det  summon_unlock  nag_killer  tsllc
+ *  isa_speed_chime  emerg_veh_det  summon_unlock  eu_cond  nag_killer  tsllc
  *  a_ch_tx          a_spi_mhz      a_oneshot       a_tx_guard
  *  nag_mode         busoff_cooldown  theme
  *  ota_pending      ota_fallback
@@ -148,7 +148,6 @@ void nagKillerTask(void* pvParameters) {
     uint32_t prevLog880 = 0;
     uint32_t prevLog921 = 0;
     uint32_t prevLog923 = 0;
-    uint32_t prevLog297 = 0;
     uint32_t prevLogEcho = 0;
     uint32_t prevLogDrop = 0;
     uint32_t prevLogSkipRuntime = 0;
@@ -318,8 +317,8 @@ void nagKillerTask(void* pvParameters) {
                 bChannelDiag.lastFrameRxMs = frameRxMs;
                 signalObserverObserveFrame(kSignalObserverChannelB, frame, frameRxMs);
 
-                // SW 필터: 880(EPAS3P) / 921·923(DAS_status 후보) / 297(SCCM_steer, Mode B용)
-                if ((frame.id == kNagFixedTargetId || frame.id == 921 || frame.id == 923 || frame.id == 297) && frame.dlc >= 4) {
+                // SW 필터: 880(EPAS3P) / 921·923(DAS_status 후보)
+                if ((frame.id == kNagFixedTargetId || frame.id == 921 || frame.id == 923) && frame.dlc >= 4) {
                     bChannelDiag.framesFilteredInTotal++;
                     bFilteredHzFrames++;
                     if (frame.id == kNagFixedTargetId) {
@@ -331,7 +330,6 @@ void nagKillerTask(void* pvParameters) {
                         bChannelDiag.frames923++;
                         bChannelDiag.last923RxMs = frameRxMs;
                     }
-                    else if (frame.id == 297)          {}  // frames297 는 handler 내부에서 증가
                     nagHandlerB.handleMessageAt(frame, *driverB, frameRxMs, true, frameRxUs);
                 } else {
                     bChannelDiag.framesFilteredOutTotal++;
@@ -366,13 +364,15 @@ void nagKillerTask(void* pvParameters) {
 
         // 5초 간격 A/B 채널 상태 출력
         if (millis() - lastStatusTime > 5000) {
-            char aBuf[240];
-            // 진단 신호 한 줄에 통합: TX OK/Fail · TEC/peak · REC · MERRF · RX-OVR · EFLG
+            char aBuf[320];
+            // 진단 신호 한 줄에 통합: TX 큐 등록/버퍼 포화/하드 오류/실제 완료
+            // · 중재 손실/중단 · TEC/peak · REC · MERRF · RX-OVR · EFLG
             //  · MERRF↑+TxFail=0 → ACK 부재(H1) 또는 동일 ID 충돌(H2)
-            //  · TxFail↑           → 송신 큐 포화/하드 실패(H3)
+            //  · Busy↑             → MCP2515의 TX 버퍼 3개가 사용 중(통신 오류로 집계하지 않음)
+            //  · Hard↑             → 동기/비동기 컨트롤러 송신 오류
             //  · RX-OVR↑ 누적     → A루프 폴링 부족
             snprintf(aBuf, sizeof(aBuf),
-                "🟢 [A-CH] RX:%u | 280:%u 390:%u 921:%u 1016:%u 1021:%u | Summon:%u Blocked:%u | TX:OK=%u/Fail=%u(1s:%u/peak:%u) | TEC=%u/peak=%u | REC=%u | MERRF=%u | RX-OVR=%u | EFLG=0x%02X",
+                "🟢 [A-CH] RX:%u | 280:%u 390:%u 921:%u 1016:%u 1021:%u | Summon:%u Blocked:%u | TX:Q=%u/Busy=%u/Hard=%u(1s:%u/peak:%u)/Done=%u/Arb=%u/Abort=%u | TEC=%u/peak=%u | REC=%u | MERRF=%u | RX-OVR=%u | EFLG=0x%02X",
                 (unsigned)aChannelDiag.framesReceivedTotal,
                 (unsigned)aChannelDiag.frames280,
                 (unsigned)aChannelDiag.frames390,
@@ -382,9 +382,13 @@ void nagKillerTask(void* pvParameters) {
                 (unsigned)aChannelDiag.summonUnlockModifiedCount,
                 (unsigned)summonGateDiag.blocked,
                 (unsigned)aChannelDiag.aTxOk,
+                (unsigned)aChannelDiag.aTxBusy,
                 (unsigned)aChannelDiag.aTxFail,
                 (unsigned)(uint8_t)aChannelDiag.aTxFailWindowDelta,
                 (unsigned)(uint8_t)aChannelDiag.aTxFailWindowPeak,
+                (unsigned)aChannelDiag.aTxCompleted,
+                (unsigned)aChannelDiag.aTxArbitrationLost,
+                (unsigned)aChannelDiag.aTxAborted,
                 (unsigned)(uint8_t)aChannelDiag.aTec,
                 (unsigned)(uint8_t)aChannelDiag.aTecPeak,
                 (unsigned)(uint8_t)aChannelDiag.aRec,
@@ -407,7 +411,7 @@ void nagKillerTask(void* pvParameters) {
                 (driverB && !driverB->isDriverOK()) ? "NO_DRIVER" : "INIT";
             char bBuf[280];
             snprintf(bBuf, sizeof(bBuf),
-                "🔵 [B-CH] RX:%u|Filt:%u|Try/OK/Ack:%u/%u/%u|TxFail:%u|TEC:%u/REC:%u|880:%u|921:%u|923:%u|297:%u|DAS:%u@%u|Mode:%s|Ready:%s|TWAI:%s",
+                "🔵 [B-CH] RX:%u|Filt:%u|Try/OK/Ack:%u/%u/%u|TxFail:%u|TEC:%u/REC:%u|880:%u|921:%u|923:%u|DAS:%u@%u|Mode:%s|Ready:%s|TWAI:%s",
                 (unsigned)bChannelDiag.framesReceivedTotal,
                 (unsigned)bChannelDiag.framesFilteredInTotal,
                 (unsigned)bChannelDiag.txAttemptCount,
@@ -419,7 +423,6 @@ void nagKillerTask(void* pvParameters) {
                 (unsigned)bChannelDiag.frames880,
                 (unsigned)bChannelDiag.frames921,
                 (unsigned)bChannelDiag.frames923,
-                (unsigned)bChannelDiag.frames297,
                 (unsigned)bChannelDiag.dasHandsOnStateRx,
                 (unsigned)bChannelDiag.dasStatusSourceId,
                 nagModeName((uint8_t)bChannelDiag.nagMode),
@@ -430,7 +433,6 @@ void nagKillerTask(void* pvParameters) {
             uint32_t cur880 = (uint32_t)bChannelDiag.frames880;
             uint32_t cur921 = (uint32_t)bChannelDiag.frames921;
             uint32_t cur923 = (uint32_t)bChannelDiag.frames923;
-            uint32_t cur297 = (uint32_t)bChannelDiag.frames297;
             uint32_t curEcho = (uint32_t)bChannelDiag.echoCount;
             uint32_t curDrop = (uint32_t)bChannelDiag.echoDroppedLate;
             uint32_t curSkipRuntime = (uint32_t)bChannelDiag.skipRuntimeOrInactive;
@@ -442,7 +444,6 @@ void nagKillerTask(void* pvParameters) {
             uint32_t d880 = cur880 - prevLog880;
             uint32_t d921 = cur921 - prevLog921;
             uint32_t d923 = cur923 - prevLog923;
-            uint32_t d297 = cur297 - prevLog297;
             uint32_t dEcho = curEcho - prevLogEcho;
             uint32_t dDrop = curDrop - prevLogDrop;
             uint32_t dSkipRuntime = curSkipRuntime - prevLogSkipRuntime;
@@ -458,11 +459,10 @@ void nagKillerTask(void* pvParameters) {
             // Verdict는 5초 구간 요약이다. Last는 아래 B-GATE에서 마지막 실제 핸들러 분기로 따로 남긴다.
             char bNag[300];
             snprintf(bNag, sizeof(bNag),
-                "🥷 [B-NAG] 5s 880:+%u 921:+%u 923:+%u 297:+%u Echo:+%u Drop:+%u | Mode=%s Ready=%s(%u/%u) AP=%u Phase=%u HO=%u DAS=0x%02X@%u Verdict=%s",
+                "🥷 [B-NAG] 5s 880:+%u 921:+%u 923:+%u Echo:+%u Drop:+%u | Mode=%s Ready=%s(%u/%u) AP=%u Phase=%u HO=%u DAS=0x%02X@%u Verdict=%s",
                 (unsigned)d880,
                 (unsigned)d921,
                 (unsigned)d923,
-                (unsigned)d297,
                 (unsigned)dEcho,
                 (unsigned)dDrop,
                 nagModeName((uint8_t)bChannelDiag.nagMode),
@@ -492,7 +492,6 @@ void nagKillerTask(void* pvParameters) {
             prevLog880 = cur880;
             prevLog921 = cur921;
             prevLog923 = cur923;
-            prevLog297 = cur297;
             prevLogEcho = curEcho;
             prevLogDrop = curDrop;
             prevLogSkipRuntime = curSkipRuntime;
@@ -852,9 +851,9 @@ void setup() {
         // [v4.4 ALERT] alert 폴링 태스크 시작 (20ms 주기, Core 0, prio 1)
         gAlertDrv = driverB.get();
         xTaskCreatePinnedToCore(canAlertTask, "alert", 2048, nullptr, 1, nullptr, 0);
-        // TWAI는 accept-all로 두고 드라이버/태스크 소프트 필터에서 880/921/923/297만 감시한다.
+        // TWAI는 accept-all로 두고 드라이버/태스크 소프트 필터에서 880/921/923만 감시한다.
         char fBuf[64];
-        snprintf(fBuf, sizeof(fBuf), "[B-CH] SW 필터 기준: ID %u / 921 / 923 / 297", (unsigned)kNagFixedTargetId);
+        snprintf(fBuf, sizeof(fBuf), "[B-CH] SW 필터 기준: ID %u / 921 / 923", (unsigned)kNagFixedTargetId);
         logRing.push(fBuf, millis());
     } else {
         Serial.println("[OTA] 복구모드: CAN 비활성, 웹 서버만 시작됨");

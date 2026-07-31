@@ -52,27 +52,23 @@ struct TsSample {
     uint8_t  lastDecision;
     // intervalDecision은 5초 구간 요약, lastDecision은 마지막 880 처리 분기다.
     uint8_t  intervalDecision;
-    uint32_t f297;
     uint32_t modeBInject;
-    uint16_t d297;
     uint16_t dModeBInject;
     uint8_t  apState;
     uint8_t  modeBPhase;
-    float    steerDeg;
     float    realTorqueNm;
     float    modeBLastNm;
     uint16_t age880Ms;
     uint16_t ageDasMs;
-    uint16_t age297Ms;
     uint16_t ageEchoMs;
-    uint16_t modeBStateAgeMs;
-    uint16_t modeBPhaseAgeMs;
-    uint16_t modeBFirstEchoDelayMs;
-    uint16_t modeBDelayTargetMs;
     // A채널 MCP2515 상태. 간헐 EFLG 경고와 RX 오버런의 원인 추적용.
     uint32_t aFrames;
     uint32_t aTxOk;
+    uint32_t aTxBusy;
     uint32_t aTxFail;
+    uint32_t aTxCompleted;
+    uint32_t aTxArbitrationLost;
+    uint32_t aTxAborted;
     uint32_t aMerrf;
     uint32_t aRxOvr;
     uint32_t aEflgEvents;
@@ -110,6 +106,10 @@ struct TsSample {
     uint8_t  nagEnabled;
     // 기능 토글과 실제 주입 결과를 같은 시점에서 검증하기 위한 상태.
     uint8_t  summonGateOpen;
+    uint8_t  summonConditionLimit;
+    uint8_t  summonApState;
+    uint8_t  summonGateReason;
+    uint16_t summonApStableMs;
     uint8_t  summonInjectReady;
     uint8_t  tsllcInjectReady;
     uint8_t  nagApOnly;
@@ -148,7 +148,6 @@ inline volatile uint32_t tsBaseEcho = 0;
 inline volatile uint32_t tsBaseF880 = 0;
 inline volatile uint32_t tsBaseF921 = 0;
 inline volatile uint32_t tsBaseF923 = 0;
-inline volatile uint32_t tsBaseF297 = 0;
 inline volatile uint32_t tsBaseModeBInject = 0;
 inline volatile uint32_t tsBaseEchoDrop = 0;
 inline volatile uint32_t tsBaseSkipRuntime = 0;
@@ -174,7 +173,6 @@ inline volatile uint32_t tsPrevEcho = 0;
 inline volatile uint32_t tsPrevF880 = 0;
 inline volatile uint32_t tsPrevF921 = 0;
 inline volatile uint32_t tsPrevF923 = 0;
-inline volatile uint32_t tsPrevF297 = 0;
 inline volatile uint32_t tsPrevModeBInject = 0;
 inline volatile uint32_t tsPrevEchoDrop = 0;
 inline volatile uint32_t tsPrevSkipRuntime = 0;
@@ -210,13 +208,6 @@ inline uint16_t tsDelta16(uint32_t current, uint32_t base) {
 inline uint16_t tsElapsed16(uint32_t nowMs, uint32_t startMs) {
     if (startMs == 0 || nowMs < startMs) return 0;
     return tsDelta16(nowMs, startMs);
-}
-
-inline uint16_t tsModeBDelayTargetMs(uint8_t phase, uint8_t nagMode) {
-    if (nagModeClamp(nagMode) != kNagMode3) return 0;
-    if (phase == 3) return 2000;
-    if (phase == 5) return 1000;
-    return 0;
 }
 
 using TsTimeFormatter = void(*)(uint32_t, char*, size_t);
@@ -256,7 +247,6 @@ static void timeseriesTaskFn(void*) {
         uint32_t cur880 = (uint32_t)bChannelDiag.frames880;
         uint32_t cur921 = (uint32_t)bChannelDiag.frames921;
         uint32_t cur923 = (uint32_t)bChannelDiag.frames923;
-        uint32_t cur297 = (uint32_t)bChannelDiag.frames297;
         uint32_t curModeBInject = (uint32_t)bChannelDiag.modeBInjectCount;
         uint32_t curDrop = (uint32_t)bChannelDiag.echoDroppedLate;
         uint32_t curSkipRuntime = (uint32_t)bChannelDiag.skipRuntimeOrInactive;
@@ -281,7 +271,6 @@ static void timeseriesTaskFn(void*) {
         s.f880     = tsDelta(cur880, (uint32_t)tsBaseF880);
         s.f921     = tsDelta(cur921, (uint32_t)tsBaseF921);
         s.f923     = tsDelta(cur923, (uint32_t)tsBaseF923);
-        s.f297     = tsDelta(cur297, (uint32_t)tsBaseF297);
         s.modeBInject = tsDelta(curModeBInject, (uint32_t)tsBaseModeBInject);
         s.echoDrop = tsDelta(curDrop, (uint32_t)tsBaseEchoDrop);
         s.skipRuntime = tsDelta(curSkipRuntime, (uint32_t)tsBaseSkipRuntime);
@@ -293,7 +282,6 @@ static void timeseriesTaskFn(void*) {
         s.d880 = tsDelta16(cur880, (uint32_t)tsPrevF880);
         s.d921 = tsDelta16(cur921, (uint32_t)tsPrevF921);
         s.d923 = tsDelta16(cur923, (uint32_t)tsPrevF923);
-        s.d297 = tsDelta16(cur297, (uint32_t)tsPrevF297);
         s.dModeBInject = tsDelta16(curModeBInject, (uint32_t)tsPrevModeBInject);
         s.dEcho = tsDelta16(curEcho, (uint32_t)tsPrevEcho);
         s.dDrop = tsDelta16(curDrop, (uint32_t)tsPrevEchoDrop);
@@ -305,7 +293,11 @@ static void timeseriesTaskFn(void*) {
         s.dUserMark = tsDelta16(curUserMark, (uint32_t)tsPrevUserMark);
         s.aFrames = tsDelta(curAFrames, (uint32_t)tsBaseAFrames);
         s.aTxOk = tsDelta(curATxOk, (uint32_t)tsBaseATxOk);
+        s.aTxBusy = (uint32_t)aChannelDiag.aTxBusy;
         s.aTxFail = tsDelta(curATxFail, (uint32_t)tsBaseATxFail);
+        s.aTxCompleted = (uint32_t)aChannelDiag.aTxCompleted;
+        s.aTxArbitrationLost = (uint32_t)aChannelDiag.aTxArbitrationLost;
+        s.aTxAborted = (uint32_t)aChannelDiag.aTxAborted;
         s.aMerrf = tsDelta(curAMerrf, (uint32_t)tsBaseAMerrf);
         s.aRxOvr = tsDelta(curARxOvr, (uint32_t)tsBaseARxOvr);
         s.aEflgEvents = tsDelta(curAEflgEvents, (uint32_t)tsBaseAEflgEvents);
@@ -340,17 +332,11 @@ static void timeseriesTaskFn(void*) {
             (bool)nagKillerRuntime, s.dSkipAp);
         s.apState = (uint8_t)bChannelDiag.dasAutopilotStateRx;
         s.modeBPhase = (uint8_t)bChannelDiag.modeBPhase;
-        s.steerDeg = (float)bChannelDiag.steeringAngleDeg;
         s.realTorqueNm = (float)bChannelDiag.realTorqueNm;
         s.modeBLastNm = (float)bChannelDiag.modeBLastTorqueNm;
         s.age880Ms = tsElapsed16(s.t_ms, (uint32_t)bChannelDiag.last880RxMs);
         s.ageDasMs = tsElapsed16(s.t_ms, (uint32_t)bChannelDiag.lastDasStatusRxMs);
-        s.age297Ms = tsElapsed16(s.t_ms, (uint32_t)bChannelDiag.last297RxMs);
         s.ageEchoMs = tsElapsed16(s.t_ms, (uint32_t)bChannelDiag.lastEchoTxMs);
-        s.modeBStateAgeMs = tsElapsed16(s.t_ms, (uint32_t)bChannelDiag.modeBStateEnterMs);
-        s.modeBPhaseAgeMs = tsElapsed16(s.t_ms, (uint32_t)bChannelDiag.modeBPhaseEnterMs);
-        s.modeBFirstEchoDelayMs = tsDelta16((uint32_t)bChannelDiag.modeBFirstEchoDelayMs, 0);
-        s.modeBDelayTargetMs = tsModeBDelayTargetMs(s.modeBPhase, s.nagMode);
         s.aFrameHz = (float)aChannelDiag.frameHz;
         s.aEflg = (uint8_t)aChannelDiag.mcpEflg;
         s.aEflgPeak = (uint8_t)aChannelDiag.mcpEflgPeak;
@@ -375,7 +361,11 @@ static void timeseriesTaskFn(void*) {
         s.aSpiTargetMhz = (uint8_t)((uint32_t)aMcpRequestedSpiFreqHz / 1000000UL);
         s.bDriverState = (uint8_t)bChannelDiag.twaiStateCode;
         s.nagEnabled = (bool)nagKillerRuntime ? 1U : 0U;
-        s.summonGateOpen = summonGateOpen() ? 1U : 0U;
+        s.summonGateOpen = summonGateOpen(s.t_ms) ? 1U : 0U;
+        s.summonConditionLimit = (bool)summonConditionLimitRuntime ? 1U : 0U;
+        s.summonApState = (uint8_t)summonGateDiag.apState;
+        s.summonGateReason = summonGateReasonCode(s.t_ms);
+        s.summonApStableMs = tsDelta16(summonApStableMs(s.t_ms), 0);
         s.summonInjectReady =
             s.summonEnabled && s.aTxEnabled && s.summonGateOpen && !s.aGuardActive;
         s.tsllcInjectReady = s.tsllcEnabled && s.aTxEnabled && !s.aGuardActive;
@@ -394,7 +384,6 @@ static void timeseriesTaskFn(void*) {
         tsPrevF880 = cur880;
         tsPrevF921 = cur921;
         tsPrevF923 = cur923;
-        tsPrevF297 = cur297;
         tsPrevModeBInject = curModeBInject;
         tsPrevEchoDrop = curDrop;
         tsPrevSkipRuntime = curSkipRuntime;
@@ -453,7 +442,6 @@ inline void timeseriesReset(bool beginManualRecording = false) {
     tsBaseF880 = (uint32_t)bChannelDiag.frames880;
     tsBaseF921 = (uint32_t)bChannelDiag.frames921;
     tsBaseF923 = (uint32_t)bChannelDiag.frames923;
-    tsBaseF297 = (uint32_t)bChannelDiag.frames297;
     tsBaseModeBInject = (uint32_t)bChannelDiag.modeBInjectCount;
     tsBaseEchoDrop = (uint32_t)bChannelDiag.echoDroppedLate;
     tsBaseSkipRuntime = (uint32_t)bChannelDiag.skipRuntimeOrInactive;
@@ -478,7 +466,6 @@ inline void timeseriesReset(bool beginManualRecording = false) {
     tsPrevF880 = (uint32_t)bChannelDiag.frames880;
     tsPrevF921 = (uint32_t)bChannelDiag.frames921;
     tsPrevF923 = (uint32_t)bChannelDiag.frames923;
-    tsPrevF297 = (uint32_t)bChannelDiag.frames297;
     tsPrevModeBInject = (uint32_t)bChannelDiag.modeBInjectCount;
     tsPrevEchoDrop = (uint32_t)bChannelDiag.echoDroppedLate;
     tsPrevSkipRuntime = (uint32_t)bChannelDiag.skipRuntimeOrInactive;
@@ -556,15 +543,16 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
         "b_hands_on,b_das_state,b_das_state_name,b_das_state_group,b_das_warn_level,b_das_warning,"
         "b_nag_mode,b_nag_mode_default,b_das_source,b_echo_drop,b_skip_off,b_skip_ap,b_skip_hands_on,b_skip_das,b_no_das,"
         "system_user_mark,b_d880,b_d921,b_d923,b_d_echo,b_d_drop,b_d_skip_off,b_d_skip_ap,b_d_skip_hands_on,b_d_skip_das,"
-        "b_d_no_das,system_d_user_mark,b_last_decision,b_interval_decision,b_frames_297,b_ap_state,b_mode3_phase,"
-        "b_steer_deg,b_real_torque_nm,b_mode3_inject,b_mode3_last_nm,b_age_880_ms,b_age_das_ms,b_age_297_ms,b_age_echo_ms,"
-        "b_mode3_state_age_ms,b_mode3_phase_age_ms,b_mode3_first_echo_delay_ms,b_mode3_delay_target_ms,b_d297,b_d_mode3_inject,"
-        "a_frames,a_frame_hz,a_eflg,a_eflg_state,a_eflg_peak,a_tec,a_rec,a_tec_peak,a_rec_peak,a_tx_ok,a_tx_fail,a_merrf,"
+        "b_d_no_das,system_d_user_mark,b_last_decision,b_interval_decision,b_ap_state,b_nag_phase,"
+        "b_real_torque_nm,b_nag_inject,b_nag_last_nm,b_age_880_ms,b_age_das_ms,b_age_echo_ms,b_d_nag_inject,"
+        "a_frames,a_frame_hz,a_eflg,a_eflg_state,a_eflg_peak,a_tec,a_rec,a_tec_peak,a_rec_peak,"
+        "a_tx_queued,a_tx_busy,a_tx_hard_error,a_tx_completed,a_tx_arbitration_lost,a_tx_aborted,a_merrf,"
         "a_rx_overrun,a_eflg_events,a_frame_age_ms,a_loop_age_ms,a_guard_active,a_guard_reason,a_guard_remaining_ms,"
         "a_wake_count,a_wake_to_summon_tx_ms,a_wake_awaiting_tx,a_d_frames,a_d_tx_ok,a_d_tx_fail,a_d_merrf,a_d_rx_overrun,a_d_eflg_events,"
         "a_driver_ok,a_tx_enabled,a_summon_enabled,a_tsllc_enabled,a_one_shot_enabled,a_tx_guard_enabled,a_spi_mhz,a_spi_target_mhz,"
         "b_driver_state,b_nag_enabled,a_loop_gap_last_us,a_loop_gap_peak_us,a_loop_gap_over_2ms,a_d_loop_gap_over_2ms,"
-        "a_summon_gate_open,a_summon_inject_ready,a_summon_tx_ok,a_summon_tx_fail,a_summon_blocked,"
+        "a_summon_gate_open,a_summon_condition_limit,a_summon_ap_state,a_summon_ap_stable_ms,a_summon_gate_reason,"
+        "a_summon_inject_ready,a_summon_tx_ok,a_summon_tx_fail,a_summon_blocked,"
         "a_d_summon_tx_ok,a_d_summon_tx_fail,a_d_summon_blocked,a_tsllc_inject_ready,a_tsllc_tx_ok,a_tsllc_tx_fail,"
         "a_d_tsllc_tx_ok,a_d_tsllc_tx_fail,b_nag_ap_only,b_nag_ap_active,b_nag_injecting,b_nag_tx_ok,b_d_nag_tx_ok\r\n";
     httpd_resp_sendstr_chunk(req, hdr);
@@ -576,14 +564,14 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
         timeseriesCopyAt(start + i, s);
         timeseriesFormatTime(s.t_ms, wallTime, sizeof(wallTime));
         int used = snprintf(line, sizeof(line),
-            "2,%s,%u,%s,"
+            "3,%s,%u,%s,"
             "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
             "%u,%u,%s,%s,%u,%u,"
             "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
             "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
-            "%u,%u,%u,%u,%u,"
-            "%.1f,%.2f,%u,%.2f,"
-            "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u",
+            "%u,%u,%u,%u,"
+            "%.2f,%u,%.2f,"
+            "%u,%u,%u,%u",
             wallTime, (unsigned)s.t_ms, s.captureMode ? "MANUAL" : "AUTO",
             (unsigned)s.busoff, (unsigned)s.tec, (unsigned)s.rec,
             (unsigned)s.arbLost, (unsigned)s.busErr, (unsigned)s.txFail,
@@ -600,22 +588,26 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
             (unsigned)s.dSkipAp, (unsigned)s.dSkipHandsOn, (unsigned)s.dSkipDas,
             (unsigned)s.dNoDasEcho, (unsigned)s.dUserMark, (unsigned)s.lastDecision,
             (unsigned)s.intervalDecision,
-            (unsigned)s.f297, (unsigned)s.apState, (unsigned)s.modeBPhase,
-            (double)s.steerDeg, (double)s.realTorqueNm,
+            (unsigned)s.apState, (unsigned)s.modeBPhase,
+            (double)s.realTorqueNm,
             (unsigned)s.modeBInject, (double)s.modeBLastNm,
-            (unsigned)s.age880Ms, (unsigned)s.ageDasMs, (unsigned)s.age297Ms,
-            (unsigned)s.ageEchoMs, (unsigned)s.modeBStateAgeMs, (unsigned)s.modeBPhaseAgeMs,
-            (unsigned)s.modeBFirstEchoDelayMs, (unsigned)s.modeBDelayTargetMs,
-            (unsigned)s.d297, (unsigned)s.dModeBInject);
+            (unsigned)s.age880Ms, (unsigned)s.ageDasMs,
+            (unsigned)s.ageEchoMs, (unsigned)s.dModeBInject);
         if (used < 0 || (size_t)used >= sizeof(line)) continue;
         snprintf(line + used, sizeof(line) - (size_t)used,
-            ",%u,%.1f,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
-            "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
-            "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+            ",%u,%.1f,%u,%s,%u,%u,%u,%u,%u,"
+            "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,"
+            "%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+            "%u,%u,%u,%u,%u,%u,%u,%u,"
+            "%u,%u,%u,%u,%u,%u,"
+            "%u,%u,%u,%u,%s,"
+            "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
             (unsigned)s.aFrames, (double)s.aFrameHz,
             (unsigned)s.aEflg, aMcpEflgStateName(s.aEflg), (unsigned)s.aEflgPeak,
             (unsigned)s.aTec, (unsigned)s.aRec, (unsigned)s.aTecPeak, (unsigned)s.aRecPeak,
-            (unsigned)s.aTxOk, (unsigned)s.aTxFail, (unsigned)s.aMerrf,
+            (unsigned)s.aTxOk, (unsigned)s.aTxBusy, (unsigned)s.aTxFail,
+            (unsigned)s.aTxCompleted, (unsigned)s.aTxArbitrationLost,
+            (unsigned)s.aTxAborted, (unsigned)s.aMerrf,
             (unsigned)s.aRxOvr, (unsigned)s.aEflgEvents,
             (unsigned)s.aFrameAgeMs, (unsigned)s.aLoopAgeMs,
             (unsigned)s.aGuardActive, aTxGuardReasonName(s.aGuardReason),
@@ -630,7 +622,10 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
             (unsigned)s.bDriverState, (unsigned)s.nagEnabled,
             (unsigned)s.aLoopGapLastUs, (unsigned)s.aLoopGapPeakUs,
             (unsigned)s.aLoopGapOver2ms, (unsigned)s.dALoopGapOver2ms,
-            (unsigned)s.summonGateOpen, (unsigned)s.summonInjectReady,
+            (unsigned)s.summonGateOpen, (unsigned)s.summonConditionLimit,
+            (unsigned)s.summonApState, (unsigned)s.summonApStableMs,
+            summonGateReasonNameFromCode(s.summonGateReason),
+            (unsigned)s.summonInjectReady,
             (unsigned)s.summonTxOk, (unsigned)s.summonTxFail,
             (unsigned)s.summonBlocked, (unsigned)s.dSummonTxOk,
             (unsigned)s.dSummonTxFail, (unsigned)s.dSummonBlocked,

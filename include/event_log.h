@@ -25,10 +25,8 @@ enum CanEventType : uint8_t {
     EV_ALERT_RX_FULL  = 8, // RX 큐 오버플로
     EV_TX_BACKOFF     = 9, // TX 백오프 진입
     EV_USER_MARK      = 10, // 사용자가 분석 구간 시작/종료 지점을 표시
-    EV_NAG_MODE       = 11, // Nag mode 전환 (detail: 1=MODE1, 2=MODE2, 3=MODE3)
-    EV_MODEB_STATE    = 12, // Mode B DAS hands-on state 전이 (detail: ap<<16 | old<<8 | new)
-    EV_MODEB_PHASE    = 13, // Mode B phase 전이 (detail: phase<<24 | ap<<16 | ho<<8 | decision)
-    EV_MODEB_FIRST_ECHO = 14, // 현재 DAS state 진입 후 첫 echo 지연(ms)
+    EV_NAG_MODE       = 11, // Nag mode 전환 (detail: 1=MODE1, 2=MODE2)
+    // 12~14는 제거된 실험용 Mode 3 이벤트 번호로 재사용하지 않는다.
     EV_A_EFLG_SET     = 15, // A채널 MCP2515 EFLG 0→비제로
     EV_A_EFLG_CLEAR   = 16, // A채널 MCP2515 EFLG 비제로→0
     EV_A_RX_OVERRUN   = 17, // A채널 MCP2515 RX0OVR/RX1OVR 감지
@@ -74,9 +72,6 @@ inline const char* eventTypeName(uint8_t type) {
     case EV_TX_BACKOFF: return "TX_BACKOFF";
     case EV_USER_MARK: return "USER_MARK";
     case EV_NAG_MODE: return "NAG_MODE";
-    case EV_MODEB_STATE: return "MODEB_STATE";
-    case EV_MODEB_PHASE: return "MODEB_PHASE";
-    case EV_MODEB_FIRST_ECHO: return "MODEB_FIRST_ECHO";
     case EV_A_EFLG_SET: return "A_EFLG_SET";
     case EV_A_EFLG_CLEAR: return "A_EFLG_CLEAR";
     case EV_A_RX_OVERRUN: return "A_RX_OVERRUN";
@@ -114,9 +109,6 @@ inline uint8_t eventChannel(uint8_t type) {
     case EV_ALERT_RX_FULL:
     case EV_TX_BACKOFF:
     case EV_NAG_MODE:
-    case EV_MODEB_STATE:
-    case EV_MODEB_PHASE:
-    case EV_MODEB_FIRST_ECHO:
         return EV_CH_B;
     case EV_USER_MARK:
     case EV_FEATURE_ACTIVITY:
@@ -192,6 +184,7 @@ inline uint32_t eventFeatureStateDetail() {
     if ((bool)aMcpOneShotRuntime) detail |= 1U << 4;
     if ((bool)aTxGuardRuntime) detail |= 1U << 5;
     if ((bool)nagApOnlyRuntime) detail |= 1U << 6;
+    if ((bool)summonConditionLimitRuntime) detail |= 1U << 7;
     return detail;
 }
 
@@ -242,31 +235,6 @@ inline const char* eventDetailText(uint8_t type, uint32_t detail, char* out, siz
         snprintf(out, outLen, "mode=%u label=%s", (unsigned)mode, nagModeName(mode));
         break;
     }
-    case EV_MODEB_STATE: {
-        uint8_t ap = static_cast<uint8_t>((detail >> 16) & 0xFF);
-        uint8_t oldHo = static_cast<uint8_t>((detail >> 8) & 0xFF);
-        uint8_t newHo = static_cast<uint8_t>(detail & 0xFF);
-        snprintf(out, outLen, "ap=%u oldHo=0x%02X oldName=%s newHo=0x%02X newName=%s group=%s warnLevel=%u warning=%u",
-                 (unsigned)ap,
-                 (unsigned)oldHo, dasHandsOnStateName(oldHo),
-                 (unsigned)newHo, dasHandsOnStateName(newHo), dasHandsOnStateGroup(newHo),
-                 (unsigned)dasHandsOnWarningLevel(newHo), dasHandsOnStateIsWarning(newHo) ? 1U : 0U);
-        break;
-    }
-    case EV_MODEB_PHASE: {
-        uint8_t phase = static_cast<uint8_t>((detail >> 24) & 0xFF);
-        uint8_t ap = static_cast<uint8_t>((detail >> 16) & 0xFF);
-        uint8_t ho = static_cast<uint8_t>((detail >> 8) & 0xFF);
-        uint8_t decision = static_cast<uint8_t>(detail & 0xFF);
-        snprintf(out, outLen, "phase=%u ap=%u ho=0x%02X hoName=%s warnLevel=%u decision=%s",
-                 (unsigned)phase, (unsigned)ap,
-                 (unsigned)ho, dasHandsOnStateName(ho),
-                 (unsigned)dasHandsOnWarningLevel(ho), nagDecisionName(decision));
-        break;
-    }
-    case EV_MODEB_FIRST_ECHO:
-        snprintf(out, outLen, "delay_ms=%u", (unsigned)detail);
-        break;
     case EV_A_EFLG_SET:
     case EV_A_EFLG_CLEAR:
         snprintf(out, outLen,
@@ -301,11 +269,11 @@ inline const char* eventDetailText(uint8_t type, uint32_t detail, char* out, siz
         break;
     case EV_FEATURE_STATE:
         snprintf(out, outLen,
-                 "A_TX=%u SUMMON=%u TSLLC=%u NAG=%u ONE_SHOT=%u TX_GUARD=%u NAG_AP_ONLY=%u",
+                 "A_TX=%u SUMMON=%u TSLLC=%u NAG=%u ONE_SHOT=%u TX_GUARD=%u NAG_AP_ONLY=%u SUMMON_CONDITION_LIMIT=%u",
                  (unsigned)((detail >> 0) & 1U), (unsigned)((detail >> 1) & 1U),
                  (unsigned)((detail >> 2) & 1U), (unsigned)((detail >> 3) & 1U),
                  (unsigned)((detail >> 4) & 1U), (unsigned)((detail >> 5) & 1U),
-                 (unsigned)((detail >> 6) & 1U));
+                 (unsigned)((detail >> 6) & 1U), (unsigned)((detail >> 7) & 1U));
         break;
     case EV_FEATURE_ACTIVITY:
         snprintf(out, outLen,

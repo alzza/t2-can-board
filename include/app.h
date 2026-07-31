@@ -78,11 +78,8 @@ static void appSetup(std::unique_ptr<Driver> drv, const char *readyMsg)
 
     logRing.push(readyMsg, millis());
 
-#if defined(DRIVER_TWAI) && !defined(NATIVE_BUILD)
-    // CAN 버스 안정화 대기. 웹 서버는 setup() 마지막에서 시작해
-    // 반쯤 부팅된 상태가 외부에 노출되지 않도록 한다.
-    delay(2000);
-#endif
+    // MCP2515 초기화 직후 수신 폴링을 시작한다. 여기서 2초를 멈추면
+    // RX0/RX1 두 버퍼가 즉시 가득 차 OTA 재부팅 직후 EFLG RXOVR가 발생한다.
 }
 
 template <typename Driver>
@@ -105,6 +102,7 @@ static void appLoop()
     const uint32_t appLoopNowMs = millis();
     aChannelDiag.lastLoopMs = appLoopNowMs;
     summonGateMaintain(appLoopNowMs);
+    appDriver->pollTransmitResults();
 #if !defined(NATIVE_BUILD)
     aChannelDiag.loopCoreId = xPortGetCoreID();
 #endif

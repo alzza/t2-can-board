@@ -1,4 +1,4 @@
-// HW3 Nag Mode 1/2/3 상태기계와 공통 송신 안전 경계를 검증한다.
+// HW3 Nag Mode 1/2와 공통 송신 안전 경계를 검증한다.
 #include <unity.h>
 
 #include "can_frame_types.h"
@@ -36,25 +36,9 @@ static CanFrame makeDasFrame(uint8_t handsOnState, uint32_t id = 921,
     return frame;
 }
 
-static CanFrame makeSteeringFrame(float angleDeg, uint8_t validity = 1)
-{
-    CanFrame frame = {.id = 297, .dlc = 8};
-    int raw = static_cast<int>((angleDeg + 819.2f) * 10.0f + 0.5f);
-    if (raw < 0) raw = 0;
-    if (raw > 0x3FFF) raw = 0x3FFF;
-    frame.data[2] = static_cast<uint8_t>(raw & 0xFF);
-    frame.data[3] = static_cast<uint8_t>(((raw >> 8) & 0x3F) | ((validity & 0x03) << 6));
-    return frame;
-}
-
 static uint16_t torqueRaw(const CanFrame &frame)
 {
     return static_cast<uint16_t>(((frame.data[2] & 0x0F) << 8) | frame.data[3]);
-}
-
-static float torqueNm(const CanFrame &frame)
-{
-    return torqueRaw(frame) * 0.01f - 20.5f;
 }
 
 static uint8_t handsOn(const CanFrame &frame)
@@ -72,16 +56,6 @@ static bool checksumValid(const CanFrame &frame)
 static void setMode(uint8_t mode)
 {
     nagConfig.mode = mode;
-}
-
-static void sendContextAt(uint32_t now, uint8_t handsOnState, float angleDeg,
-                          uint32_t dasId = 921, uint8_t apState = 6,
-                          uint8_t validity = 1)
-{
-    CanFrame das = makeDasFrame(handsOnState, dasId, apState);
-    CanFrame steering = makeSteeringFrame(angleDeg, validity);
-    handler.handleMessageAt(das, mock, now);
-    handler.handleMessageAt(steering, mock, now);
 }
 
 void setUp()
@@ -106,28 +80,27 @@ void test_nag_defaults_off_with_mode2_ap_only_selected()
     TEST_ASSERT_EQUAL_STRING("MODE 2", nagModeName(defaults.mode));
 }
 
-void test_a_tx_guard_requires_two_failures_in_one_second()
+void test_a_tx_guard_uses_hard_error_only()
 {
-    TEST_ASSERT_EQUAL_UINT8(2, kATxGuardTxFailBurstThreshold);
+    TEST_ASSERT_EQUAL_UINT8(1, kATxGuardTxFailBurstThreshold);
 }
 
-void test_nag_mode_clamp_accepts_1_to_3_and_defaults_invalid_to_2()
+void test_nag_mode_clamp_accepts_1_and_2_and_defaults_retired_3_to_2()
 {
     TEST_ASSERT_EQUAL_UINT8(kNagMode1, nagModeClamp(kNagMode1));
     TEST_ASSERT_EQUAL_UINT8(kNagMode2, nagModeClamp(kNagMode2));
-    TEST_ASSERT_EQUAL_UINT8(kNagMode3, nagModeClamp(kNagMode3));
+    TEST_ASSERT_EQUAL_UINT8(kNagMode2, nagModeClamp(3));
     TEST_ASSERT_EQUAL_UINT8(kNagMode2, nagModeClamp(0));
     TEST_ASSERT_EQUAL_UINT8(kNagMode2, nagModeClamp(99));
 }
 
-void test_nag_filter_contains_hw3_context_ids()
+void test_nag_filter_contains_only_required_ids()
 {
     const uint32_t *ids = handler.filterIds();
-    TEST_ASSERT_EQUAL_UINT8(4, handler.filterIdCount());
+    TEST_ASSERT_EQUAL_UINT8(3, handler.filterIdCount());
     TEST_ASSERT_EQUAL_UINT32(880, ids[0]);
     TEST_ASSERT_EQUAL_UINT32(921, ids[1]);
     TEST_ASSERT_EQUAL_UINT32(923, ids[2]);
-    TEST_ASSERT_EQUAL_UINT32(297, ids[3]);
 }
 
 void test_mode1_fixed_echo_matches_verified_frame_rules()
@@ -235,23 +208,13 @@ void test_mode1_original_scope_ignores_ap_when_ap_only_is_off()
     TEST_ASSERT_EQUAL(1, mock.sent.size());
 }
 
-void test_mode3_monitors_without_injection_outside_warning_states()
-{
-    setMode(kNagMode3);
-    sendContextAt(100, 1, 0.0f, 923, 3);
-    CanFrame frame = makeEpasFrame(0, 0.33f, 0x01);
-    handler.handleMessageAt(frame, mock, 100);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
-    TEST_ASSERT_EQUAL_UINT8(kNagDecisionDasIdle,
-                            (uint8_t)bChannelDiag.nagLastDecision);
-}
-
 void test_all_modes_block_when_driver_hands_are_detected()
 {
-    for (uint8_t mode = kNagMode1; mode <= kNagMode3; ++mode) {
+    for (uint8_t mode = kNagMode1; mode <= kNagMode2; ++mode) {
         setUp();
         setMode(mode);
-        sendContextAt(100, 2, 0.0f, 923, 3);
+        CanFrame das = makeDasFrame(2, 923, 3);
+        handler.handleMessageAt(das, mock, 100);
         CanFrame frame = makeEpasFrame(1, 0.33f, 0x01);
         handler.handleMessageAt(frame, mock, 100);
         TEST_ASSERT_EQUAL(0, mock.sent.size());
@@ -260,133 +223,13 @@ void test_all_modes_block_when_driver_hands_are_detected()
     }
 }
 
-void test_mode3_blocks_without_fresh_context()
-{
-    setMode(kNagMode3);
-    CanFrame frame = makeEpasFrame(0, 0.33f, 0x01);
-    handler.handleMessageAt(frame, mock, 1000);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
-}
-
-void test_mode3_blocks_stale_das_or_steering_context()
-{
-    setMode(kNagMode3);
-    sendContextAt(100, 2, 2.0f);
-    CanFrame frame = makeEpasFrame(0, 0.33f, 0x01);
-    handler.handleMessageAt(frame, mock, 1101);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
-}
-
-void test_mode3_accepts_923_as_current_project_das_fallback()
-{
-    setMode(kNagMode3);
-    sendContextAt(100, 2, 2.0f, 923);
-    sendContextAt(2100, 2, 2.0f, 923);
-    CanFrame frame = makeEpasFrame(0, 0.33f, 0x01);
-    handler.handleMessageAt(frame, mock, 2200);
-    TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_EQUAL_UINT32(923, (uint32_t)bChannelDiag.dasStatusSourceId);
-}
-
-void test_mode3_state2_waits_two_seconds_then_walks_opposite_steering()
-{
-    setMode(kNagMode3);
-    sendContextAt(100, 2, 2.0f);
-    CanFrame early = makeEpasFrame(0, 0.33f, 0x01);
-    handler.handleMessageAt(early, mock, 2099);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
-
-    sendContextAt(2100, 2, 2.0f);
-    CanFrame ready = makeEpasFrame(0, 0.33f, 0x02);
-    handler.handleMessageAt(ready, mock, 2200);
-    TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_TRUE(torqueNm(mock.sent[0]) < 0.0f);
-    TEST_ASSERT_TRUE(torqueRaw(mock.sent[0]) >= kNagTorqueRawMin);
-    TEST_ASSERT_TRUE(torqueRaw(mock.sent[0]) <= kNagTorqueRawMax);
-}
-
-void test_mode3_state3_waits_one_second_then_uses_triangle_wave()
-{
-    setMode(kNagMode3);
-    sendContextAt(100, 3, 0.0f);
-    CanFrame early = makeEpasFrame(0, 0.33f, 0x01);
-    handler.handleMessageAt(early, mock, 1099);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
-
-    sendContextAt(1100, 3, 0.0f);
-    CanFrame ready = makeEpasFrame(0, 0.33f, 0x02);
-    handler.handleMessageAt(ready, mock, 1100);
-    TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_EQUAL_HEX16(kNagTorqueRawMin, torqueRaw(mock.sent[0]));
-}
-
-void test_mode3_rejects_invalid_steering_validity()
-{
-    setMode(kNagMode3);
-    sendContextAt(100, 2, 0.0f, 921, 6, 0);
-    sendContextAt(2100, 2, 0.0f, 921, 6, 0);
-    CanFrame frame = makeEpasFrame(0, 0.33f, 0x01);
-    handler.handleMessageAt(frame, mock, 2200);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
-    TEST_ASSERT_FALSE((bool)bChannelDiag.steeringAngleValid);
-}
-
-void test_mode3_rejects_steering_outside_five_degrees()
-{
-    setMode(kNagMode3);
-    sendContextAt(100, 2, 5.1f);
-    sendContextAt(2100, 2, 5.1f);
-    CanFrame frame = makeEpasFrame(0, 0.33f, 0x01);
-    handler.handleMessageAt(frame, mock, 2200);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
-}
-
-void test_mode3_rejects_ap_outside_active_range()
-{
-    setMode(kNagMode3);
-    sendContextAt(100, 2, 0.0f, 921, 2);
-    sendContextAt(2100, 2, 0.0f, 921, 2);
-    CanFrame frame = makeEpasFrame(0, 0.33f, 0x01);
-    handler.handleMessageAt(frame, mock, 2200);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
-    TEST_ASSERT_EQUAL_UINT8(kNagDecisionApBlocked, (uint8_t)bChannelDiag.nagLastDecision);
-}
-
-void test_mode3_only_supports_das_states_two_and_three()
-{
-    setMode(kNagMode3);
-    sendContextAt(100, 4, 0.0f);
-    sendContextAt(2100, 4, 0.0f);
-    CanFrame frame = makeEpasFrame(0, 0.33f, 0x01);
-    handler.handleMessageAt(frame, mock, 2200);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
-}
-
-void test_switching_to_mode3_resets_and_requires_new_context()
-{
-    setMode(kNagMode1);
-    CanFrame mode1 = makeEpasFrame(0, 0.33f, 0x01);
-    handler.handleMessageAt(mode1, mock, 100);
-    TEST_ASSERT_EQUAL(1, mock.sent.size());
-
-    mock.reset();
-    setMode(kNagMode3);
-    CanFrame mode3 = makeEpasFrame(0, 0.33f, 0x02);
-    handler.handleMessageAt(mode3, mock, 200);
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
-}
-
 void test_all_modes_stay_inside_common_torque_cap()
 {
-    for (uint8_t mode = kNagMode1; mode <= kNagMode3; mode++) {
+    for (uint8_t mode = kNagMode1; mode <= kNagMode2; mode++) {
         setUp();
         setMode(mode);
-        if (mode == kNagMode3) {
-            sendContextAt(100, 3, 0.0f, 923, 3);
-            sendContextAt(1100, 3, 0.0f, 923, 3);
-        }
         CanFrame frame = makeEpasFrame(0, 0.33f, mode);
-        handler.handleMessageAt(frame, mock, mode == kNagMode3 ? 1100 : 100);
+        handler.handleMessageAt(frame, mock, 100);
         TEST_ASSERT_EQUAL(1, mock.sent.size());
         TEST_ASSERT_TRUE(torqueRaw(mock.sent[0]) >= kNagTorqueRawMin);
         TEST_ASSERT_TRUE(torqueRaw(mock.sent[0]) <= kNagTorqueRawMax);
@@ -503,9 +346,9 @@ int main()
 {
     UNITY_BEGIN();
     RUN_TEST(test_nag_defaults_off_with_mode2_ap_only_selected);
-    RUN_TEST(test_a_tx_guard_requires_two_failures_in_one_second);
-    RUN_TEST(test_nag_mode_clamp_accepts_1_to_3_and_defaults_invalid_to_2);
-    RUN_TEST(test_nag_filter_contains_hw3_context_ids);
+    RUN_TEST(test_a_tx_guard_uses_hard_error_only);
+    RUN_TEST(test_nag_mode_clamp_accepts_1_and_2_and_defaults_retired_3_to_2);
+    RUN_TEST(test_nag_filter_contains_only_required_ids);
     RUN_TEST(test_mode1_fixed_echo_matches_verified_frame_rules);
     RUN_TEST(test_mode1_does_not_require_das_or_steering_context);
     RUN_TEST(test_mode1_blocks_real_hands_on);
@@ -514,18 +357,7 @@ int main()
     RUN_TEST(test_mode2_ap_only_blocks_without_fresh_ap_context);
     RUN_TEST(test_mode2_ap_only_blocks_general_drive_and_allows_active_ap);
     RUN_TEST(test_mode1_original_scope_ignores_ap_when_ap_only_is_off);
-    RUN_TEST(test_mode3_monitors_without_injection_outside_warning_states);
     RUN_TEST(test_all_modes_block_when_driver_hands_are_detected);
-    RUN_TEST(test_mode3_blocks_without_fresh_context);
-    RUN_TEST(test_mode3_blocks_stale_das_or_steering_context);
-    RUN_TEST(test_mode3_accepts_923_as_current_project_das_fallback);
-    RUN_TEST(test_mode3_state2_waits_two_seconds_then_walks_opposite_steering);
-    RUN_TEST(test_mode3_state3_waits_one_second_then_uses_triangle_wave);
-    RUN_TEST(test_mode3_rejects_invalid_steering_validity);
-    RUN_TEST(test_mode3_rejects_steering_outside_five_degrees);
-    RUN_TEST(test_mode3_rejects_ap_outside_active_range);
-    RUN_TEST(test_mode3_only_supports_das_states_two_and_three);
-    RUN_TEST(test_switching_to_mode3_resets_and_requires_new_context);
     RUN_TEST(test_all_modes_stay_inside_common_torque_cap);
     RUN_TEST(test_failed_send_does_not_increment_success_counters);
     RUN_TEST(test_successful_echo_is_not_reprocessed);

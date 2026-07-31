@@ -85,7 +85,7 @@ void test_main_ui_keeps_can_nag_tsllc_and_summon_status_together()
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"s-main-summon\""));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "Nag Killer"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "TSLLC / EAP"));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "EU Unlock / Summon (HW3)"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "ECE R79 / Summon 제한 해제 (HW3)"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "/api/summon-unlock"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "A 채널 (MCP2515 · Summon/TSLLC)"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "B 채널 (TWAI · Nag Killer)"));
@@ -125,10 +125,11 @@ void test_main_ui_uses_verified_nag_modes_and_removes_smart_profiles()
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "name=\"nagMode\""));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "MODE 1"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "MODE 2"));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "MODE 3"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "MODE 3"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "MODE 2 · AP 전용 · 권장"));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "레거시 · 비권장"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"tNagApOnly\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"tSummonCondition\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "/api/summon-condition-limit"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "/api/nag-ap-only"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "/api/nag-mode?m="));
     TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "/api/nag-profile"));
@@ -142,7 +143,7 @@ void test_main_ui_has_compact_primary_feature_switches()
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"mSummon\""));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"mTsllc\""));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"mNag\""));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "EU Unlock / Summon"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "ECE R79 / Summon 제한 해제"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "TSLLC / EAP"));
 }
 

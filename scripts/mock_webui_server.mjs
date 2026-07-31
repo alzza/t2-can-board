@@ -9,9 +9,8 @@ const repoRoot = path.resolve(scriptDir, '..');
 const webUiPath = path.join(repoRoot, 'web', 'web_ui.html');
 
 const nagModes = {
-  1: { mode: 1, modeStr: 'MODE 1', modeSummary: '고정 +1.80Nm 에코. DAS/조향각 조건 없음.', requiresContext: false },
+  1: { mode: 1, modeStr: 'MODE 1', modeSummary: '고정 +1.80Nm 에코. 손 감지 시 중단.', requiresContext: false },
   2: { mode: 2, modeStr: 'MODE 2', modeSummary: '4개 토크를 200ms 간격으로 1초 순환하고 1.5초 휴지.', requiresContext: false },
-  3: { mode: 3, modeStr: 'MODE 3', modeSummary: '최신 원본에서 제거된 레거시 조건부 상태기계.', requiresContext: true },
 };
 
 const scenarios = new Set(['normal', 'a_warn', 'ap_block', 'bus_off', 'bus_err', 'no_frames']);
@@ -25,6 +24,7 @@ function defaultToggles() {
   return {
     a_channel_tx: true,
     summon_unlock_enabled: true,
+    summon_condition_limit: true,
     tsllc_enabled: true,
     nag_killer: true,
     nag_ap_only: true,
@@ -123,7 +123,7 @@ function pushLog(msg) {
 
 function clampNagMode(value) {
   const mode = Number(value);
-  return mode >= 1 && mode <= 3 ? mode : 2;
+  return mode === 1 || mode === 2 ? mode : 2;
 }
 
 function send(res, status, contentType, body) {
@@ -188,7 +188,6 @@ function tickCounts() {
   const bFrames = noFrames ? 0 : 180000 + t * 100;
   const b880 = noFrames ? 0 : 12000 + t * 100;
   const b923 = noFrames ? 0 : 320 + t * 2;
-  const b297 = noFrames ? 0 : 14000 + t * 100;
   const injects = state.scenario === 'ap_block' || bBusOff || noFrames ? 0 : 210 + t * 3;
   const echo = noFrames ? 0 : 4200 + injects;
   return {
@@ -200,7 +199,6 @@ function tickCounts() {
     bFrames,
     b880,
     b923,
-    b297,
     injects,
     echo,
   };
@@ -306,12 +304,16 @@ function statusJson(url) {
   const twaiStateCode = c.bBusOff ? 2 : 1;
   const fresh = !c.noFrames;
   const uptimeMs = nowMs();
+  const summonGate = !state.toggles.summon_condition_limit || state.scenario !== 'ap_block';
+  const summonActive =
+    state.toggles.a_channel_tx && state.toggles.summon_unlock_enabled && summonGate;
   const logs = state.logs.filter((entry) => entry.head > logSince).map((entry) => ({ msg: entry.msg, ts: entry.ts }));
 
   return {
     isa_speed_chime_suppress: false,
     emergency_vehicle_detection: false,
     summon_unlock_enabled: state.toggles.summon_unlock_enabled,
+    summon_condition_limit: state.toggles.summon_condition_limit,
     nag_killer: state.toggles.nag_killer,
     a_channel_tx: state.toggles.a_channel_tx,
     tsllc_enabled: state.toggles.tsllc_enabled,
@@ -319,7 +321,7 @@ function statusJson(url) {
     theme: state.theme,
     uptime_ms: uptimeMs,
     uptime_s: Math.floor(uptimeMs / 1000),
-    firmware_version: 'mock-1.3.6',
+    firmware_version: 'mock-1.3.7',
     firmware_build_id: 'MOCK-LOCAL-WEBUI',
     firmware_build_short: 'MOCK-LOCAL',
     firmware_build_env: 'mock_webui',
@@ -337,27 +339,36 @@ function statusJson(url) {
     user_marker_active: state.userMarkerActive,
     summon_unlock: {
       enabled: state.toggles.summon_unlock_enabled,
-      active: state.toggles.a_channel_tx && state.toggles.summon_unlock_enabled,
+      active: summonActive,
       tx_master: state.toggles.a_channel_tx,
-      gate: state.scenario !== 'ap_block',
+      gate: summonGate,
+      condition_limit: state.toggles.summon_condition_limit,
+      guard: false,
+      inject_ready: summonActive,
       ap: state.scenario !== 'ap_block',
+      ap_state: state.scenario === 'ap_block' ? 2 : 3,
+      ap_stable_ms: state.scenario === 'ap_block' ? 0 : 5000,
+      ap_stable_required_ms: 1000,
+      gate_reason: state.toggles.summon_condition_limit ?
+        (state.scenario === 'ap_block' ? 'AP_INACTIVE' : 'PARKED') : 'UNRESTRICTED',
       parked: state.scenario !== 'ap_block',
       summon: false,
       aca: false,
       spr: false,
       block_reason: !state.toggles.summon_unlock_enabled ? 'DISABLED' :
         !state.toggles.a_channel_tx ? 'A_TX_OFF' :
-        state.scenario === 'ap_block' ? 'PARK-,SUMMON-' : 'NONE',
+        !summonGate ? 'AP_INACTIVE' : 'NONE',
       last_280_age_ms: c.noFrames ? 9000 : 20,
       parked_timeout_ms: 5000,
       rx280: c.noFrames ? 0 : Math.floor(c.aFrames / 5),
       rx390: c.noFrames ? 0 : Math.floor(c.aFrames / 7),
       rx921: c.noFrames ? 0 : Math.floor(c.aFrames / 6),
       rx1016: c.noFrames ? 0 : Math.floor(c.aFrames / 2),
-      rxMux1: c.noFrames || state.scenario === 'ap_block' ? 0 : Math.floor(c.aFrames / 3),
-      txOk: c.noFrames || state.scenario === 'ap_block' ? 0 : Math.floor(c.aFrames / 3),
+      rxMux1: c.noFrames || !summonGate ? 0 : Math.floor(c.aFrames / 3),
+      txOk: c.noFrames || !summonGate ? 0 : Math.floor(c.aFrames / 3),
+      txBusy: 0,
       txFail: 0,
-      blocked: state.scenario === 'ap_block' ? Math.floor(c.aFrames / 3) : 0,
+      blocked: !summonGate ? Math.floor(c.aFrames / 3) : 0,
       wake_count: c.noFrames ? 0 : 2,
       wake_waiting_tx: false,
       wake_to_tx_ms: c.noFrames ? 0 : 184,
@@ -373,6 +384,7 @@ function statusJson(url) {
       guard: false,
       inject_ready: state.toggles.tsllc_enabled && state.toggles.a_channel_tx,
       txOk: c.noFrames ? 0 : Math.floor(c.aFrames / 6),
+      txBusy: 0,
       txFail: 0,
       last_tx_age_ms: c.noFrames ? 0 : 24,
     },
@@ -413,6 +425,7 @@ function statusJson(url) {
       isa_speed_chime_suppress: feature(false, false, false),
       emergency_vehicle_detection: feature(false, false, false),
       summon_unlock: feature(state.toggles.summon_unlock_enabled),
+      summon_condition_limit: feature(state.toggles.summon_condition_limit),
       nag_killer: feature(state.toggles.nag_killer),
       nag_ap_only: feature(state.toggles.nag_ap_only),
       a_channel_tx: feature(state.toggles.a_channel_tx),
@@ -458,10 +471,16 @@ function statusJson(url) {
         mcp_busoff_since_ms: 0,
         mcp_last_recovery_ms: 0,
         tx_ok: c.noFrames ? 0 : Math.floor(c.aFrames / 2),
+        tx_queued: c.noFrames ? 0 : Math.floor(c.aFrames / 2),
+        tx_busy: 2,
+        tx_hard_error: c.noFrames ? 0 : 1,
+        tx_completed: c.noFrames ? 0 : Math.floor(c.aFrames / 2) - 1,
+        tx_arbitration_lost: 1,
+        tx_aborted: 0,
         tx_fail: c.noFrames ? 0 : 1,
         tx_fail_window: 0,
         tx_fail_window_peak: c.noFrames ? 0 : 1,
-        tx_fail_guard_threshold: 2,
+        tx_fail_guard_threshold: 1,
         tec: 0,
         rec: 0,
         tec_peak: 0,
@@ -507,13 +526,11 @@ function statusJson(url) {
         frames_target: c.b880,
         frames_921: 0,
         frames_923: c.b923,
-        frames_297: c.b297,
         target_id: 880,
         id_880_period_ms: c.noFrames ? 0 : 10,
         id_target_period_ms: c.noFrames ? 0 : 10,
         id_921_period_ms: 0,
         id_923_period_ms: c.noFrames ? 0 : 500,
-        id_297_period_ms: c.noFrames ? 0 : 10,
         das_hands_state: state.scenario === 'normal' ? 3 : 2,
         das_source_id: c.noFrames ? 0 : 923,
         last_das_status_rx_ms: uptimeMs,
@@ -623,15 +640,9 @@ function nagStatsJson() {
     apActive: !apBlocked,
     targetId: 880,
     dasApState: apBlocked ? 1 : 3,
-    steerAngleDeg: apBlocked ? -0.6 : 1.4,
-    steeringValid: !noFrames,
-    frames297: c.b297,
-    modeBPhase: apBlocked ? 0 : 6,
+    modeBPhase: apBlocked ? 0 : 2,
     modeBInjects: c.injects,
     modeBLastNm: apBlocked ? 0 : 1.05,
-    modeBStateAgeMs: apBlocked ? 65535 : 420,
-    modeBPhaseAgeMs: apBlocked ? 65535 : 180,
-    modeBFirstEchoDelayMs: apBlocked ? 0 : (state.nagMode === 3 ? 1000 : 1),
     boSoftMode: true,
     boSoftFallback: 0,
     singleShotTx: state.toggles.singleShotTx,
@@ -645,7 +656,6 @@ function nagStatsJson() {
     last921AgeMs: 0,
     last923AgeMs: noFrames ? 9000 : 315,
     lastDasStatusAgeMs: noFrames ? 9000 : 315,
-    last297AgeMs: noFrames ? 9000 : 7,
     lastEchoAgeMs: apBlocked ? 25000 : 8,
   };
 }
@@ -696,7 +706,7 @@ function logsBundleText() {
   return [
     '=== CanMod Mock 통합 로그 ===',
     `Generated: ${new Date().toISOString()}`,
-    'Firmware: mock-1.3.6',
+    'Firmware: mock-1.3.7',
     `Scenario: ${state.scenario}`,
     `NagMode: ${nagModeInfo().modeStr}`,
     '',
@@ -722,6 +732,7 @@ async function handlePost(req, res, url) {
   const toggleRoutes = new Map([
     ['/api/a-channel-tx', 'a_channel_tx'],
     ['/api/summon-unlock', 'summon_unlock_enabled'],
+    ['/api/summon-condition-limit', 'summon_condition_limit'],
     ['/api/tsllc', 'tsllc_enabled'],
     ['/api/nag-killer', 'nag_killer'],
     ['/api/nag-ap-only', 'nag_ap_only'],

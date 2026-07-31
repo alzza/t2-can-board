@@ -349,14 +349,15 @@ void test_user_marker_names_are_generic()
     TEST_ASSERT_EQUAL_STRING("UNKNOWN", userMarkerDetailName(0));
 }
 
-void test_feature_state_detail_includes_nag_ap_only()
+void test_feature_state_detail_includes_nag_ap_only_and_summon_condition()
 {
     aChannelTxRuntime = true;
     summonUnlockRuntime = true;
     tsllcRuntime = true;
     nagKillerRuntime = true;
     nagApOnlyRuntime = true;
-    TEST_ASSERT_EQUAL_HEX32(0x4F, eventFeatureStateDetail());
+    summonConditionLimitRuntime = true;
+    TEST_ASSERT_EQUAL_HEX32(0xCF, eventFeatureStateDetail());
 }
 
 void test_feature_activity_detail_maps_each_feature()
@@ -407,7 +408,7 @@ int main()
     RUN_TEST(test_runtime_bypass_tlssc_off_still_reads_real_bit);
     RUN_TEST(test_runtime_defaults_match_build_configuration);
     RUN_TEST(test_user_marker_names_are_generic);
-    RUN_TEST(test_feature_state_detail_includes_nag_ap_only);
+    RUN_TEST(test_feature_state_detail_includes_nag_ap_only_and_summon_condition);
     RUN_TEST(test_feature_activity_detail_maps_each_feature);
 
     return UNITY_END();

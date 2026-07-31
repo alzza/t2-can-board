@@ -4,6 +4,21 @@
 
 #include "../can_frame_types.h"
 
+enum class CanTxResult : uint8_t
+{
+    Queued = 0,
+    Busy,
+    ArbitrationLost,
+    Aborted,
+    ControllerError,
+    InvalidFrame
+};
+
+inline bool canTxQueued(CanTxResult result)
+{
+    return result == CanTxResult::Queued;
+}
+
 struct CanDriver
 {
     virtual bool init() = 0;                                    // 드라이버 초기화 (500kbps 설정 등)
@@ -14,6 +29,17 @@ struct CanDriver
     // 프레임 1개 전송 + 결과 반환 (true=성공, false=실패).
     // 결과 확인을 구현하지 않은 드라이버의 기본값은 send() 호출 후 true다.
     virtual bool sendCheck(const CanFrame &frame) { send(frame); return true; }
+    // 큐 포화와 실제 CAN 오류를 구분하는 상세 송신 결과.
+    virtual CanTxResult sendDetailed(const CanFrame &frame)
+    {
+        return sendCheck(frame) ? CanTxResult::Queued : CanTxResult::ControllerError;
+    }
+    // 비동기 TX 완료 상태를 회수한다. MCP2515처럼 TXREQ가 나중에 해제되는
+    // 드라이버가 완료/중재 손실/중단을 진단 카운터에 반영할 때 사용한다.
+    virtual void pollTransmitResults() {}
+    // OTA 플래시 쓰기 전에 하드웨어 송신 경로를 물리적으로 정지한다.
+    // 성공 뒤에는 재부팅 전까지 송신을 재개하지 않는다.
+    virtual bool quiesceTransmit() { return true; }
     // 에러 플래그 레지스터 (EFLG) 반환 — MCP2515 구현 시 실제 값, 나머지는 0
     // 비트 의미: bit5=TXBO(BUS-OFF), bit4=TXEP(TX에러패시브), bit2=TXWAR(TEC≥96)
     //            bit7=RX1OVR, bit6=RX0OVR (RX 버퍼 오버플로)

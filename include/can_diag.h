@@ -22,10 +22,10 @@ inline volatile DiagState diagState = DiagState::IDLE;
 static portMUX_TYPE diagMux = portMUX_INITIALIZER_UNLOCKED;
 
 static void canDiagTaskFn(void* /*pv*/) {
-    char buf[192];
+    char buf[320];
     bool ok = true;
 
-    // 정상 기준: 검증된 MODE 1/2/3 / ID 880 고정
+    // 정상 기준: 최신 검증 원본의 MODE 1/2 / ID 880 고정
     uint16_t targetId = kNagFixedTargetId;
     uint8_t  nagMode = nagModeClamp((uint8_t)bChannelDiag.nagMode);
 
@@ -143,11 +143,15 @@ static void canDiagTaskFn(void* /*pv*/) {
         aMcpEflgStateName((uint8_t)aChannelDiag.mcpEflg),
         d_tot, targetId, d_tgt);
     L(buf);
-    snprintf(buf, sizeof(buf), "  A Fail+%u (1s:%u peak:%u th:%u) MERRF+%u RX-OVR+%u EFLG-EV+%u | B Arb+%u BusErr+%u TxFail+%u",
+    snprintf(buf, sizeof(buf), "  A Hard+%u (1s:%u peak:%u th:%u) Busy=%u Done=%u Arb=%u Abort=%u MERRF+%u RX-OVR+%u EFLG-EV+%u | B Arb+%u BusErr+%u TxFail+%u",
         d_a_fail,
         (unsigned)(uint8_t)aChannelDiag.aTxFailWindowDelta,
         (unsigned)(uint8_t)aChannelDiag.aTxFailWindowPeak,
         (unsigned)kATxGuardTxFailBurstThreshold,
+        (unsigned)(uint32_t)aChannelDiag.aTxBusy,
+        (unsigned)(uint32_t)aChannelDiag.aTxCompleted,
+        (unsigned)(uint32_t)aChannelDiag.aTxArbitrationLost,
+        (unsigned)(uint32_t)aChannelDiag.aTxAborted,
         d_a_merrf, d_a_ovr, d_a_eflg_ev, d_arb, d_berr, d_tfail);
     L(buf);
     snprintf(buf, sizeof(buf), "  A LoopGap last=%uus peak=%uus >2ms:+%u",
@@ -160,10 +164,19 @@ static void canDiagTaskFn(void* /*pv*/) {
         (bool)aChannelDiag.wakeAwaitingSummonTx ? "측정중/" : "",
         (unsigned)(uint32_t)aChannelDiag.wakeToSummonTxMs);
     L(buf);
-    snprintf(buf, sizeof(buf), "  5초 기능활동: Summon +%u/%u Block+%u | TSLLC +%u/%u | Nag TX +%u",
+    snprintf(buf, sizeof(buf), "  5초 기능활동: Summon Q/H +%u/%u Block+%u | TSLLC Q/H +%u/%u | Nag TX +%u",
         (unsigned)d_summon_ok, (unsigned)d_summon_fail,
         (unsigned)d_summon_block, (unsigned)d_tsllc_ok,
         (unsigned)d_tsllc_fail, (unsigned)d_nag_ok);
+    L(buf);
+    const uint32_t eceNowMs = millis();
+    snprintf(buf, sizeof(buf), "  송신 허용 조건:%s Gate:%s(%s) AP:%u 안정:%ums/%ums",
+        (bool)summonConditionLimitRuntime ? "ON" : "OFF",
+        summonGateOpen() ? "OPEN" : "BLOCKED",
+        summonGateReasonName(eceNowMs),
+        (unsigned)(uint8_t)summonGateDiag.apState,
+        (unsigned)summonApStableMs(eceNowMs),
+        (unsigned)kSummonApStableRequiredMs);
     L(buf);
     if (d_arb > 5 || d_berr > 5) {
         L("  \u26a0\ufe0f  \ucda9\ub3cc/\ube44\ud2b8 \uc5d0\ub7ec \uc99d\uac00 \u2192 \ub3d9\uc77c ID \uacbd\uc7c1 \ub610\ub294 \ubb3c\ub9ac \uacc4\uce35 \ub178\uc774\uc988 \uc758\uc2ec");
@@ -204,7 +217,7 @@ static void canDiagTaskFn(void* /*pv*/) {
         dasChanges);
     L(buf);
     if ((d_921 + d_923) == 0 || das == 0xFF) {
-        L("  \u26a0\ufe0f 921/923 \ubbf8\uc218\uc2e0 \u2192 MODE 3 \ucd5c\uadfc \uc218\uc2e0 \uc870\uac74\uc744 \ucda9\uc871\ud560 \uc218 \uc5c6\uc74c");
+        L("  \u26a0\ufe0f 921/923 \ubbf8\uc218\uc2e0 \u2192 AP \uc804\uc6a9 \ubc94\uc704\uc5d0\uc11c \uc8fc\uc785 \uc870\uac74\uc744 \ud655\uc778\ud560 \uc218 \uc5c6\uc74c");
     } else if (das == 0 || das == 8) {
         L("  \u2139\ufe0f  \ud578\uc988\uc624\ud504 (\uacbd\uace0 \uc5c6\uc74c, \ud0ac\ub7ec \ub300\uae30 \uc911 - \uc815\uc0c1)");
     } else {

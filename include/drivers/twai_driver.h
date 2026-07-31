@@ -14,6 +14,7 @@ public:
 
     bool init() override
     {
+        txQuiesced_ = false;
         driverOK_ = false;
         lastInstallErr_ = ESP_OK;
         lastStartErr_ = ESP_OK;
@@ -92,7 +93,7 @@ public:
 
     bool sendCheck(const CanFrame &frame) override
     {
-        if (!driverOK_ || recoveryInProgress_) {
+        if (txQuiesced_ || !driverOK_ || recoveryInProgress_) {
             txSuppressedCount_++;
             if (recoveryInProgress_) updateRecoveryProgress();
             return false;
@@ -115,6 +116,17 @@ public:
             return false;
         }
         return true;
+    }
+
+    bool quiesceTransmit() override
+    {
+        if (txQuiesced_) return true;
+        txQuiesced_ = true;
+        (void)twai_clear_transmit_queue();
+        const esp_err_t stopErr = twai_stop();
+        driverOK_ = false;
+        recoveryInProgress_ = false;
+        return stopErr == ESP_OK || stopErr == ESP_ERR_INVALID_STATE;
     }
 
     // ── 진단 getters (web API, timeseries, BUS-OFF 이벤트 로그에서 사용) ──
@@ -312,6 +324,7 @@ private:
 
     void tryRecover()
     {
+        if (txQuiesced_) return;
         uint32_t now = millis();
         if (now - lastRecovery_ < cooldownMs_ * 10)
             return;
@@ -328,6 +341,7 @@ private:
     twai_timing_config_t t_config_;
     twai_filter_config_t f_config_;
     bool     driverOK_ = false;
+    bool     txQuiesced_ = false;
     bool     recoveryInProgress_ = false;
     uint32_t lastRecovery_ = 0;
     uint32_t recoveryStartMs_ = 0;

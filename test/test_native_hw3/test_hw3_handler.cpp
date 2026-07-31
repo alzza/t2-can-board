@@ -25,6 +25,7 @@ void setUp()
     mock.reset();
     handler = HW3Handler();
     summonUnlockRuntime = true;
+    summonConditionLimitRuntime = true;
     tsllcRuntime = true;
     aChannelTxRuntime = true;
     aTxGuardRuntime = false;

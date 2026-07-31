@@ -70,12 +70,10 @@ struct NagMarkerSnapshot {
     uint8_t realHo;
     uint8_t dasState;
     uint8_t txHo;
-    float steerDeg;
     float realTorqueNm;
     float txTorqueNm;
     char raw880[24];
     char rawDas[24];
-    char raw297[24];
 };
 
 static constexpr size_t kNagMarkerSnapshotCapacity = 8;
@@ -173,6 +171,7 @@ static constexpr char kNvsNamespace[] = "canmod";
 static constexpr char kNvsKeyIsaSpeedChime[] = "isa_speed_chime";
 static constexpr char kNvsKeyEmergencyVehicleDetection[] = "emerg_veh_det";
 static constexpr char kNvsKeySummonUnlock[] = "summon_unlock";
+static constexpr char kNvsKeySummonConditionLimit[] = "eu_cond";
 static constexpr char kNvsKeyNagKiller[] = "nag_killer";
 static constexpr char kNvsKeyTsllc[]        = "tsllc";        // TSLLC (스톱사인/초록불 제어)
 static constexpr char kNvsKeyAChTx[]        = "a_ch_tx";      // A채널 1021 수정 송신 마스터
@@ -184,6 +183,7 @@ static constexpr char kNvsKeyNagMode[]      = "nag_mode";
 static constexpr char kNvsKeyNagApOnly[]    = "nag_ap_only";
 static_assert(sizeof(kNvsKeyNagMode) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyNagApOnly) - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeySummonConditionLimit) - 1 <= 15, "NVS key too long");
 static constexpr char kNvsKeyTheme[] = "theme";
 static_assert(sizeof(kNvsKeyTsllc) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyAChTx) - 1 <= 15, "NVS key too long");
@@ -240,6 +240,7 @@ static_assert(sizeof(kNvsKeyTheme) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyIsaSpeedChime) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyEmergencyVehicleDetection) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeySummonUnlock) - 1 <= 15, "NVS key too long");
+static_assert(sizeof(kNvsKeySummonConditionLimit) - 1 <= 15, "NVS key too long");
 static_assert(sizeof(kNvsKeyNagKiller) - 1 <= 15, "NVS key too long");
 
 #if defined(HW4) && defined(ISA_SPEED_CHIME_SUPPRESS)
@@ -551,6 +552,7 @@ static void applyOtaSafeFeatureRuntimeDefaults()
     isaSpeedChimeSuppressRuntime = false;
     emergencyVehicleDetectionRuntime = false;
     summonUnlockRuntime = false;
+    summonConditionLimitRuntime = kSummonConditionLimitDefaultEnabled;
     nagKillerRuntime = false;
     nagApOnlyRuntime = kNagApOnlyDefaultEnabled;
     tsllcRuntime = false;
@@ -581,6 +583,8 @@ static esp_err_t writeOtaSafeFeatureSettings(nvs_handle_t handle)
     esp_err_t err = nvs_set_u8(handle, kNvsKeyIsaSpeedChime, 0);
     if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyEmergencyVehicleDetection, 0);
     if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeySummonUnlock, 0);
+    if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeySummonConditionLimit,
+                                         kSummonConditionLimitDefaultEnabled ? 1 : 0);
     if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyNagKiller, 0);
     if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyTsllc, 0);
     if (err == ESP_OK) err = nvs_set_u8(handle, kNvsKeyAChTx, 0);
@@ -628,7 +632,8 @@ static bool prepareOtaUploadCanQuiet()
     esp_err_t err = nvs_open(kNvsNamespace, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
         applyOtaSafeFeatureRuntimeDefaults();
-        canTxQuiesceCancel();
+        if (appDriver) (void)appDriver->quiesceTransmit();
+        if (gWebDriverB) (void)gWebDriverB->quiesceTransmit();
         Serial.printf("[OTA] 업로드 전 CAN TX OFF: NVS open 실패 (%ld)\n", static_cast<long>(err));
         return false;
     }
@@ -637,7 +642,8 @@ static bool prepareOtaUploadCanQuiet()
     if (err == ESP_OK) err = nvs_commit(handle);
     nvs_close(handle);
     if (err != ESP_OK) {
-        canTxQuiesceCancel();
+        if (appDriver) (void)appDriver->quiesceTransmit();
+        if (gWebDriverB) (void)gWebDriverB->quiesceTransmit();
         Serial.printf("[OTA] 업로드 전 CAN TX OFF 저장 실패 (%ld)\n", static_cast<long>(err));
         return false;
     }
@@ -646,23 +652,23 @@ static bool prepareOtaUploadCanQuiet()
         if (millis() - drainStartedMs >= 250) {
             logRing.push("[OTA] CAN 송신 종료 확인 시간 초과 — 업로드 취소", millis());
             Serial.println("[OTA] CAN 송신 종료 확인 시간 초과 — 업로드 취소");
-            // 기능은 NVS/런타임 모두 OFF로 남긴다. 재부팅 없이 UI에서 다시
-            // 기능을 켜는 기존 동작은 유지하도록 차단만 해제한다.
-            canTxQuiesceCancel();
+            if (appDriver) (void)appDriver->quiesceTransmit();
+            if (gWebDriverB) (void)gWebDriverB->quiesceTransmit();
             return false;
         }
         delay(1);
     }
 
-    esp_err_t clearErr = twai_clear_transmit_queue();
-    if (clearErr != ESP_OK && clearErr != ESP_ERR_INVALID_STATE) {
-        canTxQuiesceCancel();
-        Serial.printf("[OTA] B채널 TX queue clear 실패 (%ld)\n", static_cast<long>(clearErr));
+    const bool aQuiet = !appDriver || appDriver->quiesceTransmit();
+    const bool bQuiet = !gWebDriverB || gWebDriverB->quiesceTransmit();
+    if (!aQuiet || !bQuiet) {
+        Serial.printf("[OTA] CAN 물리 TX 정지 실패 (A=%u B=%u)\n",
+                      aQuiet ? 1U : 0U, bQuiet ? 1U : 0U);
         return false;
     }
 
-    logRing.push("[OTA] 업로드 시작: CAN TX OFF/stock 저장 + A/B 송신 종료 확인", millis());
-    Serial.println("[OTA] 업로드 시작: CAN TX OFF/stock 저장 + A/B 송신 종료 확인");
+    logRing.push("[OTA] 업로드 시작: A=Listen-Only, B=Stopped, 기능 NVS OFF", millis());
+    Serial.println("[OTA] 업로드 시작: A=Listen-Only, B=Stopped, 기능 NVS OFF");
     return true;
 }
 
@@ -684,6 +690,7 @@ static esp_err_t loadVehicleRuntimeSettingsBeforeCan()
     uint8_t isa = kIsaSpeedChimeSuppressDefaultEnabled ? 1 : 0;
     uint8_t emergency = kEmergencyVehicleDetectionDefaultEnabled ? 1 : 0;
     uint8_t summon = kSummonUnlockDefaultEnabled ? 1 : 0;
+    uint8_t summonConditionLimit = kSummonConditionLimitDefaultEnabled ? 1 : 0;
     uint8_t nag = kNagKillerDefaultEnabled ? 1 : 0;
     uint8_t tsllc = kTsllcDefaultEnabled ? 1 : 0;
     uint8_t aTx = 1;
@@ -698,6 +705,8 @@ static esp_err_t loadVehicleRuntimeSettingsBeforeCan()
     err = nvsReadU8OrDefault(h, kNvsKeyIsaSpeedChime, isa, isa);
     if (err == ESP_OK) err = nvsReadU8OrDefault(h, kNvsKeyEmergencyVehicleDetection, emergency, emergency);
     if (err == ESP_OK) err = nvsReadU8OrDefault(h, kNvsKeySummonUnlock, summon, summon);
+    if (err == ESP_OK) err = nvsReadU8OrDefault(h, kNvsKeySummonConditionLimit,
+                                                summonConditionLimit, summonConditionLimit);
     if (err == ESP_OK) err = nvsReadU8OrDefault(h, kNvsKeyNagKiller, nag, nag);
     if (err == ESP_OK) err = nvsReadU8OrDefault(h, kNvsKeyTsllc, tsllc, tsllc);
     if (err == ESP_OK) err = nvsReadU8OrDefault(h, kNvsKeyAChTx, aTx, aTx);
@@ -717,6 +726,7 @@ static esp_err_t loadVehicleRuntimeSettingsBeforeCan()
     isaSpeedChimeSuppressRuntime = isa != 0;
     emergencyVehicleDetectionRuntime = emergency != 0;
     summonUnlockRuntime = summon != 0;
+    summonConditionLimitRuntime = summonConditionLimit != 0;
     nagKillerRuntime = nag != 0;
     nagApOnlyRuntime = nagApOnly != 0;
     tsllcRuntime = tsllc != 0;
@@ -729,11 +739,17 @@ static esp_err_t loadVehicleRuntimeSettingsBeforeCan()
 
     NagConfig c;
     nagCfgDefaults(c);
+    const bool retiredNagModeStored = nagMode != kNagMode1 && nagMode != kNagMode2;
     c.mode = nagModeClamp(nagMode);
     portENTER_CRITICAL(&nagCfgMux);
     nagConfig = c;
     portEXIT_CRITICAL(&nagCfgMux);
     bChannelDiag.nagMode = c.mode;
+    if (retiredNagModeStored) {
+        // 과거 Mode 3 NVS 값은 최신 검증 원본의 기본 Mode 2로 즉시 치환한다.
+        (void)nvsWriteU8(kNvsKeyNagMode, kNagModeDefault);
+        logRing.push("[NVS] 제거된 Nag Mode 3 값을 기본 Mode 2로 정리", millis());
+    }
     return ESP_OK;
 }
 
@@ -1354,7 +1370,7 @@ static esp_err_t statusHandler(httpd_req_t *req)
     bool aChannelTx = (bool)aChannelTxRuntime;
     bool summonUnlockEnabled =
         kWebSupportsSummonUnlock ? (bool)summonUnlockRuntime : false;
-    bool summonUnlockActive = aChannelTx && summonUnlockEnabled;
+    const bool summonConditionLimit = (bool)summonConditionLimitRuntime;
     bool nagKiller = kWebSupportsNagKiller ? (bool)nagKillerRuntime : false;
     bool tsllcEnabled = kWebSupportsTsllc ? (bool)tsllcRuntime : false;
     bool nagApOnly = (bool)nagApOnlyRuntime;
@@ -1368,6 +1384,7 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "isa_speed_chime_suppress", isaSuppress);
     cJSON_AddBoolToObject(root, "emergency_vehicle_detection", emergencyVehicleDetection);
     cJSON_AddBoolToObject(root, "summon_unlock_enabled", summonUnlockEnabled);
+    cJSON_AddBoolToObject(root, "summon_condition_limit", summonConditionLimit);
     cJSON_AddBoolToObject(root, "nag_killer", nagKiller);
     cJSON_AddBoolToObject(root, "nag_ap_only", nagApOnly);
     cJSON_AddBoolToObject(root, "a_channel_tx", aChannelTx);
@@ -1378,17 +1395,24 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON *summon = cJSON_AddObjectToObject(root, "summon_unlock");
     if (summon) {
         const bool summonEnabled = summonUnlockEnabled;
-        const bool gateOpen = summonGateOpen();
+        const bool gateOpen = summonGateOpen(handlerStartMs);
+        const bool summonUnlockActive =
+            summonEnabled && aChannelTx && gateOpen && !aGuardActiveNow;
         const uint32_t last280Ms = (uint32_t)summonGateDiag.last280Ms;
         const uint32_t last280AgeMs = last280Ms ? handlerStartMs - last280Ms : 0;
         cJSON_AddBoolToObject(summon, "enabled", summonEnabled);
         cJSON_AddBoolToObject(summon, "active", summonUnlockActive);
         cJSON_AddBoolToObject(summon, "tx_master", aChannelTx);
         cJSON_AddBoolToObject(summon, "gate", gateOpen);
+        cJSON_AddBoolToObject(summon, "condition_limit", summonConditionLimit);
         cJSON_AddBoolToObject(summon, "guard", aGuardActiveNow);
         cJSON_AddBoolToObject(summon, "inject_ready",
                               summonEnabled && aChannelTx && gateOpen && !aGuardActiveNow);
         cJSON_AddBoolToObject(summon, "ap", (bool)summonGateDiag.apActive);
+        cJSON_AddNumberToObject(summon, "ap_state", (uint8_t)summonGateDiag.apState);
+        cJSON_AddNumberToObject(summon, "ap_stable_ms", summonApStableMs(handlerStartMs));
+        cJSON_AddNumberToObject(summon, "ap_stable_required_ms", kSummonApStableRequiredMs);
+        cJSON_AddStringToObject(summon, "gate_reason", summonGateReasonName(handlerStartMs));
         cJSON_AddBoolToObject(summon, "parked", (bool)summonGateDiag.parked);
         cJSON_AddBoolToObject(summon, "summon", (bool)summonGateDiag.summoning);
         cJSON_AddBoolToObject(summon, "aca", (bool)summonGateDiag.acaActive);
@@ -1396,7 +1420,8 @@ static esp_err_t statusHandler(httpd_req_t *req)
         cJSON_AddStringToObject(summon, "block_reason",
                                 !summonEnabled ? "DISABLED" :
                                 !aChannelTx ? "A_TX_OFF" :
-                                gateOpen ? "NONE" : "PARK-,SUMMON-");
+                                aGuardActiveNow ? "TX_GUARD" :
+                                gateOpen ? "NONE" : summonGateReasonName(handlerStartMs));
         cJSON_AddNumberToObject(summon, "last_280_age_ms", last280AgeMs);
         cJSON_AddNumberToObject(summon, "parked_timeout_ms", kSummonParkedTimeoutMs);
         cJSON_AddNumberToObject(summon, "rx280", (uint32_t)summonGateDiag.frames280);
@@ -1405,6 +1430,7 @@ static esp_err_t statusHandler(httpd_req_t *req)
         cJSON_AddNumberToObject(summon, "rx1016", (uint32_t)summonGateDiag.frames1016);
         cJSON_AddNumberToObject(summon, "rxMux1", (uint32_t)summonGateDiag.mux1Received);
         cJSON_AddNumberToObject(summon, "txOk", (uint32_t)summonGateDiag.txOk);
+        cJSON_AddNumberToObject(summon, "txBusy", (uint32_t)summonGateDiag.txBusy);
         cJSON_AddNumberToObject(summon, "txFail", (uint32_t)summonGateDiag.txFail);
         cJSON_AddNumberToObject(summon, "blocked", (uint32_t)summonGateDiag.blocked);
         cJSON_AddNumberToObject(summon, "last_tx_age_ms",
@@ -1558,6 +1584,9 @@ static esp_err_t statusHandler(httpd_req_t *req)
     addFeatureState(features, "summon_unlock",
                     kWebSupportsSummonUnlock, summonUnlockEnabled,
                     kSummonUnlockBuildEnabled);
+    addFeatureState(features, "summon_condition_limit",
+                    kWebSupportsSummonUnlock, summonConditionLimit,
+                    kSummonUnlockBuildEnabled);
     addFeatureState(features, "nag_killer", kWebSupportsNagKiller, nagKiller, kNagKillerBuildEnabled);
     addFeatureState(features, "nag_ap_only", kWebSupportsNagKiller, nagApOnly, kNagKillerBuildEnabled);
     addFeatureState(features, "a_channel_tx", true, aChannelTx, true);
@@ -1593,14 +1622,12 @@ static esp_err_t statusHandler(httpd_req_t *req)
     static uint32_t lastFrames880 = 0;
     static uint32_t lastFrames921 = 0;
     static uint32_t lastFrames923 = 0;
-    static uint32_t lastFrames297 = 0;
     static uint32_t period280Ms = 0;
     static uint32_t period1016Ms = 0;
     static uint32_t period1021Ms = 0;
     static uint32_t period880Ms = 0;
     static uint32_t period921Ms = 0;
     static uint32_t period923Ms = 0;
-    static uint32_t period297Ms = 0;
     uint16_t nagTargetId = kNagFixedTargetId;
     {
         uint32_t now = millis();
@@ -1612,7 +1639,6 @@ static esp_err_t statusHandler(httpd_req_t *req)
             const uint32_t cur880 = (uint32_t)bChannelDiag.frames880;
             const uint32_t cur921 = (uint32_t)bChannelDiag.frames921;
             const uint32_t cur923 = (uint32_t)bChannelDiag.frames923;
-            const uint32_t cur297 = (uint32_t)bChannelDiag.frames297;
 
             const uint32_t d280 = cur280 - lastFrames280;
             const uint32_t d1016 = cur1016 - lastFrames1016;
@@ -1620,7 +1646,6 @@ static esp_err_t statusHandler(httpd_req_t *req)
             const uint32_t d880  = cur880  - lastFrames880;
             const uint32_t d921  = cur921  - lastFrames921;
             const uint32_t d923  = cur923  - lastFrames923;
-            const uint32_t d297  = cur297  - lastFrames297;
 
             period280Ms = (d280 > 0) ? (elapsed / d280) : 0;
             period1016Ms = (d1016 > 0) ? (elapsed / d1016) : 0;
@@ -1628,7 +1653,6 @@ static esp_err_t statusHandler(httpd_req_t *req)
             period880Ms  = (d880  > 0) ? (elapsed / d880)  : 0;
             period921Ms  = (d921  > 0) ? (elapsed / d921)  : 0;
             period923Ms  = (d923  > 0) ? (elapsed / d923)  : 0;
-            period297Ms  = (d297  > 0) ? (elapsed / d297)  : 0;
 
             lastFrames280 = cur280;
             lastFrames1016 = cur1016;
@@ -1636,7 +1660,6 @@ static esp_err_t statusHandler(httpd_req_t *req)
             lastFrames880 = cur880;
             lastFrames921 = cur921;
             lastFrames923 = cur923;
-            lastFrames297 = cur297;
             idRateLastMs = now;
         }
     }
@@ -1657,11 +1680,13 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(ach, "summon_unlock_modified",
                             (uint32_t)aChannelDiag.summonUnlockModifiedCount);
     cJSON_AddNumberToObject(ach, "summon_tx_ok", (uint32_t)summonGateDiag.txOk);
+    cJSON_AddNumberToObject(ach, "summon_tx_busy", (uint32_t)summonGateDiag.txBusy);
     cJSON_AddNumberToObject(ach, "summon_tx_fail", (uint32_t)summonGateDiag.txFail);
     cJSON_AddNumberToObject(ach, "summon_blocked", (uint32_t)summonGateDiag.blocked);
     cJSON_AddNumberToObject(ach, "tsllc_modified",
                             (uint32_t)aChannelDiag.tsllcModifiedCount);
     cJSON_AddNumberToObject(ach, "tsllc_tx_ok", (uint32_t)aChannelDiag.tsllcTxOk);
+    cJSON_AddNumberToObject(ach, "tsllc_tx_busy", (uint32_t)aChannelDiag.tsllcTxBusy);
     cJSON_AddNumberToObject(ach, "tsllc_tx_fail", (uint32_t)aChannelDiag.tsllcTxFail);
     cJSON_AddNumberToObject(ach, "last_frame_id", (uint32_t)aChannelDiag.lastFrameIdReceived);
     cJSON_AddNumberToObject(ach, "last_loop_ms", (uint32_t)aChannelDiag.lastLoopMs);
@@ -1683,7 +1708,13 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(ach, "mcp_last_recovery_ms", (uint32_t)aChannelDiag.mcpLastRecoveryMs);
     // A채널 송수신 진단 카운터 (1초 EFLG 폴링 + handler 송신 결과)
     cJSON_AddNumberToObject(ach, "tx_ok",   (uint32_t)aChannelDiag.aTxOk);
+    cJSON_AddNumberToObject(ach, "tx_queued", (uint32_t)aChannelDiag.aTxOk);
+    cJSON_AddNumberToObject(ach, "tx_busy", (uint32_t)aChannelDiag.aTxBusy);
     cJSON_AddNumberToObject(ach, "tx_fail", (uint32_t)aChannelDiag.aTxFail);
+    cJSON_AddNumberToObject(ach, "tx_hard_error", (uint32_t)aChannelDiag.aTxFail);
+    cJSON_AddNumberToObject(ach, "tx_completed", (uint32_t)aChannelDiag.aTxCompleted);
+    cJSON_AddNumberToObject(ach, "tx_arbitration_lost", (uint32_t)aChannelDiag.aTxArbitrationLost);
+    cJSON_AddNumberToObject(ach, "tx_aborted", (uint32_t)aChannelDiag.aTxAborted);
     cJSON_AddNumberToObject(ach, "tx_fail_window",
                             (uint32_t)(uint8_t)aChannelDiag.aTxFailWindowDelta);
     cJSON_AddNumberToObject(ach, "tx_fail_window_peak",
@@ -1779,13 +1810,11 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(bch, "frames_target", (uint32_t)bChannelDiag.frames880);
     cJSON_AddNumberToObject(bch, "frames_921", (uint32_t)bChannelDiag.frames921);
     cJSON_AddNumberToObject(bch, "frames_923", (uint32_t)bChannelDiag.frames923);
-    cJSON_AddNumberToObject(bch, "frames_297", (uint32_t)bChannelDiag.frames297);
     cJSON_AddNumberToObject(bch, "target_id", (uint32_t)nagTargetId);
     cJSON_AddNumberToObject(bch, "id_880_period_ms", (uint32_t)period880Ms);
     cJSON_AddNumberToObject(bch, "id_target_period_ms", (uint32_t)period880Ms);
     cJSON_AddNumberToObject(bch, "id_921_period_ms", (uint32_t)period921Ms);
     cJSON_AddNumberToObject(bch, "id_923_period_ms", (uint32_t)period923Ms);
-    cJSON_AddNumberToObject(bch, "id_297_period_ms", (uint32_t)period297Ms);
     cJSON_AddNumberToObject(bch, "das_hands_state", (uint32_t)bChannelDiag.dasHandsOnStateRx);
     cJSON_AddStringToObject(bch, "das_hands_state_name", dasHandsOnStateName((uint8_t)bChannelDiag.dasHandsOnStateRx));
     cJSON_AddStringToObject(bch, "das_hands_state_group", dasHandsOnStateGroup((uint8_t)bChannelDiag.dasHandsOnStateRx));
@@ -1980,6 +2009,14 @@ static esp_err_t summonUnlockHandler(httpd_req_t *req)
                                 kNvsKeySummonUnlock, "SUMMON_UNLOCK_HW3");
 }
 
+static esp_err_t summonConditionLimitHandler(httpd_req_t *req)
+{
+    return featureToggleHandler(req, summonConditionLimitRuntime,
+                                kWebSupportsSummonUnlock,
+                                kNvsKeySummonConditionLimit,
+                                "SUMMON_CONDITION_LIMIT");
+}
+
 static esp_err_t nagKillerHandler(httpd_req_t *req)
 {
     return featureToggleHandler(req, nagKillerRuntime, kWebSupportsNagKiller, kNvsKeyNagKiller, "NAG_KILLER");
@@ -2098,7 +2135,7 @@ static void addNagModeJson(cJSON *root, uint8_t mode)
     cJSON_AddStringToObject(root, "modeStr", nagModeName(mode));
     cJSON_AddStringToObject(root, "modeSummary", nagModeSummary(mode));
     cJSON_AddBoolToObject(root, "defaultMode", mode == kNagModeDefault);
-    cJSON_AddBoolToObject(root, "requiresContext", mode == kNagMode3);
+    cJSON_AddBoolToObject(root, "requiresContext", (bool)nagApOnlyRuntime);
 }
 
 static esp_err_t nagConfigGetHandler(httpd_req_t *req)
@@ -2114,8 +2151,7 @@ static esp_err_t nagConfigGetHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "targetId", kNagFixedTargetId);
     cJSON_AddNumberToObject(root, "torqueMinNm", -1.8);
     cJSON_AddNumberToObject(root, "torqueMaxNm", 1.8);
-    cJSON_AddNumberToObject(root, "contextFreshMs", 1000);
-    cJSON_AddNumberToObject(root, "steeringMaxAbsDeg", 5.0);
+    cJSON_AddNumberToObject(root, "apStateFreshMs", 1000);
     cJSON_AddBoolToObject(root, "apOnly", (bool)nagApOnlyRuntime);
     char *json = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
@@ -2190,19 +2226,13 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
     uint8_t mode = nagModeClamp((uint8_t)bChannelDiag.nagMode);
     addNagModeJson(root, mode);
     cJSON_AddNumberToObject(root, "targetId", kNagFixedTargetId);
-    // Mode B 진단
+    // Nag Mode 1/2 진단
     cJSON_AddNumberToObject(root, "dasApState",  (uint8_t)bChannelDiag.dasAutopilotStateRx);
-    cJSON_AddNumberToObject(root, "steerAngleDeg", (double)(float)bChannelDiag.steeringAngleDeg);
-    cJSON_AddBoolToObject(root, "steeringValid", (bool)bChannelDiag.steeringAngleValid);
-    cJSON_AddNumberToObject(root, "frames297",   (uint32_t)bChannelDiag.frames297);
     cJSON_AddNumberToObject(root, "modeBPhase",  (uint8_t)bChannelDiag.modeBPhase);
     cJSON_AddNumberToObject(root, "modeBInjects",(uint32_t)bChannelDiag.modeBInjectCount);
     cJSON_AddNumberToObject(root, "modeBLastNm", (double)(float)bChannelDiag.modeBLastTorqueNm);
     cJSON_AddNumberToObject(root, "lastTxNm", (double)(float)bChannelDiag.lastTxTorqueNm);
     cJSON_AddNumberToObject(root, "lastTxHo", (uint8_t)bChannelDiag.lastTxHandsOn);
-    cJSON_AddNumberToObject(root, "modeBStateAgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.modeBStateEnterMs));
-    cJSON_AddNumberToObject(root, "modeBPhaseAgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.modeBPhaseEnterMs));
-    cJSON_AddNumberToObject(root, "modeBFirstEchoDelayMs", (uint32_t)bChannelDiag.modeBFirstEchoDelayMs);
     // BUS-OFF 복구 모드 상태
     bool isSoftMode = gWebDriverB ? gWebDriverB->getSoftRecovery() : false;
     cJSON_AddBoolToObject(root, "boSoftMode", isSoftMode);
@@ -2218,7 +2248,6 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "last921AgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.last921RxMs));
     cJSON_AddNumberToObject(root, "last923AgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.last923RxMs));
     cJSON_AddNumberToObject(root, "lastDasStatusAgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.lastDasStatusRxMs));
-    cJSON_AddNumberToObject(root, "last297AgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.last297RxMs));
     cJSON_AddNumberToObject(root, "lastEchoAgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.lastEchoTxMs));
     cJSON_AddNumberToObject(root, "lastEchoConfirmAgeMs", webSafeAgeMs(nowMs, (uint32_t)bChannelDiag.lastEchoRxMs));
     char rawPayload[32];
@@ -2228,9 +2257,6 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
     formatCanPayloadStable(bChannelDiag.rawDasSeq, bChannelDiag.rawDasLow,
                            bChannelDiag.rawDasHigh, rawPayload, sizeof(rawPayload));
     cJSON_AddStringToObject(root, "rawDas", rawPayload);
-    formatCanPayloadStable(bChannelDiag.raw297Seq, bChannelDiag.raw297Low,
-                           bChannelDiag.raw297High, rawPayload, sizeof(rawPayload));
-    cJSON_AddStringToObject(root, "raw297", rawPayload);
 
     char *json = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
@@ -2246,8 +2272,8 @@ static esp_err_t nagStatsGetHandler(httpd_req_t *req)
     return sendRet;
 }
 
-// ─── POST /api/nag-mode?m=1|2|3  ─────────────────────────────────────
-// MODE 1/2/3 중 하나를 선택하고 NVS에 저장한다.
+// ─── POST /api/nag-mode?m=1|2 ─────────────────────────────────────────
+// MODE 1/2 중 하나를 선택하고 NVS에 저장한다.
 static esp_err_t nagModeHandler(httpd_req_t *req)
 {
     if (!rateLimitOk()) {
@@ -2259,11 +2285,11 @@ static esp_err_t nagModeHandler(httpd_req_t *req)
     char modeBuf[4] = {};
     if (httpd_req_get_url_query_str(req, queryBuf, sizeof(queryBuf)) != ESP_OK ||
         httpd_query_key_value(queryBuf, "m", modeBuf, sizeof(modeBuf)) != ESP_OK) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "m=1|2|3 required");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "m=1|2 required");
         return ESP_FAIL;
     }
     int requested = atoi(modeBuf);
-    if (requested < kNagMode1 || requested > kNagMode3) {
+    if (requested != kNagMode1 && requested != kNagMode2) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid nag mode");
         return ESP_FAIL;
     }
@@ -2604,13 +2630,10 @@ static esp_err_t userMarkerHandler(httpd_req_t *req) {
     const char *detailName = userMarkerDetailName(detail);
     char raw880[32];
     char rawDas[32];
-    char raw297[32];
     formatCanPayloadStable(bChannelDiag.raw880Seq, bChannelDiag.raw880Low,
                            bChannelDiag.raw880High, raw880, sizeof(raw880));
     formatCanPayloadStable(bChannelDiag.rawDasSeq, bChannelDiag.rawDasLow,
                            bChannelDiag.rawDasHigh, rawDas, sizeof(rawDas));
-    formatCanPayloadStable(bChannelDiag.raw297Seq, bChannelDiag.raw297Low,
-                           bChannelDiag.raw297High, raw297, sizeof(raw297));
     NagMarkerSnapshot markerSnapshot = {};
     markerSnapshot.tMs = now;
     markerSnapshot.detail = detail;
@@ -2629,16 +2652,14 @@ static esp_err_t userMarkerHandler(httpd_req_t *req) {
     markerSnapshot.realHo = (uint8_t)bChannelDiag.realHo;
     markerSnapshot.dasState = (uint8_t)bChannelDiag.dasHandsOnStateRx;
     markerSnapshot.txHo = (uint8_t)bChannelDiag.lastTxHandsOn;
-    markerSnapshot.steerDeg = (float)bChannelDiag.steeringAngleDeg;
     markerSnapshot.realTorqueNm = (float)bChannelDiag.realTorqueNm;
     markerSnapshot.txTorqueNm = (float)bChannelDiag.lastTxTorqueNm;
     strncpy(markerSnapshot.raw880, raw880, sizeof(markerSnapshot.raw880) - 1);
     strncpy(markerSnapshot.rawDas, rawDas, sizeof(markerSnapshot.rawDas) - 1);
-    strncpy(markerSnapshot.raw297, raw297, sizeof(markerSnapshot.raw297) - 1);
     nagMarkerSnapshotPush(markerSnapshot);
     char msg[192];
     snprintf(msg, sizeof(msg),
-        "[USER-MARK] %s Mode=%s Ready=%s AP=%u Phase=%u HO=%u DAS=%s(0x%02X L%u warn=%u) Angle=%.1fdeg Last=%s TEC=%u/REC=%u",
+        "[USER-MARK] %s Mode=%s Ready=%s AP=%u Phase=%u HO=%u DAS=%s(0x%02X L%u warn=%u) Last=%s TEC=%u/REC=%u",
         detailName,
         nagModeName(nagMode),
         nagReadinessName((uint8_t)bChannelDiag.nagReadiness),
@@ -2649,7 +2670,6 @@ static esp_err_t userMarkerHandler(httpd_req_t *req) {
         (unsigned)(uint8_t)bChannelDiag.dasHandsOnStateRx,
         (unsigned)dasHandsOnWarningLevel((uint8_t)bChannelDiag.dasHandsOnStateRx),
         dasHandsOnStateIsWarning((uint8_t)bChannelDiag.dasHandsOnStateRx) ? 1U : 0U,
-        (double)(float)bChannelDiag.steeringAngleDeg,
         nagDecisionName((uint8_t)bChannelDiag.nagLastDecision),
         (unsigned)tec,
         (unsigned)rec);
@@ -2669,13 +2689,12 @@ static esp_err_t userMarkerHandler(httpd_req_t *req) {
     logRing.push(txMsg, now);
     char rawMsg[192];
     snprintf(rawMsg, sizeof(rawMsg),
-        "[USER-MARK-RAW] C880/921/923/297=%u/%u/%u/%u DAS_ID=%u 880=[%s] DAS=[%s] 297=[%s]",
+        "[USER-MARK-RAW] C880/921/923=%u/%u/%u DAS_ID=%u 880=[%s] DAS=[%s]",
         (unsigned)bChannelDiag.frames880,
         (unsigned)bChannelDiag.frames921,
         (unsigned)bChannelDiag.frames923,
-        (unsigned)bChannelDiag.frames297,
         (unsigned)(uint32_t)bChannelDiag.dasStatusSourceId,
-        raw880, rawDas, raw297);
+        raw880, rawDas);
     logRing.push(rawMsg, now);
 
     httpd_resp_set_type(req, "application/json");
@@ -2806,17 +2825,21 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         (unsigned)aChannelDiag.summonUnlockModifiedCount,
         (unsigned)summonGateDiag.blocked);
     httpd_resp_sendstr_chunk(req, line);
-    // A채널 진단 카운터 (TEC/REC/MERRF/RX-OVR/EFLG/TX OK·Fail)
+    // A채널 진단 카운터. 큐 등록과 실제 완료를 구분하며 Busy는 하드 오류가 아니다.
     uint32_t aGuardUntil = (uint32_t)aChannelDiag.aTxGuardUntilMs;
     uint32_t aNow = millis();
     bool aGuardActive = aTxGuardActive(aNow);
     snprintf(line, sizeof(line),
-        "A진단: TX OK=%u Fail=%u Fail1s=%u/peak=%u/th=%u | TEC=%u/peak=%u REC=%u | MERRF=%u | RX-OVR=%u | EFLG=0x%02X/peak=0x%02X | BUS-OFF=%u | Cfg=SPI%lu->%lu/OS%s/Guard%s | Guard=%s/%ums/%s skip=%u count=%u\r\n",
+        "A진단: TX Q=%u Busy=%u Hard=%u Hard1s=%u/peak=%u/th=%u Done=%u Arb=%u Abort=%u | TEC=%u/peak=%u REC=%u | MERRF=%u | RX-OVR=%u | EFLG=0x%02X/peak=0x%02X | BUS-OFF=%u | Cfg=SPI%lu->%lu/OS%s/Guard%s | Guard=%s/%ums/%s skip=%u count=%u\r\n",
         (unsigned)aChannelDiag.aTxOk,
+        (unsigned)aChannelDiag.aTxBusy,
         (unsigned)aChannelDiag.aTxFail,
         (unsigned)(uint8_t)aChannelDiag.aTxFailWindowDelta,
         (unsigned)(uint8_t)aChannelDiag.aTxFailWindowPeak,
         (unsigned)kATxGuardTxFailBurstThreshold,
+        (unsigned)aChannelDiag.aTxCompleted,
+        (unsigned)aChannelDiag.aTxArbitrationLost,
+        (unsigned)aChannelDiag.aTxAborted,
         (unsigned)(uint8_t)aChannelDiag.aTec,
         (unsigned)(uint8_t)aChannelDiag.aTecPeak,
         (unsigned)(uint8_t)aChannelDiag.aRec,
@@ -2846,9 +2869,13 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
             (unsigned)aChannelDiag.mcpEflgEventCount);
         httpd_resp_sendstr_chunk(req, line);
     snprintf(line, sizeof(line),
-        "기능설정: Summon=%s Gate=%s Ready=%s | TSLLC=%s Ready=%s | Nag=%s %s Scope=%s AP=%u Ready=%s\r\n",
+        "기능설정: Summon=%s ECE조건=%s Gate=%s(%s) AP=%u/%ums Ready=%s | TSLLC=%s Ready=%s | Nag=%s %s Scope=%s AP=%u Ready=%s\r\n",
         (bool)summonUnlockRuntime ? "ON" : "OFF",
+        (bool)summonConditionLimitRuntime ? "ON" : "OFF",
         summonGateOpen() ? "OPEN" : "BLOCKED",
+        summonGateReasonName(aNow),
+        (unsigned)(uint8_t)summonGateDiag.apState,
+        (unsigned)summonApStableMs(aNow),
         ((bool)summonUnlockRuntime && (bool)aChannelTxRuntime &&
          summonGateOpen() && !aGuardActive) ? "YES" : "NO",
         (bool)tsllcRuntime ? "ON" : "OFF",
@@ -2861,23 +2888,28 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         (bool)bChannelDiag.nagReady ? "YES" : "NO");
     httpd_resp_sendstr_chunk(req, line);
     snprintf(line, sizeof(line),
-        "기능활동: Summon TX=%u/%u Blocked=%u Last=%ums | TSLLC TX=%u/%u Modified=%u Last=%ums | Nag TX=%u Last=%ums\r\n",
+        "기능활동: Summon Q/B/H=%u/%u/%u Blocked=%u Last=%ums | TSLLC Q/B/H=%u/%u/%u Modified=%u Last=%ums | A Done/Arb/Abort=%u/%u/%u | Nag TX=%u Last=%ums\r\n",
         (unsigned)summonGateDiag.txOk,
+        (unsigned)summonGateDiag.txBusy,
         (unsigned)summonGateDiag.txFail,
         (unsigned)summonGateDiag.blocked,
         (unsigned)((uint32_t)summonGateDiag.lastTxMs
             ? aNow - (uint32_t)summonGateDiag.lastTxMs : 0U),
         (unsigned)aChannelDiag.tsllcTxOk,
+        (unsigned)aChannelDiag.tsllcTxBusy,
         (unsigned)aChannelDiag.tsllcTxFail,
         (unsigned)aChannelDiag.tsllcModifiedCount,
         (unsigned)((uint32_t)aChannelDiag.lastTsllcTxMs
             ? aNow - (uint32_t)aChannelDiag.lastTsllcTxMs : 0U),
+        (unsigned)aChannelDiag.aTxCompleted,
+        (unsigned)aChannelDiag.aTxArbitrationLost,
+        (unsigned)aChannelDiag.aTxAborted,
         (unsigned)bChannelDiag.echoCount,
         (unsigned)((uint32_t)bChannelDiag.lastEchoTxMs
             ? aNow - (uint32_t)bChannelDiag.lastEchoTxMs : 0U));
     httpd_resp_sendstr_chunk(req, line);
     snprintf(line, sizeof(line),
-        "B채널: RX=%u Filt=%u Try/OK/Ack=%u/%u/%u TxFail=%u TEC=%u REC=%u TECpeak=%u 880=%u 921=%u 923=%u 297=%u DAS=%u(%s/L%u/warn=%u)@%u Mode=%s Ready=%s(%u/%u) TWAI=%s InitErr=%d/%d\r\n",
+        "B채널: RX=%u Filt=%u Try/OK/Ack=%u/%u/%u TxFail=%u TEC=%u REC=%u TECpeak=%u 880=%u 921=%u 923=%u DAS=%u(%s/L%u/warn=%u)@%u Mode=%s Ready=%s(%u/%u) TWAI=%s InitErr=%d/%d\r\n",
         (unsigned)bChannelDiag.framesReceivedTotal,
         (unsigned)bChannelDiag.framesFilteredInTotal,
         (unsigned)bChannelDiag.txAttemptCount,
@@ -2890,7 +2922,6 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         (unsigned)bChannelDiag.frames880,
         (unsigned)bChannelDiag.frames921,
         (unsigned)bChannelDiag.frames923,
-        (unsigned)bChannelDiag.frames297,
         (unsigned)bChannelDiag.dasHandsOnStateRx,
         dasHandsOnStateName((uint8_t)bChannelDiag.dasHandsOnStateRx),
         (unsigned)dasHandsOnWarningLevel((uint8_t)bChannelDiag.dasHandsOnStateRx),
@@ -2925,14 +2956,12 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         uint32_t age880 = (uint32_t)bChannelDiag.last880RxMs ? (now - (uint32_t)bChannelDiag.last880RxMs) : 0;
         uint32_t age921 = (uint32_t)bChannelDiag.last921RxMs ? (now - (uint32_t)bChannelDiag.last921RxMs) : 0;
         uint32_t age923 = (uint32_t)bChannelDiag.last923RxMs ? (now - (uint32_t)bChannelDiag.last923RxMs) : 0;
-        uint32_t age297 = (uint32_t)bChannelDiag.last297RxMs ? (now - (uint32_t)bChannelDiag.last297RxMs) : 0;
         uint32_t ageEcho = (uint32_t)bChannelDiag.lastEchoTxMs ? (now - (uint32_t)bChannelDiag.lastEchoTxMs) : 0;
         snprintf(line, sizeof(line),
-            "B나그판정: 880=%u(age=%ums) 921=%u(age=%ums) 923=%u(age=%ums) 297=%u(age=%ums) Echo=%u(age=%ums) | Mode=%s Ready=%s AP=%u Phase=%u HO=%u Torque=%.2fNm DAS=%s(0x%02X/L%u/warn=%u)@%u Last=%s\r\n",
+            "B나그판정: 880=%u(age=%ums) 921=%u(age=%ums) 923=%u(age=%ums) Echo=%u(age=%ums) | Mode=%s Ready=%s AP=%u Phase=%u HO=%u Torque=%.2fNm DAS=%s(0x%02X/L%u/warn=%u)@%u Last=%s\r\n",
             (unsigned)bChannelDiag.frames880, (unsigned)age880,
             (unsigned)bChannelDiag.frames921, (unsigned)age921,
             (unsigned)bChannelDiag.frames923, (unsigned)age923,
-            (unsigned)bChannelDiag.frames297, (unsigned)age297,
             (unsigned)bChannelDiag.echoCount, (unsigned)ageEcho,
             nagModeName((uint8_t)bChannelDiag.nagMode),
             nagReadinessName((uint8_t)bChannelDiag.nagReadiness),
@@ -2996,22 +3025,22 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                                                kNagMarkerSnapshotCapacity];
         portEXIT_CRITICAL(&gNagMarkerSnapshotMux);
         httpd_resp_sendstr_chunk(req,
-            "사용자마커원문: wall_time,timestamp_ms,marker,mode,ready,decision,ap,phase,ho,das,das_source,steer_deg,real_nm,tx_nm,tx_ho,tx_try,tx_ok,echo_confirm,tx_lat_us,echo_lat_us,drop,raw880,raw_das,raw297\r\n");
+            "사용자마커원문: wall_time,timestamp_ms,marker,mode,ready,decision,ap,phase,ho,das,das_source,real_nm,tx_nm,tx_ho,tx_try,tx_ok,echo_confirm,tx_lat_us,echo_lat_us,drop,raw880,raw_das\r\n");
         for (uint32_t i = 0; i < markerStored; ++i) {
             const NagMarkerSnapshot &s = snapshots[i];
             formatLogTimestamp(s.tMs, tsBuf, sizeof(tsBuf));
             snprintf(line, sizeof(line),
-                "사용자마커원문: %s,%u,%s,%s,%s,%s,%u,%u,%u,%u,%u,%.1f,%.2f,%.2f,%u,%u,%u,%u,%u,%u,%u,%s,%s,%s\r\n",
+                "사용자마커원문: %s,%u,%s,%s,%s,%s,%u,%u,%u,%u,%u,%.2f,%.2f,%u,%u,%u,%u,%u,%u,%u,%s,%s\r\n",
                 tsBuf, (unsigned)s.tMs, userMarkerDetailName(s.detail),
                 nagModeName(s.mode), nagReadinessName(s.readiness),
                 nagDecisionName(s.decision), (unsigned)s.apState,
                 (unsigned)s.phase, (unsigned)s.realHo, (unsigned)s.dasState,
-                (unsigned)s.dasSourceId, (double)s.steerDeg,
+                (unsigned)s.dasSourceId,
                 (double)s.realTorqueNm, (double)s.txTorqueNm,
                 (unsigned)s.txHo, (unsigned)s.txAttempts,
                 (unsigned)s.txSuccess, (unsigned)s.echoConfirmed,
                 (unsigned)s.txLatencyUs, (unsigned)s.echoLatencyUs,
-                (unsigned)s.echoDrop, s.raw880, s.rawDas, s.raw297);
+                (unsigned)s.echoDrop, s.raw880, s.rawDas);
             httpd_resp_sendstr_chunk(req, line);
         }
     }
@@ -3055,7 +3084,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         tsSnapRecording ? "ON" : "OFF", (unsigned)tsN);
     httpd_resp_sendstr_chunk(req, line);
     httpd_resp_sendstr_chunk(req,
-        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,dasStateName,dasStateGroup,dasWarnLevel,dasWarning,nagMode,nagModeDefault,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,f297,apState,modeBPhase,steerDeg,realTorqueNm,modeBInject,modeBLastNm,age880Ms,ageDasMs,age297Ms,ageEchoMs,modeBStateAgeMs,modeBPhaseAgeMs,modeBFirstEchoDelayMs,modeBDelayTargetMs,d297,dModeBInject,aFrames,aFrameHz,aEflg,aEflgState,aEflgPeak,aTec,aRec,aTecPeak,aRecPeak,aTxOk,aTxFail,aMerrf,aRxOvr,aEflgEvents,aFrameAgeMs,aLoopAgeMs,aGuardActive,aGuardReason,aGuardRemainingMs,aWakeCount,aWakeToSummonTxMs,aWakeAwaitingTx,dAFrames,dATxOk,dATxFail,dAMerrf,dARxOvr,dAEflgEvents,aDriverOk,aTxEnabled,summonEnabled,tsllcEnabled,aOneShotEnabled,aTxGuardEnabled,aSpiMhz,aSpiTargetMhz,bDriverState,nagEnabled,aLoopGapLastUs,aLoopGapPeakUs,aLoopGapOver2ms,dALoopGapOver2ms,summonGateOpen,summonInjectReady,summonTxOk,summonTxFail,summonBlocked,dSummonTxOk,dSummonTxFail,dSummonBlocked,tsllcInjectReady,tsllcTxOk,tsllcTxFail,dTsllcTxOk,dTsllcTxFail,nagApOnly,nagApActive,nagInjecting,nagTxOk,dNagTxOk\r\n");
+        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,dasStateName,dasStateGroup,dasWarnLevel,dasWarning,nagMode,nagModeDefault,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,apState,nagPhase,realTorqueNm,nagInject,nagLastNm,age880Ms,ageDasMs,ageEchoMs,dNagInject,aFrames,aFrameHz,aEflg,aEflgState,aEflgPeak,aTec,aRec,aTecPeak,aRecPeak,aTxQueued,aTxBusy,aTxHardError,aTxCompleted,aTxArbitrationLost,aTxAborted,aMerrf,aRxOvr,aEflgEvents,aFrameAgeMs,aLoopAgeMs,aGuardActive,aGuardReason,aGuardRemainingMs,aWakeCount,aWakeToSummonTxMs,aWakeAwaitingTx,dAFrames,dATxOk,dATxFail,dAMerrf,dARxOvr,dAEflgEvents,aDriverOk,aTxEnabled,summonEnabled,tsllcEnabled,aOneShotEnabled,aTxGuardEnabled,aSpiMhz,aSpiTargetMhz,bDriverState,nagEnabled,aLoopGapLastUs,aLoopGapPeakUs,aLoopGapOver2ms,dALoopGapOver2ms,summonGateOpen,summonConditionLimit,summonApState,summonApStableMs,summonGateReason,summonInjectReady,summonTxOk,summonTxFail,summonBlocked,dSummonTxOk,dSummonTxFail,dSummonBlocked,tsllcInjectReady,tsllcTxOk,tsllcTxFail,dTsllcTxOk,dTsllcTxFail,nagApOnly,nagApActive,nagInjecting,nagTxOk,dNagTxOk\r\n");
     {
         if (tsN == 0) {
             httpd_resp_sendstr_chunk(req, "(시계열 없음)\r\n");
@@ -3073,7 +3102,15 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                     timeseriesCopyAt(fallbackStart + i, s);  // malloc 실패 시 fallback
                 }
                 formatLogTimestamp(s.t_ms, tsBuf, sizeof(tsBuf));
-                int used = snprintf(line, sizeof(line), "%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%.1f,%.2f,%u,%.2f,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u",
+                int used = snprintf(line, sizeof(line),
+                    "%s,%u,"
+                    "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+                    "%u,%u,%s,%s,%u,%u,"
+                    "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+                    "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+                    "%u,%u,%u,%u,"
+                    "%.2f,%u,%.2f,"
+                    "%u,%u,%u,%u",
                     tsBuf, (unsigned)s.t_ms,
                     (unsigned)s.busoff, (unsigned)s.tec, (unsigned)s.rec,
                     (unsigned)s.arbLost, (unsigned)s.busErr, (unsigned)s.txFail,
@@ -3091,22 +3128,26 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                     (unsigned)s.dNoDasEcho, (unsigned)s.dUserMark,
                     (unsigned)s.lastDecision,
                     (unsigned)s.intervalDecision,
-                    (unsigned)s.f297, (unsigned)s.apState, (unsigned)s.modeBPhase,
-                    (double)s.steerDeg, (double)s.realTorqueNm,
+                    (unsigned)s.apState, (unsigned)s.modeBPhase,
+                    (double)s.realTorqueNm,
                     (unsigned)s.modeBInject, (double)s.modeBLastNm,
-                    (unsigned)s.age880Ms, (unsigned)s.ageDasMs, (unsigned)s.age297Ms,
-                    (unsigned)s.ageEchoMs, (unsigned)s.modeBStateAgeMs, (unsigned)s.modeBPhaseAgeMs,
-                    (unsigned)s.modeBFirstEchoDelayMs, (unsigned)s.modeBDelayTargetMs,
-                    (unsigned)s.d297, (unsigned)s.dModeBInject);
+                    (unsigned)s.age880Ms, (unsigned)s.ageDasMs,
+                    (unsigned)s.ageEchoMs, (unsigned)s.dModeBInject);
                 if (used < 0 || (size_t)used >= sizeof(line)) continue;
                 snprintf(line + used, sizeof(line) - (size_t)used,
-                    ",%u,%.1f,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
-                    "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
-                    "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+                    ",%u,%.1f,%u,%s,%u,%u,%u,%u,%u,"
+                    "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,"
+                    "%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+                    "%u,%u,%u,%u,%u,%u,%u,%u,"
+                    "%u,%u,%u,%u,%u,%u,"
+                    "%u,%u,%u,%u,%s,"
+                    "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
                     (unsigned)s.aFrames, (double)s.aFrameHz,
                     (unsigned)s.aEflg, aMcpEflgStateName(s.aEflg), (unsigned)s.aEflgPeak,
                     (unsigned)s.aTec, (unsigned)s.aRec, (unsigned)s.aTecPeak, (unsigned)s.aRecPeak,
-                    (unsigned)s.aTxOk, (unsigned)s.aTxFail, (unsigned)s.aMerrf,
+                    (unsigned)s.aTxOk, (unsigned)s.aTxBusy, (unsigned)s.aTxFail,
+                    (unsigned)s.aTxCompleted, (unsigned)s.aTxArbitrationLost,
+                    (unsigned)s.aTxAborted, (unsigned)s.aMerrf,
                     (unsigned)s.aRxOvr, (unsigned)s.aEflgEvents,
                     (unsigned)s.aFrameAgeMs, (unsigned)s.aLoopAgeMs,
                     (unsigned)s.aGuardActive, aTxGuardReasonName(s.aGuardReason),
@@ -3121,7 +3162,10 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                     (unsigned)s.bDriverState, (unsigned)s.nagEnabled,
                     (unsigned)s.aLoopGapLastUs, (unsigned)s.aLoopGapPeakUs,
                     (unsigned)s.aLoopGapOver2ms, (unsigned)s.dALoopGapOver2ms,
-                    (unsigned)s.summonGateOpen, (unsigned)s.summonInjectReady,
+                    (unsigned)s.summonGateOpen, (unsigned)s.summonConditionLimit,
+                    (unsigned)s.summonApState, (unsigned)s.summonApStableMs,
+                    summonGateReasonNameFromCode(s.summonGateReason),
+                    (unsigned)s.summonInjectReady,
                     (unsigned)s.summonTxOk, (unsigned)s.summonTxFail,
                     (unsigned)s.summonBlocked, (unsigned)s.dSummonTxOk,
                     (unsigned)s.dSummonTxFail, (unsigned)s.dSummonBlocked,
@@ -3577,8 +3621,9 @@ static esp_err_t otaHandler(httpd_req_t *req)
 
     if (!Update.begin(req->content_len))
     {
-        canTxQuiesceCancel();
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, Update.errorString());
+        logRing.push("[OTA] 시작 실패: CAN TX는 재부팅 전까지 차단 유지", millis());
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                            "OTA start failed; CAN TX remains disabled until reboot");
         return ESP_FAIL;
     }
 
@@ -3594,9 +3639,9 @@ static esp_err_t otaHandler(httpd_req_t *req)
             if (++timeoutCount >= 5)
             {
                 Update.abort();
-                canTxQuiesceCancel();
+                logRing.push("[OTA] 수신 시간 초과: CAN TX는 재부팅 전까지 차단 유지", millis());
                 httpd_resp_set_status(req, "408 Request Timeout");
-                httpd_resp_send(req, "Upload timed out", HTTPD_RESP_USE_STRLEN);
+                httpd_resp_send(req, "Upload timed out; reboot required", HTTPD_RESP_USE_STRLEN);
                 return ESP_FAIL;
             }
             continue;
@@ -3604,16 +3649,18 @@ static esp_err_t otaHandler(httpd_req_t *req)
         if (received <= 0)
         {
             Update.abort();
-            canTxQuiesceCancel();
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Upload failed");
+            logRing.push("[OTA] 수신 실패: CAN TX는 재부팅 전까지 차단 유지", millis());
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                "Upload failed; CAN TX remains disabled until reboot");
             return ESP_FAIL;
         }
         timeoutCount = 0;
         if (Update.write(buffer, received) != (size_t)received)
         {
             Update.abort();
-            canTxQuiesceCancel();
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, Update.errorString());
+            logRing.push("[OTA] 기록 실패: CAN TX는 재부팅 전까지 차단 유지", millis());
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                "Flash write failed; CAN TX remains disabled until reboot");
             return ESP_FAIL;
         }
         remaining -= received;
@@ -3621,8 +3668,9 @@ static esp_err_t otaHandler(httpd_req_t *req)
 
     if (!Update.end(true))
     {
-        canTxQuiesceCancel();
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, Update.errorString());
+        logRing.push("[OTA] 검증 실패: CAN TX는 재부팅 전까지 차단 유지", millis());
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                            "OTA validation failed; CAN TX remains disabled until reboot");
         return ESP_FAIL;
     }
 
@@ -4028,6 +4076,8 @@ static void webServerInit(TWAIDriver* drv = nullptr)
         .uri = "/api/emergency-vehicle-detection", .method = HTTP_POST, .handler = emergencyVehicleDetectionHandler, .user_ctx = NULL};
     httpd_uri_t uriSummonUnlock = {
         .uri = "/api/summon-unlock", .method = HTTP_POST, .handler = summonUnlockHandler, .user_ctx = NULL};
+    httpd_uri_t uriSummonConditionLimit = {
+        .uri = "/api/summon-condition-limit", .method = HTTP_POST, .handler = summonConditionLimitHandler, .user_ctx = NULL};
     httpd_uri_t uriNagKiller = {
         .uri = "/api/nag-killer", .method = HTTP_POST, .handler = nagKillerHandler, .user_ctx = NULL};
     httpd_uri_t uriNagApOnly = {
@@ -4119,6 +4169,7 @@ static void webServerInit(TWAIDriver* drv = nullptr)
     httpd_register_uri_handler(webServer, &uriIsaSpeedChime);
     httpd_register_uri_handler(webServer, &uriEmergencyVehicleDetection);
     httpd_register_uri_handler(webServer, &uriSummonUnlock);
+    httpd_register_uri_handler(webServer, &uriSummonConditionLimit);
     httpd_register_uri_handler(webServer, &uriNagKiller);
     httpd_register_uri_handler(webServer, &uriNagApOnly);
     httpd_register_uri_handler(webServer, &uriTsllc);

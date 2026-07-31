@@ -80,11 +80,15 @@ inline constexpr bool kAMcpOneShotDefaultEnabled = (T2CAN_MCP2515_ONE_SHOT_DEFAU
 inline constexpr bool kATxGuardDefaultEnabled = (T2CAN_A_TX_GUARD_DEFAULT != 0);
 // Mode 1/2의 선제 주입 범위. true면 AP 상태 3~6에서만 주입한다.
 inline constexpr bool kNagApOnlyDefaultEnabled = true;
+// HW3 bit19/bit46 송신 허용 조건. ON이면 주차·Summoning·AP 안정 상태에서만
+// 두 비트를 함께 적용하며, OFF는 실험을 위해 ID 1021 mux 1을 조건 없이 수정한다.
+inline constexpr bool kSummonConditionLimitDefaultEnabled = true;
 
 inline Shared<bool> bypassTlsscRequirementRuntime{kBypassTlsscRequirementDefaultEnabled};
 inline Shared<bool> isaSpeedChimeSuppressRuntime{kIsaSpeedChimeSuppressDefaultEnabled};
 inline Shared<bool> emergencyVehicleDetectionRuntime{kEmergencyVehicleDetectionDefaultEnabled};
 inline Shared<bool> summonUnlockRuntime{kSummonUnlockDefaultEnabled};
+inline Shared<bool> summonConditionLimitRuntime{kSummonConditionLimitDefaultEnabled};
 inline Shared<bool> nagKillerRuntime{kNagKillerDefaultEnabled};
 inline Shared<bool> nagApOnlyRuntime{kNagApOnlyDefaultEnabled};
 inline Shared<bool> tsllcRuntime{kTsllcDefaultEnabled};         // TSLLC 런타임 토글 (스톱사인/초록불 제어)
@@ -146,11 +150,15 @@ inline void canTxQuiesceCancel()
 
 inline bool canTxQuiesceIdle() { return (uint32_t)canTxInFlight == 0; }
 
-// Validated SummonUnlock gate state (HW3): inject only while parked or summoning.
+// Validated SummonUnlock gate state (HW3).
 inline constexpr uint32_t kSummonParkedTimeoutMs = 5000;
+inline constexpr uint32_t kSummonApStableRequiredMs = 1000;
 
 struct SummonGateDiagnostics {
     Shared<bool> apActive{false};
+    Shared<uint8_t> apState{0};
+    Shared<uint32_t> last921Ms{0};
+    Shared<uint32_t> apActiveSinceMs{0};
     Shared<bool> parked{true};
     Shared<bool> summoning{false};
     Shared<bool> acaActive{false};
@@ -162,6 +170,7 @@ struct SummonGateDiagnostics {
     Shared<uint32_t> frames1016{0};
     Shared<uint32_t> mux1Received{0};
     Shared<uint32_t> txOk{0};
+    Shared<uint32_t> txBusy{0};
     Shared<uint32_t> txFail{0};
     Shared<uint32_t> blocked{0};
     Shared<uint32_t> lastTxMs{0};
@@ -176,8 +185,53 @@ inline int8_t summonGearState(uint8_t gear) {
     return -1;
 }
 
-inline bool summonGateOpen() {
-    return (bool)summonGateDiag.parked || (bool)summonGateDiag.summoning;
+inline uint32_t summonApStableMs(uint32_t nowMs) {
+    if (!(bool)summonGateDiag.apActive) return 0;
+    const uint32_t since = (uint32_t)summonGateDiag.apActiveSinceMs;
+    return since == 0 ? 0 : nowMs - since;
+}
+
+inline bool summonApStable(uint32_t nowMs) {
+    return (bool)summonGateDiag.apActive &&
+           summonApStableMs(nowMs) >= kSummonApStableRequiredMs;
+}
+
+inline bool summonGateOpen(uint32_t nowMs = 0) {
+    if (!(bool)summonConditionLimitRuntime) return true;
+    if ((bool)summonGateDiag.parked || (bool)summonGateDiag.summoning) return true;
+    if (nowMs == 0) {
+#ifndef NATIVE_BUILD
+        nowMs = millis();
+#endif
+    }
+    return summonApStable(nowMs);
+}
+
+inline const char *summonGateReasonName(uint32_t nowMs) {
+    if (!(bool)summonConditionLimitRuntime) return "UNRESTRICTED";
+    if ((bool)summonGateDiag.summoning) return "SUMMONING";
+    if ((bool)summonGateDiag.parked) return "PARKED";
+    if (!(bool)summonGateDiag.apActive) return "AP_INACTIVE";
+    return summonApStable(nowMs) ? "AP_STABLE" : "AP_STABILIZING";
+}
+
+inline uint8_t summonGateReasonCode(uint32_t nowMs) {
+    if (!(bool)summonConditionLimitRuntime) return 0; // UNRESTRICTED
+    if ((bool)summonGateDiag.summoning) return 1;
+    if ((bool)summonGateDiag.parked) return 2;
+    if (!(bool)summonGateDiag.apActive) return 3;
+    return summonApStable(nowMs) ? 4 : 5;
+}
+
+inline const char *summonGateReasonNameFromCode(uint8_t code) {
+    switch (code) {
+    case 0: return "UNRESTRICTED";
+    case 1: return "SUMMONING";
+    case 2: return "PARKED";
+    case 4: return "AP_STABLE";
+    case 5: return "AP_STABILIZING";
+    default: return "AP_INACTIVE";
+    }
 }
 
 inline void summonRecompute() {
@@ -220,11 +274,18 @@ inline void summonHandle390(const CanFrame &frame, uint32_t nowMs) {
     }
 }
 
-inline void summonHandle921(const CanFrame &frame) {
+inline void summonHandle921(const CanFrame &frame, uint32_t nowMs) {
     if (frame.dlc < 1) return;
     summonGateDiag.frames921 = (uint32_t)summonGateDiag.frames921 + 1;
-    const uint8_t status = frame.data[0] & 0x07;
-    summonGateDiag.apActive = status == 2 || status == 3 || status == 4;
+    summonGateDiag.last921Ms = nowMs;
+    const uint8_t status = frame.data[0] & 0x0F;
+    const bool active = status >= 3 && status <= 6;
+    if (active && !(bool)summonGateDiag.apActive)
+        summonGateDiag.apActiveSinceMs = nowMs;
+    if (!active)
+        summonGateDiag.apActiveSinceMs = 0;
+    summonGateDiag.apState = status;
+    summonGateDiag.apActive = active;
 }
 
 inline void summonHandle1016(const CanFrame &frame) {
@@ -553,8 +614,8 @@ inline constexpr uint8_t kATxGuardReasonTxFail = 3;
 inline constexpr uint32_t kATxGuardDurationMs = 15000;
 inline constexpr uint8_t kATxGuardTecThreshold = 24;
 // One-shot 모드의 단발성 중재 손실은 TEC/MERRF 없이 TX Fail로 끝날 수 있다.
-// 1초 내 2회 이상 연속될 때만 TX_FAIL 보호모드를 시작하고, EFLG/TEC는 즉시 보호한다.
-inline constexpr uint8_t kATxGuardTxFailBurstThreshold = 2;
+// 상세 결과에서 큐 포화(BUSY)는 제외되므로 실제 컨트롤러 오류 1건이면 보호한다.
+inline constexpr uint8_t kATxGuardTxFailBurstThreshold = 1;
 inline constexpr uint32_t kAChannelWakeGapMs = 2000;
 inline constexpr uint32_t kAMcpBusOffRecoverIntervalMs = 1000;
 inline constexpr uint32_t kAMcpBusOffRestartFallbackMs = 10000;
@@ -595,10 +656,7 @@ inline constexpr uint8_t kNagDecisionNo921 = 7;
 inline constexpr uint8_t kNagDecisionNoEcho = 8;
 inline constexpr uint8_t kNagDecisionApBlocked = 9;
 inline constexpr uint8_t kNagDecisionWarmup = 10;
-inline constexpr uint8_t kNagDecisionNo297 = 11;
-inline constexpr uint8_t kNagDecisionSteerBlocked = 12;
 inline constexpr uint8_t kNagDecisionModePause = 13;
-inline constexpr uint8_t kNagDecisionModeDelay = 14;
 
 inline constexpr uint8_t kNagReadinessCanWait = 0;
 inline constexpr uint8_t kNagReadinessWarmupTime = 1;
@@ -617,10 +675,7 @@ inline const char* nagDecisionName(uint8_t code) {
     case kNagDecisionNoEcho: return "NO_ECHO";
     case kNagDecisionApBlocked: return "AP_BLOCK";
     case kNagDecisionWarmup: return "WARMUP";
-    case kNagDecisionNo297: return "NO_297";
-    case kNagDecisionSteerBlocked: return "STEER_BLOCK";
     case kNagDecisionModePause: return "MODE_PAUSE";
-    case kNagDecisionModeDelay: return "MODE_DELAY";
     default: return "NONE";
     }
 }
@@ -727,7 +782,7 @@ struct BChannelDiagnostics {
     Shared<uint32_t> frameIdReceived{0};         // 마지막 수신 프레임 ID
     Shared<uint32_t> framesReceivedTotal{0};     // 총 수신 프레임 수
     Shared<float>    frameHz{0.0f};              // B채널 ID 880 수신 속도 (Hz)
-    Shared<float>    filteredHz{0.0f};           // B채널 감시 ID 합산 속도 (880/921/923/297 Hz)
+    Shared<float>    filteredHz{0.0f};           // B채널 감시 ID 합산 속도 (880/921/923 Hz)
     Shared<uint32_t> frames880{0};               // ID 880 수신 프레임 수
     Shared<uint32_t> frames921{0};               // ID 921 수신 프레임 수
     Shared<uint32_t> frames923{0};               // ID 923 수신 프레임 수 (DAS_status 후보)
@@ -790,29 +845,19 @@ struct BChannelDiagnostics {
     Shared<uint32_t> rawDasSeq{0};
     Shared<uint32_t> rawDasLow{0};
     Shared<uint32_t> rawDasHigh{0};
-    Shared<uint32_t> raw297Seq{0};
-    Shared<uint32_t> raw297Low{0};
-    Shared<uint32_t> raw297High{0};
     // DAS_status 진단: 921/923 후보 모두 지원 (0xFF = 아직 DAS_status 미수신)
     Shared<uint8_t>  dasHandsOnStateRx{0xFF};    // (frame.data[5]>>2)&0x0F, 0xFF=미수신
     Shared<uint32_t> dasStatusSourceId{0};       // 마지막 DAS_status 소스 ID (921 또는 923)
     Shared<uint32_t> lastDasStatusRxMs{0};       // 마지막 DAS_status(921/923) 수신 시각
     Shared<uint32_t> nagFiredNoDas{0};           // DAS_status 미수신 상태에서 에코 발사 누적
     Shared<uint32_t> echoDroppedLate{0};         // 수신→에코 6ms 초과로 드롭된 에코 수 (ECU TX 충돌 방지)
-    // ── Mode B (스마트 상태머신) 진단 필드 ──────────────────────────────────
-    Shared<uint8_t>  nagMode{2};                     // 1=고정, 2=순환(기본), 3=레거시 조건부
+    // ── Nag Mode 1/2 진단 필드 ──────────────────────────────────────────────
+    Shared<uint8_t>  nagMode{2};                     // 1=고정, 2=순환(기본)
     Shared<uint8_t>  dasAutopilotStateRx{0};         // DAS_status DAS_autopilotState (0|4@1+)
-    Shared<float>    steeringAngleDeg{0.0f};         // ID 297 SCCM_steeringAngle (deg)
-    Shared<bool>     steeringAngleValid{false};      // ID 297 validity == 1
-    Shared<uint32_t> frames297{0};                   // ID 297 수신 프레임 수
-    Shared<uint32_t> last297RxMs{0};                 // 마지막 297 수신 시각
-    // Mode B 상태머신 페이즈 (0=idle 1=grace 2=state2_delay 3=state2_mild 4=strong_delay 5=strong_ramp 6=strong_hold)
+    // 주입 페이즈 (0=휴지/차단, 1=Mode 1 고정, 2=Mode 2 순환)
     Shared<uint8_t>  modeBPhase{0};
-    Shared<uint32_t> modeBInjectCount{0};            // Mode B 토크 주입 횟수
-    Shared<float>    modeBLastTorqueNm{0.0f};        // Mode B 최근 주입 토크 (Nm)
-    Shared<uint32_t> modeBStateEnterMs{0};           // 현재 DAS hands-on state 진입 시각
-    Shared<uint32_t> modeBPhaseEnterMs{0};           // 현재 Mode B phase 진입 시각
-    Shared<uint32_t> modeBFirstEchoDelayMs{0};       // 현재 state 진입 후 첫 Mode B echo까지 걸린 시간(ms), 0=아직 없음
+    Shared<uint32_t> modeBInjectCount{0};            // Nag 토크 주입 횟수
+    Shared<float>    modeBLastTorqueNm{0.0f};        // 최근 주입 토크 (Nm)
     // BUS-OFF 복구 쿨다운 (ms): 웹 UI /api/busoff-cooldown으로 런타임 조정 가능
     // 300~10000ms 범위, 기본 1000ms. nagKillerTask → driverB->setCooldownMs() 경로로 적용
     Shared<uint32_t> busoffCooldownMs{1000};
@@ -838,6 +883,7 @@ struct AChannelDiagnostics {
     Shared<uint32_t> summonUnlockModifiedCount{0}; // 조건부 Summon Unlock 적용 횟수
     Shared<uint32_t> tsllcModifiedCount{0};       // TSLLC 주입 횟수 (스톱/초록불 비트 세팅)
     Shared<uint32_t> tsllcTxOk{0};                // TSLLC 전용 송신 성공
+    Shared<uint32_t> tsllcTxBusy{0};              // TSLLC 송신 시 MCP TX 버퍼 포화
     Shared<uint32_t> tsllcTxFail{0};              // TSLLC 전용 송신 실패
     Shared<uint32_t> lastTsllcTxMs{0};            // 최근 TSLLC 송신 성공 시각
     Shared<uint32_t> lastFrameIdReceived{0};     // 마지막 수신 프레임 ID
@@ -851,12 +897,16 @@ struct AChannelDiagnostics {
     Shared<uint32_t> mcpTxBoCount{0};           // BUS-OFF 진입 횟수 (TXBO 비트 감지)
     // ── A채널 송수신 진단 카운터 (1초 EFLG 폴링 + handler 호출 경로) ─────────
     // 가설 분리용 핵심 신호:
-    //  · aTxOk/aTxFail : sendCheck() 결과. Fail↑ + MERRF↑ → ALLTXBUSY 또는 ACK부재
+    //  · aTxOk/aTxBusy/aTxFail : 큐 등록/버퍼 포화/실제 컨트롤러 오류
     //  · aTec/aRec     : 0~255 실시간 카운터. Peak로 BUS-OFF 임박 추적
     //  · aMerrfCount   : 메시지 에러(ACK/Bit/Stuff) 발생 횟수
     //  · aRxOvrCount   : RX 버퍼 오버런 발생 횟수 (clear 후 재발 = 폴링 부족)
     Shared<uint32_t> aTxOk{0};
+    Shared<uint32_t> aTxBusy{0};
     Shared<uint32_t> aTxFail{0};
+    Shared<uint32_t> aTxCompleted{0};
+    Shared<uint32_t> aTxArbitrationLost{0};
+    Shared<uint32_t> aTxAborted{0};
     Shared<uint8_t>  aTxFailWindowDelta{0};     // 최근 1초 TX Fail 증가량
     Shared<uint8_t>  aTxFailWindowPeak{0};      // 세션 내 1초 TX Fail 증가량 최대값
     Shared<uint8_t>  aTec{0};
@@ -1031,7 +1081,7 @@ inline void setBit(CanFrame &frame, int bit, bool value)
 }
 
 // ===================================================================
-// [B채널] HW3 Nag Killer MODE 1/2/3 런타임 설정
+// [B채널] HW3 Nag Killer MODE 1/2 런타임 설정
 // ===================================================================
 
 // 토크 하드 캡 (펌웨어에서 강제, 대시보드에서 초과 불가)
@@ -1041,20 +1091,18 @@ inline constexpr uint16_t kNagTorqueRawMax = 0x8B6;
 inline constexpr uint16_t kNagTorqueRawMin = 0x74E;
 inline constexpr uint8_t kNagMode1 = 1;
 inline constexpr uint8_t kNagMode2 = 2;
-inline constexpr uint8_t kNagMode3 = 3;
-// 최신 검증 원본은 이전 Mode C를 제거했다. 실차에서 확인된 Mode 2를
-// 기본으로 사용하고, AP 전용 범위는 별도 안전 기본값으로 적용한다.
+// 최신 검증 원본과 동일하게 이전 Mode C/Mode 3은 제거했다.
 inline constexpr uint8_t kNagModeDefault = kNagMode2;
 
 inline uint8_t nagModeClamp(uint8_t mode) {
-    return (mode >= kNagMode1 && mode <= kNagMode3) ? mode : kNagModeDefault;
+    return (mode == kNagMode1 || mode == kNagMode2) ? mode : kNagModeDefault;
 }
 
 inline const char *nagModeName(uint8_t mode) {
     switch (nagModeClamp(mode)) {
     case kNagMode1: return "MODE 1";
     case kNagMode2: return "MODE 2";
-    default: return "MODE 3";
+    default: return "MODE 2";
     }
 }
 
@@ -1062,7 +1110,7 @@ inline const char *nagModeSummary(uint8_t mode) {
     switch (nagModeClamp(mode)) {
     case kNagMode1: return "선제 고정 +1.80Nm 에코. 운전자 손 감지 시 중단.";
     case kNagMode2: return "선제 1초 순환·1.5초 휴지. 운전자 손 감지 시 중단.";
-    default: return "최신 원본에서 제거된 레거시 조건부 상태기계.";
+    default: return "선제 1초 순환·1.5초 휴지. 운전자 손 감지 시 중단.";
     }
 }
 

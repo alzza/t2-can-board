@@ -84,6 +84,7 @@ public:
     void applyRuntimeSettings() override
     {
         Lock lock(mutex_);
+        if (txQuiesced_) return;
         applyModeUnlocked();
     }
 
@@ -104,24 +105,65 @@ public:
 
     void send(const CanFrame &frame) override
     {
-        Lock lock(mutex_);
-        can_frame raw;
-        raw.can_id = frame.id;
-        raw.can_dlc = frame.dlc;
-        memcpy(raw.data, frame.data, 8);
-        mcp_->sendMessage(&raw);
+        (void)sendDetailed(frame);
     }
 
     // 프레임 송신 + 결과 반환. ERROR_OK=true, ALLTXBUSY/FAILTX=false.
     // 진단용: HW3Handler 에서 TX 성공/실패 카운트 추적.
     bool sendCheck(const CanFrame &frame) override
     {
+        return canTxQueued(sendDetailed(frame));
+    }
+
+    CanTxResult sendDetailed(const CanFrame &frame) override
+    {
         Lock lock(mutex_);
+        if (txQuiesced_) return CanTxResult::Aborted;
+        if (frame.dlc > 8) return CanTxResult::InvalidFrame;
+
+        pollTransmitResultsUnlocked();
+
         can_frame raw;
         raw.can_id = frame.id;
         raw.can_dlc = frame.dlc;
         memcpy(raw.data, frame.data, 8);
-        return mcp_->sendMessage(&raw) == MCP2515::ERROR_OK;
+
+        for (uint8_t i = 0; i < 3; ++i) {
+            const uint8_t ctrl = readRegisterUnlocked(kTxCtrlRegisters[i]);
+            if ((ctrl & kTxReqMask) != 0) continue;
+
+            // 이전 송신 결과 sticky 비트를 지운 뒤 지정 TX 버퍼에 등록한다.
+            bitModifyUnlocked(kTxCtrlRegisters[i], kTxResultMask, 0);
+            const MCP2515::ERROR result =
+                mcp_->sendMessage(static_cast<MCP2515::TXBn>(i), &raw);
+            if (result == MCP2515::ERROR_OK) {
+                txPending_[i] = true;
+                return CanTxResult::Queued;
+            }
+            if (result == MCP2515::ERROR_ALLTXBUSY) return CanTxResult::Busy;
+            return CanTxResult::ControllerError;
+        }
+        return CanTxResult::Busy;
+    }
+
+    void pollTransmitResults() override
+    {
+        Lock lock(mutex_);
+        pollTransmitResultsUnlocked();
+    }
+
+    bool quiesceTransmit() override
+    {
+        Lock lock(mutex_);
+        if (txQuiesced_) return true;
+
+        // ABAT로 진행 중인 세 TX 버퍼를 모두 중단한 뒤 Listen-Only로 전환한다.
+        // OTA 실패 시에도 이 상태를 유지하며 재부팅만이 Normal mode로 복귀시킨다.
+        bitModifyUnlocked(kCanCtrlRegister, kAbortAllTxMask, kAbortAllTxMask);
+        const MCP2515::ERROR modeResult = mcp_->setListenOnlyMode();
+        for (bool &pending : txPending_) pending = false;
+        txQuiesced_ = true;
+        return modeResult == MCP2515::ERROR_OK;
     }
 
     // EFLG 레지스터 읽기 — Normal Mode 유지, 통신 중단 없음
@@ -167,6 +209,7 @@ public:
     bool recoverBusOff() override
     {
         Lock lock(mutex_);
+        if (txQuiesced_) return false;
         pulseResetPinUnlocked();
         mcp_->clearMERR();
         mcp_->clearERRIF();
@@ -175,6 +218,64 @@ public:
     }
 
 private:
+    static constexpr uint8_t kSpiReadInstruction = 0x03;
+    static constexpr uint8_t kSpiBitModifyInstruction = 0x05;
+    static constexpr uint8_t kCanCtrlRegister = 0x0F;
+    static constexpr uint8_t kAbortAllTxMask = 0x10;
+    static constexpr uint8_t kTxReqMask = 0x08;
+    static constexpr uint8_t kTxAbortedMask = 0x40;
+    static constexpr uint8_t kTxArbitrationLostMask = 0x20;
+    static constexpr uint8_t kTxErrorMask = 0x10;
+    static constexpr uint8_t kTxResultMask =
+        kTxAbortedMask | kTxArbitrationLostMask | kTxErrorMask;
+    static constexpr uint8_t kTxCtrlRegisters[3] = {0x30, 0x40, 0x50};
+
+    uint8_t readRegisterUnlocked(uint8_t reg)
+    {
+        SPI.beginTransaction(SPISettings(currentSpiFreqHz_, MSBFIRST, SPI_MODE0));
+        digitalWrite(csPin_, LOW);
+        SPI.transfer(kSpiReadInstruction);
+        SPI.transfer(reg);
+        const uint8_t value = SPI.transfer(0x00);
+        digitalWrite(csPin_, HIGH);
+        SPI.endTransaction();
+        return value;
+    }
+
+    void bitModifyUnlocked(uint8_t reg, uint8_t mask, uint8_t data)
+    {
+        SPI.beginTransaction(SPISettings(currentSpiFreqHz_, MSBFIRST, SPI_MODE0));
+        digitalWrite(csPin_, LOW);
+        SPI.transfer(kSpiBitModifyInstruction);
+        SPI.transfer(reg);
+        SPI.transfer(mask);
+        SPI.transfer(data);
+        digitalWrite(csPin_, HIGH);
+        SPI.endTransaction();
+    }
+
+    void pollTransmitResultsUnlocked()
+    {
+        for (uint8_t i = 0; i < 3; ++i) {
+            if (!txPending_[i]) continue;
+            const uint8_t ctrl = readRegisterUnlocked(kTxCtrlRegisters[i]);
+            if ((ctrl & kTxReqMask) != 0) continue;
+
+            txPending_[i] = false;
+            if ((ctrl & kTxErrorMask) != 0) {
+                aChannelDiag.aTxFail = (uint32_t)aChannelDiag.aTxFail + 1;
+            } else if ((ctrl & kTxArbitrationLostMask) != 0) {
+                aChannelDiag.aTxArbitrationLost =
+                    (uint32_t)aChannelDiag.aTxArbitrationLost + 1;
+            } else if ((ctrl & kTxAbortedMask) != 0) {
+                aChannelDiag.aTxAborted = (uint32_t)aChannelDiag.aTxAborted + 1;
+            } else {
+                aChannelDiag.aTxCompleted = (uint32_t)aChannelDiag.aTxCompleted + 1;
+            }
+            bitModifyUnlocked(kTxCtrlRegisters[i], kTxResultMask, 0);
+        }
+    }
+
     bool configureChipUnlocked(bool verbose)
     {
         mcp_->reset();
@@ -225,6 +326,8 @@ private:
     int8_t rstPin_;
     uint32_t currentSpiFreqHz_;
     std::unique_ptr<MCP2515> mcp_;
+    bool txPending_[3] = {};
+    bool txQuiesced_{false};
 #ifndef NATIVE_BUILD
     SemaphoreHandle_t mutex_{nullptr};
 #else

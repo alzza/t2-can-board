@@ -10,6 +10,9 @@ static HW3Handler handler;
 static void resetSummonState()
 {
     summonGateDiag.apActive = false;
+    summonGateDiag.apState = 0;
+    summonGateDiag.apActiveSinceMs = 0;
+    summonGateDiag.last921Ms = 0;
     summonGateDiag.parked = true;
     summonGateDiag.summoning = false;
     summonGateDiag.acaActive = false;
@@ -21,6 +24,7 @@ static void resetSummonState()
     summonGateDiag.frames1016 = 0;
     summonGateDiag.mux1Received = 0;
     summonGateDiag.txOk = 0;
+    summonGateDiag.txBusy = 0;
     summonGateDiag.txFail = 0;
     summonGateDiag.blocked = 0;
 }
@@ -53,6 +57,7 @@ void setUp()
     mock.reset();
     handler = HW3Handler();
     summonUnlockRuntime = true;
+    summonConditionLimitRuntime = true;
     tsllcRuntime = true;
     aChannelTxRuntime = true;
     aTxGuardRuntime = false;
@@ -146,19 +151,36 @@ void test_aca_falling_edge_clears_spr_and_closes_drive_gate()
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
-void test_ap_status_is_diagnostic_only_and_does_not_open_gate()
+void test_ap_requires_one_second_stability_before_opening_gate()
 {
-    CanFrame drive = frame280(4, false);
-    handler.handleMessage(drive, mock);
+    summonGateDiag.parked = false;
     CanFrame ap = {.id = 921, .dlc = 8};
     ap.data[0] = 3;
-    handler.handleMessage(ap, mock);
+    summonHandle921(ap, 100);
+    TEST_ASSERT_TRUE(summonGateDiag.apActive);
+    TEST_ASSERT_FALSE(summonGateOpen(1099));
+    TEST_ASSERT_TRUE(summonGateOpen(1100));
+    TEST_ASSERT_EQUAL_STRING("AP_STABLE", summonGateReasonName(1100));
+}
+
+void test_ap_state_two_is_available_not_active()
+{
+    summonGateDiag.parked = false;
+    CanFrame ap = {.id = 921, .dlc = 8};
+    ap.data[0] = 2;
+    summonHandle921(ap, 100);
+    TEST_ASSERT_FALSE(summonGateDiag.apActive);
+    TEST_ASSERT_FALSE(summonGateOpen(5000));
+}
+
+void test_condition_limit_off_allows_drive_experiment()
+{
+    summonGateDiag.parked = false;
+    summonConditionLimitRuntime = false;
     CanFrame frame = mux1Frame();
     handler.handleMessage(frame, mock);
-
-    TEST_ASSERT_TRUE(summonGateDiag.apActive);
-    TEST_ASSERT_FALSE(summonGateOpen());
-    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_EQUAL_STRING("UNRESTRICTED", summonGateReasonName(100));
 }
 
 void test_390_fallback_and_280_watchdog_match_ino()
@@ -233,7 +255,9 @@ int main()
     RUN_TEST(test_drive_without_summon_blocks_mux1_injection);
     RUN_TEST(test_aca_plus_spr_opens_summoning_gate_while_in_drive);
     RUN_TEST(test_aca_falling_edge_clears_spr_and_closes_drive_gate);
-    RUN_TEST(test_ap_status_is_diagnostic_only_and_does_not_open_gate);
+    RUN_TEST(test_ap_requires_one_second_stability_before_opening_gate);
+    RUN_TEST(test_ap_state_two_is_available_not_active);
+    RUN_TEST(test_condition_limit_off_allows_drive_experiment);
     RUN_TEST(test_390_fallback_and_280_watchdog_match_ino);
     RUN_TEST(test_removed_id_659_is_ignored);
     RUN_TEST(test_tsllc_mux0_remains_active_when_summon_gate_is_closed);
