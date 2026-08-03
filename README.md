@@ -91,13 +91,12 @@ pio run -e lilygo_t2can -t upload
 
 ## Web UI
 
-대시보드는 다음 기능을 제공합니다.
+대시보드는 `상태 / 제어 / 진단 / 기록 / OTA` 5개 화면으로 구성합니다.
 
 - A/B 채널별 프레임 속도, RX/TX, TEC/REC, BUS-OFF와 A채널 EFLG 원인 실시간 표시.
 - Summon Unlock, TSLLC, Nag Killer와 A TX 마스터 런타임 제어.
 - A/B 시계열·CAN 자가 진단·BUS-OFF 이벤트 CSV 다운로드.
 - 차량 재수신부터 첫 Summon TX 성공까지의 지연 표시.
-- 프레임을 송신하지 않는 Signal Observer JSON 업로드.
 - OTA 업로드, 60초 확인, rollback·복구 UI.
 - iPhone Safari Safe Area와 글자 크기 보정을 적용하고, PC와 동일한 색상·카드·상태 체계를 모바일 한 열 배치로 제공.
 
@@ -175,13 +174,15 @@ HW4 INO 경로는 bit 47을 사용하지만, 이 저장소의 기본 빌드는 H
 3. **채널별 이벤트 CSV**를 저장합니다.
 4. 분석할 이벤트나 구간의 시작과 종료 지점에서 각각 `USER_MARK`를 누른 뒤 **전체 로그 저장**도 실행합니다.
 
-`RX_OVERRUN`은 MCP2515의 2개 수신 버퍼가 소프트웨어가 비우기 전에 가득 찼다는 뜻입니다. 경고를 숨기거나 임계값을 완화하지 않으며, 반복 발생 여부는 CSV의 `a_rx_overrun`, `a_eflg`, `a_loop_gap_last_us`, `a_loop_gap_peak_us`, `a_d_loop_gap_over_2ms` 열로 판단합니다. 오버런 이벤트의 `detail_text`에는 당시 최대 `loop_gap_us`가 함께 저장됩니다. 오버런 정리 시에는 EFLG의 오버런 비트와 ERRIF만 지우고, 새 프레임 도착을 알리는 RX0IF/RX1IF는 보존합니다.
+`RX_OVERRUN`은 MCP2515의 2개 수신 버퍼가 소프트웨어가 비우기 전에 가득 찼다는 뜻입니다. 경고를 숨기거나 임계값을 완화하지 않으며, 반복 발생 여부는 CSV의 `a_rx_overrun`, `a_rx0_overrun`, `a_rx1_overrun`, `a_eflg`, `a_loop_gap_last_us`, `a_loop_gap_peak_us`, `a_d_loop_gap_over_2ms` 열로 판단합니다. 오버런 이벤트의 `detail_text`에는 당시 최대 `loop_gap_us`가 함께 저장됩니다. 오버런 정리 시에는 EFLG의 오버런 비트와 ERRIF만 지우고, 새 프레임 도착을 알리는 RX0IF/RX1IF는 보존합니다.
 
 새 저장 형식은 모든 행에 실제 시각과 업타임을 함께 기록하고, `a_`, `b_`, `system_` 접두사로 채널을 구분합니다. 기본 상태에서는 최근 20분을 자동 보관합니다. **기록 시작**은 기존 로그를 지우고 수동 구간을 시작하며, **기록 정지**는 이후 샘플 추가를 멈춰 그 구간을 고정합니다.
 
-실차에서 관찰된 `EFLG=0x80/0xC0`은 TEC/REC·MERRF 증가가 없는 RX 버퍼 오버런이었습니다. 펌웨어는 Core 1의 주기 USB 시리얼 출력을 제거하고 B채널 수신 burst 2프레임마다 A채널을 다시 처리하며, 1ms 태스크 양보 직전에도 A 버퍼를 비웁니다. TEC/REC 또는 MERRF가 함께 증가하지 않는 한 배선·종단 오류로 단정하지 마십시오.
+실차에서 관찰된 `EFLG=0x80/0xC0`은 TEC/REC·MERRF 증가가 없는 RX 버퍼 오버런이었습니다. 현재 펌웨어는 ID 1021을 MCP2515 RXB0/RXB1 양쪽에 배치해 필터 부하를 분산하고, 프레임 해석 전에 하드웨어 수신 버퍼를 32프레임 RAM 큐로 먼저 회수합니다. B채널 프레임 하나마다 A채널을 다시 처리하며, CAN 태스크는 고정 1ms 대기 대신 50~100us 짧은 대기와 20ms 주기 RTOS 양보를 사용합니다. 5초 상태 문자열 생성은 별도 Core 0 태스크에서 처리합니다. TEC/REC 또는 MERRF가 함께 증가하지 않는 한 배선·종단 오류로 단정하지 마십시오.
 
-MCP2515 one-shot과 TX Guard는 계속 켜는 것을 권장합니다. One-shot에서는 동일 ID와의 중재 손실 같은 단발 결과가 TEC/MERRF 증가 없이 기록될 수 있으므로, 큐 등록이나 과거 누적값만으로 현재 통신 장애를 판정하지 않습니다. `Busy`는 MCP2515의 TX 버퍼 3개가 사용 중이라는 뜻이며 하드 오류나 Guard 트리거로 집계하지 않습니다. `Hard`가 최근 1초에 1회 이상 발생하면 Guard를 시작하고, BUS-OFF/EFLG 또는 TEC 임계값 이상도 즉시 Guard를 시작합니다.
+시계열 CSV 스키마 4에서는 `a_rx_buffer0_frames`/`a_rx_buffer1_frames`로 두 하드웨어 버퍼의 수신 편중을, `a_rx_queue_high_water`/`a_rx_queue_drops`로 RAM 큐 여유를, `a_loop_gap_over_250us`/`500us`/`1ms`/`2ms`로 처리 공백 분포를 확인합니다. `a_last_overrun_phase`는 마지막 오버런을 발견한 처리 단계를 나타냅니다. `a_rx_drain_calls`는 빈 폴링을 제외하고 실제 프레임을 회수한 배치 수입니다.
+
+MCP2515 one-shot과 TX Guard는 계속 켜는 것을 권장합니다. One-shot에서는 단발 TX 결과가 TEC/MERRF 증가 없이 기록될 수 있으므로, 큐 등록이나 과거 누적값만으로 현재 통신 장애를 판정하지 않습니다. `Busy`는 MCP2515의 TX 버퍼 3개가 사용 중이라는 뜻이며 하드 오류나 Guard 트리거로 집계하지 않습니다. `Hard`가 최근 1초에 **2회 이상** 발생하면 Guard를 시작하고, BUS-OFF/EFLG 또는 TEC 임계값 이상도 즉시 Guard를 시작합니다.
 
 - CAN 오류, TEC 상승, TX Fail, BUS-OFF가 보이면 A TX 마스터를 먼저 OFF하고 원인을 확인하십시오.
 
@@ -218,25 +219,23 @@ MODE 1/2의 **주입 범위** 토글은 다음 두 동작을 제공합니다.
 모든 모드에 raw `0x74E~0x8B6`(-1.80~+1.80 Nm) 상한, 최근 송신 전체 프레임 자기 에코 차단, `twai_transmit()` 성공 후 카운터 집계가 공통 적용됩니다. 원본의 `handsOn<=1`보다 보수적으로 실제 `handsOn=0`만 허용하는 것은 사용자가 확정한 공통 안전 조건입니다.
 
 시계열 CSV는 각 5초 구간의 Summon/TSLLC/Nag 실제 송신 증분, Summon 게이트,
-TX Guard, AP 전용 설정과 AP 활성 상태를 함께 기록합니다. 이벤트 CSV의
+허용 여부·차단 사유·AP 상태·AP 활성·안정시간·주차·소환 중 상태, TX Guard,
+AP 전용 설정을 함께 기록합니다. 이벤트 CSV의
 `FEATURE_STATE`는 스위치 변경을, `FEATURE_ACTIVITY`는 실제 송신 활동 전이를
 기록하며, 전체 로그와 자가 진단에도 같은 기능 설정·준비·송신 카운터가 포함됩니다.
 
-## Signal Observer JSON
-
-Signal Observer는 CAN 프레임을 송신하지 않는 수신 전용 진단 기능입니다. 신호는 A 또는 B 한 채널만 지정해야 하며 혼합 채널 설정은 거부됩니다.
-
-```bash
-.venv/bin/python scripts/tcan_signal_observer_json.py SCCM_turnIndicatorStalkStatus UI_autoLaneChangeEnable --output docs/tcan_observer.json
-```
-
-Motorola big-endian 신호와 mux 신호도 지원합니다. CAN-A는 하드웨어 필터가 6개이며 기본 Summon 관련 ID가 이미 포함되므로 추가 관찰 ID 예산을 생성 도구의 `aFilterRemaining`으로 확인하십시오.
+`기록` 화면의 전체 로그 저장은 시계열 전체를 별도 메모리에 복사하지 않고 한 행씩
+전송합니다. 저장을 누른 뒤 화면 상태 갱신은 최대 15초만 멈추며 자동으로 다시
+시작합니다. 다운로드가 진행되는 동안 버튼을 반복해서 누르지 말고 Safari의 다운로드
+표시가 나타날 때까지 기다리십시오.
 
 ## OTA 안전 절차
 
 OTA 업로드 전 펌웨어는 차량 기능과 A TX를 OFF로 저장합니다. 이어서 새 A/B 수정 송신을 원자적으로 막고 이미 시작된 송신 호출이 끝날 때까지 최대 250ms 기다립니다. 그 다음 CAN-A MCP2515는 Listen-Only, CAN-B TWAI는 정지 상태로 전환해 물리 TX를 차단합니다. OTA 시작·수신·기록·검증 중 하나라도 실패하면 TX를 다시 켜지 않고 재부팅 전까지 fail-closed 상태를 유지합니다.
 
 따라서 **OTA 전에 사용자가 Web UI의 A TX와 Nag Killer를 먼저 끄는 절차도 계속 권장**합니다. 자동 차단은 이중 보호이며 CAN 오류를 사후 치료하는 기능은 아닙니다. 차량을 P에 두고 업로드한 뒤, 새 펌웨어는 기능 OFF 안전값을 CAN 초기화 전에 적용합니다. 재부팅 직후에는 어떤 송신 기능도 켜지 말고 A/B 수신, EFLG/TWAI 오류와 BUS-OFF가 정상임을 확인한 후 OTA 확인을 완료하고 필요한 기능을 하나씩 다시 켜십시오.
+
+2026-08-01 실차 OTA에서는 위 순서를 적용한 뒤 차량 통신에러가 발생하지 않았습니다. OTA 관련 코드를 바꿀 때는 `새 송신 차단 → 기능 NVS OFF 저장 → 기존 송신 종료 확인 → A Listen-Only/B Stopped → 실패 시 fail-closed → 첫 부팅 기능 OFF` 순서를 회귀 검증 기준으로 유지하십시오.
 
 | 상태 | 의미 |
 |---|---|
@@ -284,6 +283,23 @@ python3 scripts/check_printf_formats.py
 python3 scripts/check_timeseries_csv_schema.py
 git diff --check
 ```
+
+### 펌웨어 bin 산출물 이름 규칙
+
+펌웨어 테스트 후 OTA 또는 실차 테스트에 사용할 `.bin` 복사본은 아래 형식으로 이름을 남깁니다.
+
+```text
+YYYY-MM-DD_짧은변경요약.bin
+```
+
+예시입니다.
+
+```text
+2026-07-31_ece-r79-gate-log.bin
+2026-07-31_ota-tx-safe.bin
+```
+
+날짜는 KST 기준 빌드·테스트 당일 날짜를 쓰고, 변경 요약은 오늘 수정한 핵심 내용을 공백 없이 최대한 짧게 기록합니다. PlatformIO 원본 산출물 `.pio/build/lilygo_t2can/firmware.bin`은 그대로 두고, OTA 업로드·보관용 복사본에만 이 이름을 붙입니다.
 
 ## 버전 정책
 

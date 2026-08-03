@@ -860,396 +860,6 @@ static esp_err_t featureToggleHandler(httpd_req_t *req, Shared<bool> &target, bo
     return ESP_OK;
 }
 
-static bool signalObserverRecvBody(httpd_req_t *req, char *body, size_t bodySize)
-{
-    if (!body || bodySize == 0 || req->content_len <= 0 || req->content_len >= bodySize)
-    {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid body size");
-        return false;
-    }
-    int total = 0;
-    int remaining = req->content_len;
-    while (remaining > 0)
-    {
-        int got = httpd_req_recv(req, body + total, remaining);
-        if (got <= 0)
-        {
-            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body receive failed");
-            return false;
-        }
-        total += got;
-        remaining -= got;
-    }
-    body[total] = '\0';
-    return true;
-}
-
-static bool signalObserverJsonReadU16(cJSON *obj, const char *key, uint16_t &out)
-{
-    cJSON *item = cJSON_GetObjectItem(obj, key);
-    if (!item) return false;
-    long value = -1;
-    if (cJSON_IsNumber(item))
-    {
-        value = item->valueint;
-    }
-    else if (cJSON_IsString(item) && item->valuestring)
-    {
-        char *end = nullptr;
-        value = strtol(item->valuestring, &end, 0);
-        if (!end || *end != '\0') return false;
-    }
-    else
-    {
-        return false;
-    }
-    if (value < 0 || value > 0x7FF) return false;
-    out = static_cast<uint16_t>(value);
-    return true;
-}
-
-static bool signalObserverJsonReadU32(cJSON *obj, const char *key, uint32_t &out)
-{
-    cJSON *item = cJSON_GetObjectItem(obj, key);
-    if (!item) return false;
-    unsigned long value = 0;
-    if (cJSON_IsNumber(item))
-    {
-        if (item->valuedouble < 0) return false;
-        value = static_cast<unsigned long>(item->valuedouble);
-    }
-    else if (cJSON_IsString(item) && item->valuestring)
-    {
-        char *end = nullptr;
-        value = strtoul(item->valuestring, &end, 0);
-        if (!end || *end != '\0') return false;
-    }
-    else
-    {
-        return false;
-    }
-    out = static_cast<uint32_t>(value);
-    return true;
-}
-
-static bool signalObserverParseChannel(cJSON *obj, uint8_t &channelOut)
-{
-    channelOut = kSignalObserverChannelA;
-    cJSON *item = cJSON_GetObjectItem(obj, "channel");
-    if (!item) return true;
-    if (!cJSON_IsString(item) || !item->valuestring) return false;
-    const char *s = item->valuestring;
-    if (strcasecmp(s, "A") == 0 || strcasecmp(s, "VEH") == 0)
-    {
-        channelOut = kSignalObserverChannelA;
-        return true;
-    }
-    if (strcasecmp(s, "B") == 0 || strcasecmp(s, "CH") == 0)
-    {
-        channelOut = kSignalObserverChannelB;
-        return true;
-    }
-    return false;
-}
-
-static bool signalObserverAFilterWouldFit(const SignalObserverDef *defs, uint8_t count)
-{
-    uint32_t ids[kSignalObserverMaxAFilterIds] = {659, 1016, 1021, 1001, 0, 0};
-    uint8_t idCount = 4;
-    for (uint8_t i = 0; i < count; ++i)
-    {
-        const SignalObserverDef &def = defs[i];
-        if (!def.enabled || (def.channelMask & kSignalObserverChannelA) == 0) continue;
-        if (signalObserverIdAlreadyPresent(ids, idCount, def.frameId)) continue;
-        if (idCount >= kSignalObserverMaxAFilterIds) return false;
-        ids[idCount++] = def.frameId;
-    }
-    return true;
-}
-
-static void signalObserverReconfigureAFilter()
-{
-    if (appDriver && appHandler)
-    {
-        appDriver->setFilters(appHandler->filterIds(), appHandler->filterIdCount());
-    }
-}
-
-static void signalObserverAddJson(cJSON *parent, uint32_t nowMs)
-{
-    cJSON *obs = cJSON_AddObjectToObject(parent, "signal_observer");
-    cJSON_AddBoolToObject(obs, "enabled", (bool)signalObserverRuntime);
-    cJSON_AddNumberToObject(obs, "max_signals", kSignalObserverMaxSignals);
-    cJSON_AddNumberToObject(obs, "max_a_filter_ids", kSignalObserverMaxAFilterIds);
-    size_t eventCount = 0;
-    size_t eventHead = 0;
-    uint32_t eventOverwritten = 0;
-    signalObserverEventSnapshot(eventCount, eventHead, eventOverwritten);
-    cJSON_AddNumberToObject(obs, "event_count", eventCount);
-    cJSON_AddNumberToObject(obs, "event_capacity", kSignalObserverEventCap);
-    cJSON_AddNumberToObject(obs, "event_head", eventHead);
-    cJSON_AddNumberToObject(obs, "event_overwritten", eventOverwritten);
-    uint8_t count = (uint8_t)signalObserverCount;
-    if (count > kSignalObserverMaxSignals) count = kSignalObserverMaxSignals;
-    cJSON_AddNumberToObject(obs, "count", count);
-    cJSON *arr = cJSON_AddArrayToObject(obs, "signals");
-    for (uint8_t i = 0; i < count; ++i)
-    {
-        const SignalObserverDef &def = signalObserverDefs[i];
-        const SignalObserverState &st = signalObserverStates[i];
-        cJSON *item = cJSON_CreateObject();
-        cJSON_AddStringToObject(item, "name", def.name);
-        cJSON_AddBoolToObject(item, "enabled", def.enabled);
-        cJSON_AddStringToObject(item, "channel", signalObserverChannelName(def.channelMask));
-        cJSON_AddNumberToObject(item, "frame_id", def.frameId);
-        char frameHex[8];
-        snprintf(frameHex, sizeof(frameHex), "0x%03X", (unsigned)def.frameId);
-        cJSON_AddStringToObject(item, "frame_hex", frameHex);
-        cJSON_AddStringToObject(item, "byte_order", signalObserverByteOrderName(def.byteOrder));
-        cJSON_AddNumberToObject(item, "start_bit", def.startBit);
-        cJSON_AddNumberToObject(item, "length", def.length);
-        cJSON_AddNumberToObject(item, "idle", def.idleRaw);
-        cJSON_AddBoolToObject(item, "seen", st.seen);
-        cJSON_AddBoolToObject(item, "active", st.active);
-        cJSON_AddNumberToObject(item, "raw", st.lastRaw);
-        cJSON_AddNumberToObject(item, "prev_raw", st.prevRaw);
-        cJSON_AddNumberToObject(item, "frame_count", st.frameCount);
-        cJSON_AddNumberToObject(item, "active_frame_count", st.activeFrameCount);
-        cJSON_AddNumberToObject(item, "change_count", st.changeCount);
-        cJSON_AddNumberToObject(item, "burst_count", st.burstCount);
-        cJSON_AddNumberToObject(item, "current_run_frames", st.currentRunFrames);
-        cJSON_AddNumberToObject(item, "last_run_frames", st.lastRunFrames);
-        cJSON_AddNumberToObject(item, "max_run_frames", st.maxRunFrames);
-        cJSON_AddNumberToObject(item, "first_seen_ms", st.firstSeenMs);
-        cJSON_AddNumberToObject(item, "last_seen_ms", st.lastSeenMs);
-        cJSON_AddNumberToObject(item, "last_change_ms", st.lastChangeMs);
-        cJSON_AddNumberToObject(item, "age_ms", st.lastSeenMs ? webSafeAgeMs(nowMs, st.lastSeenMs) : 0);
-        if (def.muxLength > 0)
-        {
-            cJSON_AddNumberToObject(item, "mux_start_bit", def.muxStartBit);
-            cJSON_AddNumberToObject(item, "mux_length", def.muxLength);
-            cJSON_AddNumberToObject(item, "mux_value", def.muxValue);
-        }
-        cJSON_AddItemToArray(arr, item);
-    }
-}
-
-static esp_err_t signalObserverConfigHandler(httpd_req_t *req)
-{
-    if (!rateLimitOk())
-    {
-        httpd_resp_set_status(req, "429 Too Many Requests");
-        httpd_resp_send(req, "Rate limited", HTTPD_RESP_USE_STRLEN);
-        return ESP_FAIL;
-    }
-
-    char body[4096];
-    if (!signalObserverRecvBody(req, body, sizeof(body))) return ESP_FAIL;
-    cJSON *root = cJSON_Parse(body);
-    if (!root)
-    {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
-        return ESP_FAIL;
-    }
-    cJSON *signals = cJSON_GetObjectItem(root, "signals");
-    if (!cJSON_IsArray(signals)) signals = root;
-    if (!cJSON_IsArray(signals))
-    {
-        cJSON_Delete(root);
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "signals array required");
-        return ESP_FAIL;
-    }
-
-    SignalObserverDef nextDefs[kSignalObserverMaxSignals] = {};
-    uint8_t nextCount = 0;
-    cJSON *entry = nullptr;
-    cJSON_ArrayForEach(entry, signals)
-    {
-        if (nextCount >= kSignalObserverMaxSignals) break;
-        if (!cJSON_IsObject(entry)) continue;
-
-        SignalObserverDef def = {};
-        def.enabled = true;
-        def.byteOrder = kSignalObserverByteOrderLittle;
-        cJSON *enabled = cJSON_GetObjectItem(entry, "enabled");
-        if (cJSON_IsBool(enabled)) def.enabled = cJSON_IsTrue(enabled);
-        if (!signalObserverParseChannel(entry, def.channelMask))
-        {
-            cJSON_Delete(root);
-            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "channel must be A or B");
-            return ESP_FAIL;
-        }
-        if (!signalObserverJsonReadU16(entry, "frame_id", def.frameId) &&
-            !signalObserverJsonReadU16(entry, "id", def.frameId))
-        {
-            cJSON_Delete(root);
-            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid frame_id");
-            return ESP_FAIL;
-        }
-        cJSON *start = cJSON_GetObjectItem(entry, "start_bit");
-        if (!start) start = cJSON_GetObjectItem(entry, "startBit");
-        cJSON *length = cJSON_GetObjectItem(entry, "length");
-        if (!cJSON_IsNumber(start) || !cJSON_IsNumber(length))
-        {
-            cJSON_Delete(root);
-            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "start_bit and length required");
-            return ESP_FAIL;
-        }
-        int startBit = start->valueint;
-        int bitLen = length->valueint;
-        cJSON *byteOrder = cJSON_GetObjectItem(entry, "byte_order");
-        if (!byteOrder) byteOrder = cJSON_GetObjectItem(entry, "byteOrder");
-        if (cJSON_IsString(byteOrder) && byteOrder->valuestring)
-        {
-            if (strcasecmp(byteOrder->valuestring, "little") == 0 || strcasecmp(byteOrder->valuestring, "intel") == 0)
-            {
-                def.byteOrder = kSignalObserverByteOrderLittle;
-            }
-            else if (strcasecmp(byteOrder->valuestring, "big") == 0 || strcasecmp(byteOrder->valuestring, "motorola") == 0)
-            {
-                def.byteOrder = kSignalObserverByteOrderBig;
-            }
-            else
-            {
-                cJSON_Delete(root);
-                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "byte_order must be little or big");
-                return ESP_FAIL;
-            }
-        }
-        if (startBit < 0 || startBit > 63 || bitLen <= 0 || bitLen > 32 ||
-            (def.byteOrder != kSignalObserverByteOrderBig && startBit + bitLen > 64))
-        {
-            cJSON_Delete(root);
-            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid bit layout");
-            return ESP_FAIL;
-        }
-        def.startBit = static_cast<uint8_t>(startBit);
-        def.length = static_cast<uint8_t>(bitLen);
-        uint32_t idleRaw = 0;
-        if (signalObserverJsonReadU32(entry, "idle", idleRaw)) def.idleRaw = idleRaw;
-        cJSON *name = cJSON_GetObjectItem(entry, "name");
-        const char *nameText = (cJSON_IsString(name) && name->valuestring) ? name->valuestring : "signal";
-        strncpy(def.name, nameText, sizeof(def.name) - 1);
-        def.name[sizeof(def.name) - 1] = '\0';
-        uint32_t muxValue = 0;
-        bool hasMux = signalObserverJsonReadU32(entry, "mux_value", muxValue) ||
-                      signalObserverJsonReadU32(entry, "muxValue", muxValue);
-        cJSON *mux = cJSON_GetObjectItem(entry, "mux");
-        if (!hasMux && cJSON_IsNumber(mux))
-        {
-            muxValue = (uint32_t)mux->valuedouble;
-            hasMux = true;
-        }
-        if (!hasMux && cJSON_IsObject(mux))
-        {
-            hasMux = signalObserverJsonReadU32(mux, "value", muxValue);
-        }
-        if (hasMux)
-        {
-            uint32_t muxStartBit = 0;
-            uint32_t muxLength = 3;
-            signalObserverJsonReadU32(entry, "mux_start_bit", muxStartBit) ||
-                signalObserverJsonReadU32(entry, "muxStartBit", muxStartBit);
-            signalObserverJsonReadU32(entry, "mux_length", muxLength) ||
-                signalObserverJsonReadU32(entry, "muxLength", muxLength);
-            if (cJSON_IsObject(mux))
-            {
-                signalObserverJsonReadU32(mux, "start_bit", muxStartBit) ||
-                    signalObserverJsonReadU32(mux, "startBit", muxStartBit);
-                signalObserverJsonReadU32(mux, "length", muxLength);
-            }
-            uint32_t muxMask = (muxLength >= 32) ? 0xFFFFFFFFUL : ((1UL << muxLength) - 1UL);
-            if (muxStartBit > 63 || muxLength == 0 || muxLength > 32 || muxStartBit + muxLength > 64 || muxValue > muxMask)
-            {
-                cJSON_Delete(root);
-                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid mux layout");
-                return ESP_FAIL;
-            }
-            def.muxStartBit = static_cast<uint8_t>(muxStartBit);
-            def.muxLength = static_cast<uint8_t>(muxLength);
-            def.muxValue = muxValue;
-        }
-        nextDefs[nextCount++] = def;
-    }
-    cJSON_Delete(root);
-
-    if (nextCount == 0)
-    {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "empty signals");
-        return ESP_FAIL;
-    }
-    if (!signalObserverAFilterWouldFit(nextDefs, nextCount))
-    {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "too many A-channel IDs for MCP2515 filters");
-        return ESP_FAIL;
-    }
-
-    signalObserverRuntime = false;
-    memset(signalObserverDefs, 0, sizeof(signalObserverDefs));
-    for (uint8_t i = 0; i < nextCount; ++i) signalObserverDefs[i] = nextDefs[i];
-    signalObserverCount = nextCount;
-    signalObserverResetStats();
-    signalObserverResetEvents();
-    signalObserverEventPushSystem(SO_EVT_CONFIG_LOADED, millis());
-    signalObserverRuntime = true;
-    signalObserverReconfigureAFilter();
-    logRing.push("[Web] Signal observer config loaded", millis());
-
-    httpd_resp_set_type(req, "application/json");
-    char resp[64];
-    snprintf(resp, sizeof(resp), "{\"ok\":true,\"count\":%u}", (unsigned)nextCount);
-    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
-}
-
-static esp_err_t signalObserverResetHandler(httpd_req_t *req)
-{
-    if (!rateLimitOk())
-    {
-        httpd_resp_set_status(req, "429 Too Many Requests");
-        httpd_resp_send(req, "Rate limited", HTTPD_RESP_USE_STRLEN);
-        return ESP_FAIL;
-    }
-    signalObserverResetStats();
-    signalObserverResetEvents();
-    signalObserverEventPushSystem(SO_EVT_RESET, millis());
-    logRing.push("[Web] Signal observer counters reset", millis());
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
-}
-
-static esp_err_t signalObserverCaptureHandler(httpd_req_t *req)
-{
-    if (!rateLimitOk())
-    {
-        httpd_resp_set_status(req, "429 Too Many Requests");
-        httpd_resp_send(req, "Rate limited", HTTPD_RESP_USE_STRLEN);
-        return ESP_FAIL;
-    }
-    bool enabled = false;
-    if (!parseToggleBody(req, enabled)) return ESP_FAIL;
-    if (enabled)
-    {
-        uint32_t now = millis();
-        signalObserverResetStats();
-        signalObserverResetEvents();
-        signalObserverEventPushSystem(SO_EVT_CAPTURE_START, now);
-        signalObserverRuntime = true;
-        logRing.push("[Web] Signal observer capture started", now);
-    }
-    else
-    {
-        uint32_t now = millis();
-        signalObserverRuntime = false;
-        signalObserverEventPushSystem(SO_EVT_CAPTURE_STOP, now);
-        logRing.push("[Web] Signal observer capture stopped", now);
-    }
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, enabled ? "{\"ok\":true,\"enabled\":true}" : "{\"ok\":true,\"enabled\":false}", HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
-}
-
 // Theme runtime ("dark" / "light"), NVS-backed, default "dark"
 static char themeRuntime[8] = "dark";
 
@@ -1726,12 +1336,24 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(ach, "tec_peak", (uint32_t)(uint8_t)aChannelDiag.aTecPeak);
     cJSON_AddNumberToObject(ach, "merrf",    (uint32_t)aChannelDiag.aMerrfCount);
     cJSON_AddNumberToObject(ach, "rx_ovr",   (uint32_t)aChannelDiag.aRxOvrCount);
+    cJSON_AddNumberToObject(ach, "rx0_ovr",  (uint32_t)aChannelDiag.aRx0OvrCount);
+    cJSON_AddNumberToObject(ach, "rx1_ovr",  (uint32_t)aChannelDiag.aRx1OvrCount);
+    cJSON_AddNumberToObject(ach, "rx_buffer0_frames", (uint32_t)aChannelDiag.aRxBuffer0Frames);
+    cJSON_AddNumberToObject(ach, "rx_buffer1_frames", (uint32_t)aChannelDiag.aRxBuffer1Frames);
+    cJSON_AddNumberToObject(ach, "rx_drain_frames", (uint32_t)aChannelDiag.aRxDrainFrames);
+    cJSON_AddNumberToObject(ach, "rx_drain_calls", (uint32_t)aChannelDiag.aRxDrainCalls);
+    cJSON_AddNumberToObject(ach, "rx_queue_high_water", (uint32_t)aChannelDiag.aRxQueueHighWater);
+    cJSON_AddNumberToObject(ach, "rx_queue_drops", (uint32_t)aChannelDiag.aRxQueueDropCount);
     cJSON_AddNumberToObject(ach, "rec_peak",         (uint32_t)(uint8_t)aChannelDiag.aRecPeak);
     cJSON_AddNumberToObject(ach, "last_frame_rx_ms", (uint32_t)aChannelDiag.lastFrameRxMs);
     cJSON_AddNumberToObject(ach, "last_tx_ms",       (uint32_t)aChannelDiag.lastTxMs);
     cJSON_AddNumberToObject(ach, "loop_gap_last_us", (uint32_t)aChannelDiag.loopGapLastUs);
     cJSON_AddNumberToObject(ach, "loop_gap_peak_us", (uint32_t)aChannelDiag.loopGapPeakUs);
+    cJSON_AddNumberToObject(ach, "loop_gap_over_250us", (uint32_t)aChannelDiag.loopGapOver250usCount);
+    cJSON_AddNumberToObject(ach, "loop_gap_over_500us", (uint32_t)aChannelDiag.loopGapOver500usCount);
+    cJSON_AddNumberToObject(ach, "loop_gap_over_1ms", (uint32_t)aChannelDiag.loopGapOver1msCount);
     cJSON_AddNumberToObject(ach, "loop_gap_over_2ms", (uint32_t)aChannelDiag.loopGapOver2msCount);
+    cJSON_AddStringToObject(ach, "last_overrun_phase", aCanPhaseName((uint8_t)aChannelDiag.lastOverrunPhase));
     cJSON_AddNumberToObject(ach, "eflg_event_count", (uint32_t)aChannelDiag.mcpEflgEventCount);
     cJSON_AddNumberToObject(ach, "wake_count", (uint32_t)aChannelDiag.wakeCount);
     cJSON_AddNumberToObject(ach, "last_wake_rx_ms", (uint32_t)aChannelDiag.lastWakeRxMs);
@@ -1926,7 +1548,6 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddStringToObject(bch, "health_reason", bHealthReason);
     cJSON_AddNumberToObject(bch, "health_level", bHealthLevel);
 
-    signalObserverAddJson(root, statusNowMs);
 
     const uint32_t aFramesReceived = (uint32_t)aChannelDiag.framesReceivedTotal;
     const uint32_t bFramesReceived = (uint32_t)bChannelDiag.framesReceivedTotal;
@@ -2425,156 +2046,6 @@ static void csvEscapeCell(const char *in, char *out, size_t out_n) {
     out[j] = '\0';
 }
 
-static void signalObserverWriteEventCsvHeader(httpd_req_t *req) {
-    httpd_resp_sendstr_chunk(req,
-    "wall_time,timestamp_ms,event,signal_index,signal,ch,id,byte_order,start_bit,length,prev_raw,raw,active,frame_count,active_frame_count,change_count,burst_count,current_run,last_run,max_run\r\n");
-}
-
-static void signalObserverWriteEventCsvRow(httpd_req_t *req, const SignalObserverEvent &ev,
-                                           char *line, size_t lineLen, char *tsBuf, size_t tsLen) {
-    formatLogTimestamp(ev.tMs, tsBuf, tsLen);
-    const char *name = "";
-    uint8_t count = (uint8_t)signalObserverCount;
-    if (count > kSignalObserverMaxSignals) count = kSignalObserverMaxSignals;
-    if (ev.signalIndex < count) name = signalObserverDefs[ev.signalIndex].name;
-    char nameCsv[96];
-    csvEscapeCell(name, nameCsv, sizeof(nameCsv));
-    snprintf(line, lineLen,
-        "%s,%u,%s,%u,%s,%s,0x%03X,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
-        tsBuf,
-        (unsigned)ev.tMs,
-        signalObserverEventTypeName(ev.type),
-        (unsigned)ev.signalIndex,
-        nameCsv,
-        signalObserverChannelName(ev.channelMask),
-        (unsigned)ev.frameId,
-        signalObserverByteOrderName(ev.byteOrder),
-        (unsigned)ev.startBit,
-        (unsigned)ev.length,
-        (unsigned)ev.prevRaw,
-        (unsigned)ev.raw,
-        (unsigned)ev.active,
-        (unsigned)ev.frameCount,
-        (unsigned)ev.activeFrameCount,
-        (unsigned)ev.changeCount,
-        (unsigned)ev.burstCount,
-        (unsigned)ev.currentRunFrames,
-        (unsigned)ev.lastRunFrames,
-        (unsigned)ev.maxRunFrames);
-    httpd_resp_sendstr_chunk(req, line);
-}
-
-static esp_err_t signalObserverLogDlHandler(httpd_req_t *req) {
-    bool _savedATx = false, _savedNag = false;
-    logDownloadCanQuietOn(_savedATx, _savedNag);
-    httpd_resp_set_type(req, "text/csv; charset=utf-8");
-    char fname[88];
-    if (wallEpochMsAtBoot != 0) {
-        time_t sec = (time_t)((wallEpochMsAtBoot + (int64_t)millis()) / 1000);
-        struct tm tm_v;
-        localtime_r(&sec, &tm_v);
-        snprintf(fname, sizeof(fname),
-            "attachment; filename=\"CAN_SNIPPER_%04d%02d%02d_%02d%02d%02d.csv\"",
-            tm_v.tm_year + 1900, tm_v.tm_mon + 1, tm_v.tm_mday,
-            tm_v.tm_hour, tm_v.tm_min, tm_v.tm_sec);
-    } else {
-        snprintf(fname, sizeof(fname),
-            "attachment; filename=\"CAN_SNIPPER_uptime%u.csv\"", (unsigned)millis());
-    }
-    httpd_resp_set_hdr(req, "Content-Disposition", fname);
-    httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    httpd_resp_set_hdr(req, "Connection", "close");
-
-    size_t n = 0;
-    size_t head = 0;
-    uint32_t overwritten = 0;
-    signalObserverEventSnapshot(n, head, overwritten);
-    char line[512];
-    char tsBuf[40];
-    snprintf(line, sizeof(line), "# uptime_ms=%u count=%u capacity=%u overwritten=%u\r\n",
-        (unsigned)millis(), (unsigned)n, (unsigned)kSignalObserverEventCap, (unsigned)overwritten);
-    httpd_resp_sendstr_chunk(req, line);
-    signalObserverWriteEventCsvHeader(req);
-    size_t start = (n < kSignalObserverEventCap) ? 0 : head;
-    for (size_t i = 0; i < n; ++i) {
-        SignalObserverEvent ev;
-        signalObserverEventCopyAt(start + i, ev);
-        signalObserverWriteEventCsvRow(req, ev, line, sizeof(line), tsBuf, sizeof(tsBuf));
-    }
-    logDownloadCanQuietOff(_savedATx, _savedNag);
-    httpd_resp_sendstr_chunk(req, nullptr);
-    return ESP_OK;
-}
-
-static esp_err_t eventsBundleHandler(httpd_req_t *req) {
-    bool _savedATx = false, _savedNag = false;
-    logDownloadCanQuietOn(_savedATx, _savedNag);
-    httpd_resp_set_type(req, "text/plain; charset=utf-8");
-    char fname[88];
-    if (wallEpochMsAtBoot != 0) {
-        time_t sec = (time_t)((wallEpochMsAtBoot + (int64_t)millis()) / 1000);
-        struct tm tm_v;
-        localtime_r(&sec, &tm_v);
-        snprintf(fname, sizeof(fname),
-            "attachment; filename=\"canmod_events_%04d%02d%02d_%02d%02d%02d.txt\"",
-            tm_v.tm_year + 1900, tm_v.tm_mon + 1, tm_v.tm_mday,
-            tm_v.tm_hour, tm_v.tm_min, tm_v.tm_sec);
-    } else {
-        snprintf(fname, sizeof(fname),
-            "attachment; filename=\"canmod_events_uptime%u.txt\"", (unsigned)millis());
-    }
-    httpd_resp_set_hdr(req, "Content-Disposition", fname);
-    httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    httpd_resp_set_hdr(req, "Connection", "close");
-
-    char line[512];
-    char tsBuf[40];
-    formatLogTimestamp(millis(), tsBuf, sizeof(tsBuf));
-    snprintf(line, sizeof(line), "=== CanMod 이벤트 로그 묶음 ===\r\nGenerated: %s\r\n\r\n", tsBuf);
-    httpd_resp_sendstr_chunk(req, line);
-
-    size_t observerN = 0;
-    size_t observerHead = 0;
-    uint32_t observerOverwritten = 0;
-    signalObserverEventSnapshot(observerN, observerHead, observerOverwritten);
-    snprintf(line, sizeof(line), "=== [1] 관찰기 이벤트 ===\r\n# uptime_ms=%u count=%u capacity=%u overwritten=%u\r\n",
-        (unsigned)millis(), (unsigned)observerN, (unsigned)kSignalObserverEventCap, (unsigned)observerOverwritten);
-    httpd_resp_sendstr_chunk(req, line);
-    signalObserverWriteEventCsvHeader(req);
-    size_t observerStart = (observerN < kSignalObserverEventCap) ? 0 : observerHead;
-    for (size_t i = 0; i < observerN; ++i) {
-        SignalObserverEvent ev;
-        signalObserverEventCopyAt(observerStart + i, ev);
-        signalObserverWriteEventCsvRow(req, ev, line, sizeof(line), tsBuf, sizeof(tsBuf));
-    }
-
-    size_t eventN = 0;
-    size_t eventHead = 0;
-    eventLogSnapshot(eventN, eventHead);
-    snprintf(line, sizeof(line),
-        "\r\n=== [2] 채널별 CAN 이벤트 ===\r\n"
-        "# uptime_ms=%u records=%u occurrences=%u coalesced=%u overwritten=%u capacity=%u\r\n",
-        (unsigned)millis(), (unsigned)eventN,
-        (unsigned)evtOccurrenceTotal, (unsigned)evtCoalescedTotal,
-        (unsigned)evtOverwrittenTotal, (unsigned)EVT_CAP);
-    httpd_resp_sendstr_chunk(req, line);
-    eventLogCsvHeader(req);
-    size_t eventStart = (eventN < EVT_CAP) ? 0 : eventHead;
-    for (size_t i = 0; i < eventN; ++i) {
-        CanEvent e;
-        eventLogCopyAt(eventStart + i, e);
-        if (eventLogCsvRow(req, e) != ESP_OK) {
-            logDownloadCanQuietOff(_savedATx, _savedNag);
-            return ESP_FAIL;
-        }
-    }
-    logDownloadCanQuietOff(_savedATx, _savedNag);
-    httpd_resp_sendstr_chunk(req, nullptr);
-    return ESP_OK;
-}
-
 static void formatDurationHms(uint32_t durationMs, char *out, size_t out_n) {
     uint32_t seconds = durationMs / 1000UL;
     uint32_t h = seconds / 3600UL;
@@ -2711,7 +2182,8 @@ static esp_err_t userMarkerHandler(httpd_req_t *req) {
 static esp_err_t logsBundleHandler(httpd_req_t *req) {
     const uint32_t handlerStartMs = millis();
     webHealthMark(gWebLogsBundleReqCount, gWebLogsBundleLastMs, handlerStartMs);
-    gWebDownloadBusyUntilMs = handlerStartMs + 180000UL;
+    // UI polling만 짧게 보호한다. 전 행 스트리밍이라 3분 보호 창은 필요하지 않다.
+    gWebDownloadBusyUntilMs = handlerStartMs + 30000UL;
     const esp_err_t wdtDeleteErr = esp_task_wdt_delete(NULL);  // 다운로드 중 TCP send 블로킹 허용
     const bool wdtDetached = (wdtDeleteErr == ESP_OK);
     logsBundleSerialTrace(wdtDetached ? "start wdt=off" : "start wdt=keep", handlerStartMs);
@@ -2868,6 +2340,23 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
             (unsigned long)(aNow - (uint32_t)aChannelDiag.lastTxMs),
             (unsigned)aChannelDiag.mcpEflgEventCount);
         httpd_resp_sendstr_chunk(req, line);
+        snprintf(line, sizeof(line),
+            "A수신: RX-OVR=%u (RX0=%u RX1=%u) | RXB0/1=%u/%u | Drain frames/calls=%u/%u | Queue peak/drop=%u/%u | Gap >250/500/1000/2000us=%u/%u/%u/%u | LastOverrun=%s\r\n",
+            (unsigned)aChannelDiag.aRxOvrCount,
+            (unsigned)aChannelDiag.aRx0OvrCount,
+            (unsigned)aChannelDiag.aRx1OvrCount,
+            (unsigned)aChannelDiag.aRxBuffer0Frames,
+            (unsigned)aChannelDiag.aRxBuffer1Frames,
+            (unsigned)aChannelDiag.aRxDrainFrames,
+            (unsigned)aChannelDiag.aRxDrainCalls,
+            (unsigned)aChannelDiag.aRxQueueHighWater,
+            (unsigned)aChannelDiag.aRxQueueDropCount,
+            (unsigned)aChannelDiag.loopGapOver250usCount,
+            (unsigned)aChannelDiag.loopGapOver500usCount,
+            (unsigned)aChannelDiag.loopGapOver1msCount,
+            (unsigned)aChannelDiag.loopGapOver2msCount,
+            aCanPhaseName((uint8_t)aChannelDiag.lastOverrunPhase));
+        httpd_resp_sendstr_chunk(req, line);
     snprintf(line, sizeof(line),
         "기능설정: Summon=%s ECE조건=%s Gate=%s(%s) AP=%u/%ums Ready=%s | TSLLC=%s Ready=%s | Nag=%s %s Scope=%s AP=%u Ready=%s\r\n",
         (bool)summonUnlockRuntime ? "ON" : "OFF",
@@ -2995,7 +2484,6 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         (unsigned)bChannelDiag.lastRecoveryDurationMs,
         (unsigned)bChannelDiag.maxRecoveryDurationMs);
     httpd_resp_sendstr_chunk(req, line);
-    // 관찰기 관련 출력, [3] 섹션에서 제거됨. [6] 섹션에서만 출력.
     {
         uint32_t now = millis();
         uint32_t markerCount = (uint32_t)userMarkerCount;
@@ -3084,23 +2572,19 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         tsSnapRecording ? "ON" : "OFF", (unsigned)tsN);
     httpd_resp_sendstr_chunk(req, line);
     httpd_resp_sendstr_chunk(req,
-        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,dasStateName,dasStateGroup,dasWarnLevel,dasWarning,nagMode,nagModeDefault,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,apState,nagPhase,realTorqueNm,nagInject,nagLastNm,age880Ms,ageDasMs,ageEchoMs,dNagInject,aFrames,aFrameHz,aEflg,aEflgState,aEflgPeak,aTec,aRec,aTecPeak,aRecPeak,aTxQueued,aTxBusy,aTxHardError,aTxCompleted,aTxArbitrationLost,aTxAborted,aMerrf,aRxOvr,aEflgEvents,aFrameAgeMs,aLoopAgeMs,aGuardActive,aGuardReason,aGuardRemainingMs,aWakeCount,aWakeToSummonTxMs,aWakeAwaitingTx,dAFrames,dATxOk,dATxFail,dAMerrf,dARxOvr,dAEflgEvents,aDriverOk,aTxEnabled,summonEnabled,tsllcEnabled,aOneShotEnabled,aTxGuardEnabled,aSpiMhz,aSpiTargetMhz,bDriverState,nagEnabled,aLoopGapLastUs,aLoopGapPeakUs,aLoopGapOver2ms,dALoopGapOver2ms,summonGateOpen,summonConditionLimit,summonApState,summonApStableMs,summonGateReason,summonInjectReady,summonTxOk,summonTxFail,summonBlocked,dSummonTxOk,dSummonTxFail,dSummonBlocked,tsllcInjectReady,tsllcTxOk,tsllcTxFail,dTsllcTxOk,dTsllcTxFail,nagApOnly,nagApActive,nagInjecting,nagTxOk,dNagTxOk\r\n");
+        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,dasStateName,dasStateGroup,dasWarnLevel,dasWarning,nagMode,nagModeDefault,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,apState,nagPhase,realTorqueNm,nagInject,nagLastNm,age880Ms,ageDasMs,ageEchoMs,dNagInject,aFrames,aFrameHz,aEflg,aEflgState,aEflgPeak,aTec,aRec,aTecPeak,aRecPeak,aTxQueued,aTxBusy,aTxHardError,aTxCompleted,aTxArbitrationLost,aTxAborted,aMerrf,aRxOvr,aRx0Ovr,aRx1Ovr,aRxB0Frames,aRxB1Frames,aRxDrainFrames,aRxDrainCalls,aRxQueueHighWater,aRxQueueDrops,aEflgEvents,aFrameAgeMs,aLoopAgeMs,aGuardActive,aGuardReason,aGuardRemainingMs,aWakeCount,aWakeToSummonTxMs,aWakeAwaitingTx,dAFrames,dATxOk,dATxFail,dAMerrf,dARxOvr,dAEflgEvents,aDriverOk,aTxEnabled,summonEnabled,tsllcEnabled,aOneShotEnabled,aTxGuardEnabled,aSpiMhz,aSpiTargetMhz,bDriverState,nagEnabled,aLoopGapLastUs,aLoopGapPeakUs,aLoopGapOver250us,aLoopGapOver500us,aLoopGapOver1ms,aLoopGapOver2ms,dALoopGapOver2ms,aLastOverrunPhase,summonGateOpen,summonConditionLimit,summonApState,summonApActive,summonParked,summoning,summonApStableMs,summonGateReason,summonInjectReady,summonTxOk,summonTxFail,summonBlocked,dSummonTxOk,dSummonTxFail,dSummonBlocked,tsllcInjectReady,tsllcTxOk,tsllcTxFail,dTsllcTxOk,dTsllcTxFail,nagApOnly,nagApActive,nagInjecting,nagTxOk,dNagTxOk\r\n");
     {
         if (tsN == 0) {
             httpd_resp_sendstr_chunk(req, "(시계열 없음)\r\n");
         } else {
-            // Critical Section 1회로 전체 스냅샷 복사 (tsMux 잠금 240회 → 1회)
-            TsSample* snap = (TsSample*)malloc(tsN * sizeof(TsSample));
-            if (snap) timeseriesBundleSnapshot(snap, tsN, tsSnapHead);
-            const size_t fallbackStart = (tsN < TS_CAP) ? 0 : tsSnapHead;
+            // 최대 79.7KB 전체 스냅샷 malloc은 TCP 송신용 heap까지 잠식해
+            // iPhone 다운로드가 멈출 수 있었다. 한 행씩 짧게 복사해 고정
+            // 메모리로 스트리밍한다. 샘플 추가 주기는 5초라 잠금 경합도 작다.
+            const size_t streamStart = (tsN < TS_CAP) ? 0 : tsSnapHead;
             for (size_t i = 0; i < tsN; ++i) {
                 esp_task_wdt_reset();
                 TsSample s;
-                if (snap) {
-                    s = snap[i];
-                } else {
-                    timeseriesCopyAt(fallbackStart + i, s);  // malloc 실패 시 fallback
-                }
+                timeseriesCopyAt(streamStart + i, s);
                 formatLogTimestamp(s.t_ms, tsBuf, sizeof(tsBuf));
                 int used = snprintf(line, sizeof(line),
                     "%s,%u,"
@@ -3136,11 +2620,11 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                 if (used < 0 || (size_t)used >= sizeof(line)) continue;
                 snprintf(line + used, sizeof(line) - (size_t)used,
                     ",%u,%.1f,%u,%s,%u,%u,%u,%u,%u,"
-                    "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,"
+                    "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,"
                     "%u,%u,%u,%u,%u,%u,%u,%u,%u,"
                     "%u,%u,%u,%u,%u,%u,%u,%u,"
-                    "%u,%u,%u,%u,%u,%u,"
-                    "%u,%u,%u,%u,%s,"
+                    "%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,"
+                    "%u,%u,%u,%u,%u,%u,%u,%s,"
                     "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
                     (unsigned)s.aFrames, (double)s.aFrameHz,
                     (unsigned)s.aEflg, aMcpEflgStateName(s.aEflg), (unsigned)s.aEflgPeak,
@@ -3148,7 +2632,11 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                     (unsigned)s.aTxOk, (unsigned)s.aTxBusy, (unsigned)s.aTxFail,
                     (unsigned)s.aTxCompleted, (unsigned)s.aTxArbitrationLost,
                     (unsigned)s.aTxAborted, (unsigned)s.aMerrf,
-                    (unsigned)s.aRxOvr, (unsigned)s.aEflgEvents,
+                    (unsigned)s.aRxOvr, (unsigned)s.aRx0Ovr, (unsigned)s.aRx1Ovr,
+                    (unsigned)s.aRxBuffer0Frames, (unsigned)s.aRxBuffer1Frames,
+                    (unsigned)s.aRxDrainFrames, (unsigned)s.aRxDrainCalls,
+                    (unsigned)s.aRxQueueHighWater, (unsigned)s.aRxQueueDrops,
+                    (unsigned)s.aEflgEvents,
                     (unsigned)s.aFrameAgeMs, (unsigned)s.aLoopAgeMs,
                     (unsigned)s.aGuardActive, aTxGuardReasonName(s.aGuardReason),
                     (unsigned)s.aGuardRemainingMs,
@@ -3161,9 +2649,14 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                     (unsigned)s.aSpiMhz, (unsigned)s.aSpiTargetMhz,
                     (unsigned)s.bDriverState, (unsigned)s.nagEnabled,
                     (unsigned)s.aLoopGapLastUs, (unsigned)s.aLoopGapPeakUs,
+                    (unsigned)s.aLoopGapOver250us, (unsigned)s.aLoopGapOver500us,
+                    (unsigned)s.aLoopGapOver1ms,
                     (unsigned)s.aLoopGapOver2ms, (unsigned)s.dALoopGapOver2ms,
+                    aCanPhaseName(s.aLastOverrunPhase),
                     (unsigned)s.summonGateOpen, (unsigned)s.summonConditionLimit,
-                    (unsigned)s.summonApState, (unsigned)s.summonApStableMs,
+                    (unsigned)s.summonApState, (unsigned)s.summonApActive,
+                    (unsigned)s.summonParked, (unsigned)s.summoning,
+                    (unsigned)s.summonApStableMs,
                     summonGateReasonNameFromCode(s.summonGateReason),
                     (unsigned)s.summonInjectReady,
                     (unsigned)s.summonTxOk, (unsigned)s.summonTxFail,
@@ -3175,14 +2668,12 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                     (unsigned)s.nagApActive, (unsigned)s.nagInjecting,
                     (unsigned)s.modeBInject, (unsigned)s.dModeBInject);
                 if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) {
-                    if (snap) free(snap);
                     logsBundleSerialTrace("fail section4", handlerStartMs);
                     if (wdtDetached) esp_task_wdt_add(NULL);
                     gWebDownloadBusyUntilMs = 0;
                     return ESP_FAIL;
                 }
             }
-            if (snap) free(snap);
         }
     }
     logsBundleSerialTrace("section4 done", handlerStartMs);
@@ -3195,7 +2686,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         size_t evtSnapHead = 0;
         eventLogSnapshot(evtN, evtSnapHead);
         snprintf(line, sizeof(line),
-            "채널별 이벤트: records=%u occurrences=%u coalesced=%u overwritten=%u cap=%u event_bundle=/api/events-bundle csv=/api/events.csv\r\n",
+            "채널별 이벤트: records=%u occurrences=%u coalesced=%u overwritten=%u cap=%u csv=/api/events.csv\r\n",
             (unsigned)evtN, (unsigned)evtOccurrenceTotal,
             (unsigned)evtCoalescedTotal, (unsigned)evtOverwrittenTotal,
             (unsigned)EVT_CAP);
@@ -3203,51 +2694,6 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         (void)evtSnapHead;
     }
 
-    // 섹션 6: 관찰기 요약/이벤트/CSV 안내
-    logsBundleSerialTrace("section6 observer", handlerStartMs);
-    httpd_resp_sendstr_chunk(req, "\r\n=== [6] 관찰기 요약 ===\r\n");
-    httpd_resp_sendstr_chunk(req, "관찰기: name,ch,id,byte_order,raw,frames,active,changes,bursts,current_run,last_run,max_run,age_ms\r\n");
-    {
-        uint32_t now = millis();
-        uint8_t count = (uint8_t)signalObserverCount;
-        if (count > kSignalObserverMaxSignals) count = kSignalObserverMaxSignals;
-        for (uint8_t i = 0; i < count; ++i) {
-            esp_task_wdt_reset();
-            const SignalObserverDef &def = signalObserverDefs[i];
-            const SignalObserverState &st = signalObserverStates[i];
-            snprintf(line, sizeof(line),
-                "관찰기,%s,%s,0x%03X,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
-                def.name,
-                signalObserverChannelName(def.channelMask),
-                (unsigned)def.frameId,
-                signalObserverByteOrderName(def.byteOrder),
-                (unsigned)st.lastRaw,
-                (unsigned)st.frameCount,
-                (unsigned)st.activeFrameCount,
-                (unsigned)st.changeCount,
-                (unsigned)st.burstCount,
-                (unsigned)st.currentRunFrames,
-                (unsigned)st.lastRunFrames,
-                (unsigned)st.maxRunFrames,
-                (unsigned)(st.lastSeenMs ? webSafeAgeMs(now, st.lastSeenMs) : 0));
-            if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) {
-                logsBundleSerialTrace("fail section6", handlerStartMs);
-                if (wdtDetached) esp_task_wdt_add(NULL);
-                gWebDownloadBusyUntilMs = 0;
-                return ESP_FAIL;
-            }
-        }
-    }
-    {
-        size_t eventN = 0;
-        size_t eventHead = 0;
-        uint32_t eventOverwritten = 0;
-        signalObserverEventSnapshot(eventN, eventHead, eventOverwritten);
-        snprintf(line, sizeof(line), "관찰기 이벤트: count=%u cap=%u overwritten=%u event_bundle=/api/events-bundle observer_csv=/api/signal-observer-log-dl\r\n",
-            (unsigned)eventN, (unsigned)kSignalObserverEventCap, (unsigned)eventOverwritten);
-        httpd_resp_sendstr_chunk(req, line);
-        (void)eventHead;
-    }
     logsBundleSerialTrace("final chunk", handlerStartMs);
     esp_err_t finalErr = httpd_resp_sendstr_chunk(req, nullptr);
     gWebDownloadBusyUntilMs = 0;
@@ -4092,15 +3538,6 @@ static void webServerInit(TWAIDriver* drv = nullptr)
         .uri = "/api/a-oneshot", .method = HTTP_POST, .handler = aOneShotHandler, .user_ctx = NULL};
     httpd_uri_t uriATxGuard = {
         .uri = "/api/a-tx-guard", .method = HTTP_POST, .handler = aTxGuardHandler, .user_ctx = NULL};
-    httpd_uri_t uriSignalObserverConfig = {
-        .uri = "/api/signal-observer/config", .method = HTTP_POST, .handler = signalObserverConfigHandler, .user_ctx = NULL};
-    httpd_uri_t uriSignalObserverReset = {
-        .uri = "/api/signal-observer/reset", .method = HTTP_POST, .handler = signalObserverResetHandler, .user_ctx = NULL};
-    httpd_uri_t uriSignalObserverCapture = {
-        .uri = "/api/signal-observer/capture", .method = HTTP_POST, .handler = signalObserverCaptureHandler, .user_ctx = NULL};
-    httpd_uri_t uriSignalObserverLogDl = {
-        .uri = "/api/signal-observer-log-dl", .method = HTTP_GET, .handler = signalObserverLogDlHandler, .user_ctx = NULL};
-
     httpd_uri_t uriEmergencyDisable = {
         .uri = "/api/emergency-disable", .method = HTTP_POST, .handler = emergencyDisableHandler, .user_ctx = NULL};
     httpd_uri_t uriEmergencyRestore = {
@@ -4145,8 +3582,6 @@ static void webServerInit(TWAIDriver* drv = nullptr)
         .uri = "/api/timeseries/status", .method = HTTP_GET, .handler = timeseriesStatusHandler, .user_ctx = NULL};
     httpd_uri_t uriEventsCsv = {
         .uri = "/api/events.csv", .method = HTTP_GET, .handler = eventLogCsvHandler, .user_ctx = NULL};
-    httpd_uri_t uriEventsBundle = {
-        .uri = "/api/events-bundle", .method = HTTP_GET, .handler = eventsBundleHandler, .user_ctx = NULL};
     httpd_uri_t uriLogsBundle = {
         .uri = "/api/logs-bundle", .method = HTTP_GET, .handler = logsBundleHandler, .user_ctx = NULL};
     // 브라우저 → 디바이스 wall-clock 동기화 (단독 AP 모드에서 NTP 대체)
@@ -4177,10 +3612,6 @@ static void webServerInit(TWAIDriver* drv = nullptr)
     httpd_register_uri_handler(webServer, &uriASpi8Mhz);
     httpd_register_uri_handler(webServer, &uriAOneShot);
     httpd_register_uri_handler(webServer, &uriATxGuard);
-    httpd_register_uri_handler(webServer, &uriSignalObserverConfig);
-    httpd_register_uri_handler(webServer, &uriSignalObserverReset);
-    httpd_register_uri_handler(webServer, &uriSignalObserverCapture);
-    httpd_register_uri_handler(webServer, &uriSignalObserverLogDl);
     httpd_register_uri_handler(webServer, &uriEmergencyDisable);
     httpd_register_uri_handler(webServer, &uriEmergencyRestore);
     httpd_register_uri_handler(webServer, &uriSetTheme);
@@ -4202,7 +3633,6 @@ static void webServerInit(TWAIDriver* drv = nullptr)
     httpd_register_uri_handler(webServer, &uriTimeseriesRec);
     httpd_register_uri_handler(webServer, &uriTimeseriesStatus);
     httpd_register_uri_handler(webServer, &uriEventsCsv);
-    httpd_register_uri_handler(webServer, &uriEventsBundle);
     httpd_register_uri_handler(webServer, &uriLogsBundle);
     httpd_register_uri_handler(webServer, &uriTimeSync);
     httpd_register_uri_handler(webServer, &uriUserMarker);

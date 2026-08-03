@@ -11,8 +11,9 @@
 - 사용자는 업로드 버튼을 누르기 전에 A TX와 Nag Killer를 먼저 OFF로 한다.
 - 업로드 시작 전 펌웨어가 새 A/B 수정 송신을 차단하고, 이미 시작된 소프트웨어 송신 호출이 끝난 뒤 A MCP2515를 Listen-Only, B TWAI를 정지 상태로 전환한다. 이 확인이 250ms 안에 끝나지 않으면 업로드는 시작하지 않는다.
 - 업로드가 어느 단계에서든 실패하면 CAN TX는 자동 복원되지 않는다. 보드를 재부팅해야 하며 기능 NVS는 OFF 안전값을 유지한다.
+- 2026-08-01 실차 OTA에서는 이 순서를 적용한 뒤 차량 통신에러가 발생하지 않았다. OTA 관련 변경 시 이 순서를 회귀 검증 기준으로 삼는다.
 - 현재 보드 AP 주소는 `http://192.168.4.1/` 이다.
-- OTA 파일은 PlatformIO 빌드 산출물 `.pio/build/lilygo_t2can/firmware.bin` 을 사용한다.
+- OTA 파일은 PlatformIO 빌드 산출물 `.pio/build/lilygo_t2can/firmware.bin` 을 복사해 `YYYY-MM-DD_짧은변경요약.bin` 형식으로 이름을 붙인 파일을 사용한다.
 - `ota_pending` 상태 의미는 아래와 같다.
 
 | 값 | 의미 |
@@ -44,9 +45,15 @@ xxd -l 16 .pio/build/lilygo_t2can/firmware.bin
 - 첫 바이트가 `e9` 로 시작한다.
 - 크기가 `min_spiffs.csv`의 OTA app slot 크기 `0x1E0000` 보다 작다.
 
-3. 차량에서 노트북 Wi-Fi를 `TeslaCAN` AP에 연결한다.
+3. OTA 업로드·보관용 복사본을 만든다. 파일명은 당일 수정 핵심을 짧게 남긴다.
 
-4. 상태 API가 응답하는지 확인한다.
+```bash
+cp .pio/build/lilygo_t2can/firmware.bin 2026-08-01_ota-ece-r79-log.bin
+```
+
+4. 차량에서 노트북 Wi-Fi를 `TeslaCAN` AP에 연결한다.
+
+5. 상태 API가 응답하는지 확인한다.
 
 ```bash
 curl -s http://192.168.4.1/api/status | head

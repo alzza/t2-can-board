@@ -83,17 +83,29 @@ static void appSetup(std::unique_ptr<Driver> drv, const char *readyMsg)
 }
 
 template <typename Driver>
-static void appLoop()
+static uint16_t appLoop()
 {
     const uint32_t appLoopNowUs = micros();
     static uint32_t previousAppLoopUs = 0;
+    const uint8_t phaseBeforeLoop = (uint8_t)aChannelDiag.canTaskPhase;
     if (previousAppLoopUs != 0) {
         const uint32_t gapUs = appLoopNowUs - previousAppLoopUs;
         aChannelDiag.loopGapLastUs = gapUs;
         if (gapUs > (uint32_t)aChannelDiag.loopGapPeakUs)
             aChannelDiag.loopGapPeakUs = gapUs;
-        if (gapUs > (uint32_t)aChannelDiag.loopGapWindowPeakUs)
+        if (gapUs > (uint32_t)aChannelDiag.loopGapWindowPeakUs) {
             aChannelDiag.loopGapWindowPeakUs = gapUs;
+            aChannelDiag.loopGapWindowPeakPhase = phaseBeforeLoop;
+        }
+        if (gapUs > 250U)
+            aChannelDiag.loopGapOver250usCount =
+                (uint32_t)aChannelDiag.loopGapOver250usCount + 1U;
+        if (gapUs > 500U)
+            aChannelDiag.loopGapOver500usCount =
+                (uint32_t)aChannelDiag.loopGapOver500usCount + 1U;
+        if (gapUs > 1000U)
+            aChannelDiag.loopGapOver1msCount =
+                (uint32_t)aChannelDiag.loopGapOver1msCount + 1U;
         if (gapUs > 2000U)
             aChannelDiag.loopGapOver2msCount =
                 (uint32_t)aChannelDiag.loopGapOver2msCount + 1U;
@@ -102,7 +114,6 @@ static void appLoop()
     const uint32_t appLoopNowMs = millis();
     aChannelDiag.lastLoopMs = appLoopNowMs;
     summonGateMaintain(appLoopNowMs);
-    appDriver->pollTransmitResults();
 #if !defined(NATIVE_BUILD)
     aChannelDiag.loopCoreId = xPortGetCoreID();
 #endif
@@ -112,16 +123,48 @@ static void appLoop()
     static uint32_t _aLastHzMs = 0;
     if (_aLastHzMs == 0) _aLastHzMs = millis();
 
-    CanFrame frame;
-    // ── A채널 (MCP2515/SPI) 수신 루프 ────────────────────────────────────────
-    // appDriver(MCP2515) 에서 프레임을 읽어 핸들러로 처리합니다.
-    //  · handleMessage : HW3/HW4/NagHandler 가 프레임을 분석·수정·에코
-    // ─────────────────────────────────────────────────────────────────────────
-    while (appDriver->read(frame))
-    {
-        digitalWrite(PIN_LED, LOW);
+    // ── A채널 RX 선회수 큐 ───────────────────────────────────────────────────
+    // MCP2515 RXB0/RXB1을 먼저 고정 RAM 큐로 비운다. 프레임 분석·1021 수정
+    // 송신 뒤에도 즉시 다시 비워, 핸들러 실행 중 도착한 동기 버스트를 받는다.
+    constexpr uint8_t kRxQueueCapacity = 32;
+    constexpr uint8_t kRxDrainBurst = 4;
+    CanFrame rxQueue[kRxQueueCapacity];
+    uint8_t rxHead = 0;
+    uint8_t rxCount = 0;
+    uint16_t processedFrames = 0;
+
+    auto drainHardwareRx = [&]() {
+        aChannelDiag.canTaskPhase = kACanPhaseRxDrain;
+        while (rxCount < kRxQueueCapacity) {
+            CanFrame burst[kRxDrainBurst];
+            const uint8_t room = (uint8_t)(kRxQueueCapacity - rxCount);
+            const uint8_t request = room < kRxDrainBurst ? room : kRxDrainBurst;
+            const uint8_t got = appDriver->drainReceived(burst, request);
+            if (got == 0) break;
+            // 빈 폴링 횟수가 아니라 실제 RX를 회수한 배치 수를 누적한다.
+            // 32비트 카운터가 며칠 만에 순환하는 일을 피하면서 진단 의미도 선명해진다.
+            aChannelDiag.aRxDrainCalls = (uint32_t)aChannelDiag.aRxDrainCalls + 1U;
+            aChannelDiag.aRxDrainFrames = (uint32_t)aChannelDiag.aRxDrainFrames + got;
+            for (uint8_t i = 0; i < got; ++i) {
+                const uint8_t tail = (uint8_t)((rxHead + rxCount) % kRxQueueCapacity);
+                rxQueue[tail] = burst[i];
+                ++rxCount;
+            }
+            if (rxCount > (uint32_t)aChannelDiag.aRxQueueHighWater)
+                aChannelDiag.aRxQueueHighWater = rxCount;
+            if (got < request) break;
+        }
+    };
+
+    drainHardwareRx();
+    if (rxCount > 0) digitalWrite(PIN_LED, LOW);
+    while (rxCount > 0) {
+        CanFrame frame = rxQueue[rxHead];
+        rxHead = (uint8_t)((rxHead + 1U) % kRxQueueCapacity);
+        --rxCount;
         appHandler->frameCount++;
         _aHzFrames++;
+        ++processedFrames;
 #if defined(DRIVER_TWAI) && !defined(NATIVE_BUILD)
         const uint32_t frameNowMs = millis();
         const uint32_t previousFrameMs = (uint32_t)aChannelDiag.lastFrameRxMs;
@@ -134,9 +177,15 @@ static void appLoop()
         }
         aChannelDiag.lastFrameRxMs = frameNowMs;
 #endif
+        aChannelDiag.canTaskPhase = kACanPhaseFrameHandle;
         appHandler->handleMessage(frame, *appDriver);
+        drainHardwareRx();
     }
     digitalWrite(PIN_LED, HIGH);
+
+    // RX 버퍼가 빈 뒤에만 비동기 TX 결과 레지스터를 확인한다.
+    aChannelDiag.canTaskPhase = kACanPhaseTxResult;
+    appDriver->pollTransmitResults();
 
     {
         uint32_t _now = millis();
@@ -159,10 +208,14 @@ static void appLoop()
         uint32_t _nowMs = millis();
         if (_nowMs - _lastEflgMs >= 1000) {
             _lastEflgMs = _nowMs;
+            aChannelDiag.canTaskPhase = kACanPhaseErrorPoll;
             uint8_t eflg = appDriver->getErrorFlags();
             const uint32_t loopGapWindowPeakUs =
                 (uint32_t)aChannelDiag.loopGapWindowPeakUs;
+            const uint8_t loopGapWindowPeakPhase =
+                (uint8_t)aChannelDiag.loopGapWindowPeakPhase;
             aChannelDiag.loopGapWindowPeakUs = 0;
+            aChannelDiag.loopGapWindowPeakPhase = kACanPhaseIdle;
             aChannelDiag.mcpEflg = eflg;
             // 누적 OR: 세션 내 최악 상태 보존
             aChannelDiag.mcpEflgPeak = (uint8_t)aChannelDiag.mcpEflgPeak | eflg;
@@ -186,6 +239,11 @@ static void appLoop()
             // 클리어 후 다시 카운트가 증가하면 → 진짜 폴링 부족(가설: A루프 지연).
             if (eflg & 0xC0) {
                 aChannelDiag.aRxOvrCount = (uint32_t)aChannelDiag.aRxOvrCount + 1;
+                if (eflg & 0x40U)
+                    aChannelDiag.aRx0OvrCount = (uint32_t)aChannelDiag.aRx0OvrCount + 1U;
+                if (eflg & 0x80U)
+                    aChannelDiag.aRx1OvrCount = (uint32_t)aChannelDiag.aRx1OvrCount + 1U;
+                aChannelDiag.lastOverrunPhase = loopGapWindowPeakPhase;
                 appDriver->clearRxOverrun();
             }
 
@@ -309,4 +367,6 @@ static void appLoop()
         }
     }
 #endif
+    aChannelDiag.canTaskPhase = kACanPhaseIdle;
+    return processedFrames;
 }  

@@ -29,7 +29,6 @@ void setUp()
     tsllcRuntime = true;
     aChannelTxRuntime = true;
     aTxGuardRuntime = false;
-    signalObserverCount = 0;
     resetSummonState();
 }
 
@@ -39,11 +38,11 @@ void test_hw3_filter_is_exact_ino_five_ids_without_default_experiment()
 {
     const uint32_t *ids = handler.filterIds();
     TEST_ASSERT_EQUAL_UINT8(5, handler.filterIdCount());
-    TEST_ASSERT_EQUAL_UINT32(280, ids[0]);
-    TEST_ASSERT_EQUAL_UINT32(390, ids[1]);
+    TEST_ASSERT_EQUAL_UINT32(1021, ids[0]);
+    TEST_ASSERT_EQUAL_UINT32(280, ids[1]);
     TEST_ASSERT_EQUAL_UINT32(921, ids[2]);
     TEST_ASSERT_EQUAL_UINT32(1016, ids[3]);
-    TEST_ASSERT_EQUAL_UINT32(1021, ids[4]);
+    TEST_ASSERT_EQUAL_UINT32(390, ids[4]);
 }
 
 void test_id1016_updates_summon_spr_without_transmitting()

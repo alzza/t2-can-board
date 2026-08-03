@@ -25,6 +25,16 @@ struct CanDriver
     virtual void setFilters(const uint32_t *ids, uint8_t count) = 0;  // 수신 필터 설정 (필요한 ID만 수신)
     virtual bool enableInterrupt(void (*onReady)()) = 0;        // 수신 인터럽트 콜백 등록
     virtual bool read(CanFrame &frame) = 0;                     // 프레임 1개 수신 (없으면 false)
+    // 하드웨어 RX 버퍼를 먼저 RAM으로 비우는 배치 수신 훅.
+    // 기본 구현은 read() 반복이며, MCP2515 구현은 한 번의 잠금으로
+    // RXB0/RXB1을 연속 회수한다.
+    virtual uint8_t drainReceived(CanFrame *frames, uint8_t capacity)
+    {
+        if (!frames || capacity == 0) return 0;
+        uint8_t count = 0;
+        while (count < capacity && read(frames[count])) ++count;
+        return count;
+    }
     virtual void send(const CanFrame &frame) = 0;               // 프레임 1개 전송
     // 프레임 1개 전송 + 결과 반환 (true=성공, false=실패).
     // 결과 확인을 구현하지 않은 드라이버의 기본값은 send() 호출 후 true다.

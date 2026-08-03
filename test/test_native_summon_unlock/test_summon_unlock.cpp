@@ -73,11 +73,11 @@ void test_filter_contains_validated_gate_ids_and_no_659()
     const uint32_t *ids = handler.filterIds();
     const uint8_t count = handler.filterIdCount();
     TEST_ASSERT_GREATER_OR_EQUAL_UINT8(5, count);
-    TEST_ASSERT_EQUAL_UINT32(280, ids[0]);
-    TEST_ASSERT_EQUAL_UINT32(390, ids[1]);
+    TEST_ASSERT_EQUAL_UINT32(1021, ids[0]);
+    TEST_ASSERT_EQUAL_UINT32(280, ids[1]);
     TEST_ASSERT_EQUAL_UINT32(921, ids[2]);
     TEST_ASSERT_EQUAL_UINT32(1016, ids[3]);
-    TEST_ASSERT_EQUAL_UINT32(1021, ids[4]);
+    TEST_ASSERT_EQUAL_UINT32(390, ids[4]);
     for (uint8_t i = 0; i < count; ++i) TEST_ASSERT_NOT_EQUAL(659, ids[i]);
 }
 

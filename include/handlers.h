@@ -71,22 +71,18 @@ struct HW3Handler : public CarManagerBase
 
     const uint32_t *filterIds() const override
     {
-        static uint32_t ids[kSignalObserverMaxAFilterIds] = {};
-        signalObserverFillAFilterIds(ids, kSignalObserverMaxAFilterIds);
+        // RXF0~1 → RXB0, RXF2~5 → RXB1. RXF5는 드라이버가 ids[0]
+        // (1021)로 채워 두 버퍼에서 1021을 받을 수 있게 한다.
+        static constexpr uint32_t ids[] = {1021, 280, 921, 1016, 390};
         return ids;
     }
-    uint8_t filterIdCount() const override
-    {
-        static uint32_t ids[kSignalObserverMaxAFilterIds] = {};
-        return signalObserverFillAFilterIds(ids, kSignalObserverMaxAFilterIds);
-    }
+    uint8_t filterIdCount() const override { return 5; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
         const uint32_t nowMs = millis();
         aChannelDiag.framesReceivedTotal++;
         aChannelDiag.lastFrameIdReceived = frame.id;
-        signalObserverObserveFrame(kSignalObserverChannelA, frame, nowMs);
 
         if (frame.id == 280) {
             aChannelDiag.frames280++;

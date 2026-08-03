@@ -80,9 +80,9 @@ void test_nag_defaults_off_with_mode2_ap_only_selected()
     TEST_ASSERT_EQUAL_STRING("MODE 2", nagModeName(defaults.mode));
 }
 
-void test_a_tx_guard_uses_hard_error_only()
+void test_a_tx_guard_requires_tx_fail_burst()
 {
-    TEST_ASSERT_EQUAL_UINT8(1, kATxGuardTxFailBurstThreshold);
+    TEST_ASSERT_EQUAL_UINT8(2, kATxGuardTxFailBurstThreshold);
 }
 
 void test_nag_mode_clamp_accepts_1_and_2_and_defaults_retired_3_to_2()
@@ -346,7 +346,7 @@ int main()
 {
     UNITY_BEGIN();
     RUN_TEST(test_nag_defaults_off_with_mode2_ap_only_selected);
-    RUN_TEST(test_a_tx_guard_uses_hard_error_only);
+    RUN_TEST(test_a_tx_guard_requires_tx_fail_burst);
     RUN_TEST(test_nag_mode_clamp_accepts_1_and_2_and_defaults_retired_3_to_2);
     RUN_TEST(test_nag_filter_contains_only_required_ids);
     RUN_TEST(test_mode1_fixed_echo_matches_verified_frame_rules);

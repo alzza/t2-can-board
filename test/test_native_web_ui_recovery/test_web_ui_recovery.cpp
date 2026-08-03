@@ -44,8 +44,7 @@ void test_main_ui_logs_bundle_pauses_background_polling_during_download()
 {
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "onclick=\"return handleDownloadAction(event,this)\""));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "function handleDownloadAction(ev,el){"));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "var LOGS_BUNDLE_PAUSE_MS=180000;"));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "var EVENTS_BUNDLE_PAUSE_MS=90000;"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "var LOGS_BUNDLE_PAUSE_MS=15000;"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "pauseBackgroundNetwork();"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "scheduleLogsBundleNetworkResume(pauseMs);"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "if(isBackgroundNetworkPaused())return;"));
@@ -60,11 +59,8 @@ void test_main_ui_download_uses_direct_attachment_not_blob_buffer()
     TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "new Blob([blob]"));
     TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "navigator.share"));
     TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "inlineUrl"));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "data-download-url=\"/api/events-bundle\""));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "이벤트 묶음 저장"));
-    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "관찰 이벤트 저장"));
-    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "밀리초 이벤트 저장"));
-    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, ">관찰기 저장</a>"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"downloadStatus\""));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "/api/events-bundle"));
 }
 
 void test_main_ui_ota_reconnect_resets_timer_and_shows_confirm_banner()
@@ -111,8 +107,13 @@ void test_main_ui_uses_ino_summon_control_and_monitoring_fields()
 
 void test_main_ui_removes_retired_can_injection_experiments()
 {
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, ">관찰</button>"));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "신호 관찰기"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, ">상태</button>"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, ">기록</button>"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"view-records\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "var views={main:1,control:1,diag:1,records:1,ota:1};"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "experiment:1"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "신호 관찰기"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "/api/signal-observer"));
     TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "/api/ui-ulc-"));
     TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "/api/ui-alc-"));
     TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "/api/ui-auto-turn-signal-mode"));
@@ -138,11 +139,14 @@ void test_main_ui_uses_verified_nag_modes_and_removes_smart_profiles()
     TEST_ASSERT_FALSE(contains(WEB_UI_HTML, ">D안<"));
 }
 
-void test_main_ui_has_compact_primary_feature_switches()
+void test_status_view_removes_duplicate_switches_and_keeps_control_switches()
 {
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"mSummon\""));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"mTsllc\""));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"mNag\""));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "id=\"mSummon\""));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "id=\"mTsllc\""));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "id=\"mNag\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"tSummon\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"tTsllc\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"tNag\""));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "ECE R79 / Summon 제한 해제"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "TSLLC / EAP"));
 }
@@ -177,6 +181,12 @@ void test_main_ui_defaults_to_summary_and_important_live_logs()
 
 void test_main_ui_uses_generic_paired_user_marker()
 {
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "class=\"header-info-bar\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"userMarkBtn\""));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "id=\"markBtn\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"hw-badge\">HW3</span>"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"ver-badge\">v--</span>"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"build-badge\">빌드 확인 중</span>"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "onclick=\"toggleUserMarker()\""));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "async function toggleUserMarker(){"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "fetch('/api/user-marker',{method:'POST'})"));
@@ -219,7 +229,7 @@ int main()
     RUN_TEST(test_main_ui_uses_ino_summon_control_and_monitoring_fields);
     RUN_TEST(test_main_ui_removes_retired_can_injection_experiments);
     RUN_TEST(test_main_ui_uses_verified_nag_modes_and_removes_smart_profiles);
-    RUN_TEST(test_main_ui_has_compact_primary_feature_switches);
+    RUN_TEST(test_status_view_removes_duplicate_switches_and_keeps_control_switches);
     RUN_TEST(test_main_ui_exposes_authoritative_channel_health_and_csv_diagnostics);
     RUN_TEST(test_main_ui_defaults_to_summary_and_important_live_logs);
     RUN_TEST(test_main_ui_uses_generic_paired_user_marker);

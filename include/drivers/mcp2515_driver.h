@@ -103,6 +103,34 @@ public:
         return true;
     }
 
+    uint8_t drainReceived(CanFrame *frames, uint8_t capacity) override
+    {
+        if (!frames || capacity == 0) return 0;
+        Lock lock(mutex_);
+        uint8_t count = 0;
+        while (count < capacity) {
+            // getStatus(): bit0=RX0IF, bit1=RX1IF. RXB0를 먼저 비운 뒤
+            // 다시 상태를 확인해 회수 중 RXB1로 rollover된 프레임도 읽는다.
+            const uint8_t status = mcp_->getStatus();
+            MCP2515::RXBn source;
+            if (status & 0x01U) source = MCP2515::RXB0;
+            else if (status & 0x02U) source = MCP2515::RXB1;
+            else break;
+
+            can_frame raw;
+            if (mcp_->readMessage(source, &raw) != MCP2515::ERROR_OK) break;
+            CanFrame &frame = frames[count++];
+            frame.id = raw.can_id;
+            frame.dlc = raw.can_dlc;
+            memcpy(frame.data, raw.data, frame.dlc > 8 ? 8 : frame.dlc);
+            if (source == MCP2515::RXB0)
+                aChannelDiag.aRxBuffer0Frames = (uint32_t)aChannelDiag.aRxBuffer0Frames + 1U;
+            else
+                aChannelDiag.aRxBuffer1Frames = (uint32_t)aChannelDiag.aRxBuffer1Frames + 1U;
+        }
+        return count;
+    }
+
     void send(const CanFrame &frame) override
     {
         (void)sendDetailed(frame);

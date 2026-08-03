@@ -16,10 +16,6 @@ const nagModes = {
 const scenarios = new Set(['normal', 'a_warn', 'ap_block', 'bus_off', 'bus_err', 'no_frames']);
 const cli = parseArgs(process.argv.slice(2));
 
-function defaultSignalObserverSignals() {
-  return [];
-}
-
 function defaultToggles() {
   return {
     a_channel_tx: true,
@@ -50,10 +46,6 @@ const state = {
   userMarkerCount: 0,
   userMarkerLastMs: 0,
   userMarkerLastDetail: 0,
-  observerResetMs: 0,
-  observerRuntime: true,
-  observerFrozenElapsedMs: 0,
-  observerSignals: defaultSignalObserverSignals(),
   toggles: defaultToggles(),
 };
 
@@ -67,10 +59,6 @@ function resetMockNvsState() {
   state.userMarkerCount = 0;
   state.userMarkerLastMs = 0;
   state.userMarkerLastDetail = 0;
-  state.observerResetMs = nowMs();
-  state.observerRuntime = true;
-  state.observerFrozenElapsedMs = 0;
-  state.observerSignals = defaultSignalObserverSignals();
   state.toggles = defaultToggles();
 }
 
@@ -206,96 +194,6 @@ function tickCounts() {
 
 function feature(enabled, build = true, supported = true) {
   return { supported, enabled, build_enabled: build };
-}
-
-function normalizeObserverChannel(value) {
-  const text = String(value || 'A').toUpperCase();
-  if (text === 'B' || text === 'CH') return 'B';
-  if (text === 'BOTH' || text === 'A+B' || text === 'AB') return 'A+B';
-  return 'A';
-}
-
-function normalizeObserverSignal(entry) {
-  const frameId = Number(entry.frame_id ?? entry.id);
-  const startBit = Number(entry.start_bit ?? entry.startBit);
-  const length = Number(entry.length);
-  if (!Number.isFinite(frameId) || frameId < 0 || frameId > 0x7ff) throw new Error('invalid frame_id');
-  const byteOrder = String(entry.byte_order ?? entry.byteOrder ?? 'little').toLowerCase();
-  if (!['little', 'big', 'intel', 'motorola'].includes(byteOrder)) throw new Error('byte_order must be little or big');
-  const normalizedByteOrder = (byteOrder === 'big' || byteOrder === 'motorola') ? 'big' : 'little';
-  if (!Number.isFinite(startBit) || !Number.isFinite(length) || startBit < 0 || startBit > 63 || length <= 0 || length > 32 || (normalizedByteOrder !== 'big' && startBit + length > 64)) {
-    throw new Error('invalid bit layout');
-  }
-  return {
-    name: String(entry.name || 'signal').slice(0, 39),
-    enabled: entry.enabled !== false,
-    channel: normalizeObserverChannel(entry.channel),
-    frame_id: frameId,
-    byte_order: normalizedByteOrder,
-    start_bit: startBit,
-    length,
-    idle: Number(entry.idle ?? 0) || 0,
-  };
-}
-
-function observerAFilterFits(signals) {
-  const ids = new Set([280, 390, 921, 1016, 1021]);
-  for (const sig of signals) {
-    if (!sig.enabled || !sig.channel.includes('A')) continue;
-    ids.add(sig.frame_id);
-    if (ids.size > 6) return false;
-  }
-  return true;
-}
-
-function observerStatusJson(counts, uptimeMs) {
-  const elapsed = state.observerRuntime ? Math.max(0, uptimeMs - state.observerResetMs) : state.observerFrozenElapsedMs;
-  const sampleMs = state.observerRuntime ? uptimeMs : state.observerResetMs + elapsed;
-  const tick = Math.floor(elapsed / 500);
-  const noFrames = counts.noFrames;
-  const signals = state.observerSignals.map((sig, idx) => {
-    const baseRate = sig.channel === 'B' ? 100 : sig.channel === 'A+B' ? 20 : 6;
-    const frameCount = noFrames ? 0 : Math.floor((elapsed / 1000) * baseRate) + idx * 3;
-    let raw = 0;
-    if (!noFrames && sig.enabled) {
-      if (sig.name === 'SCCM_turnIndicatorStalkStatus') raw = Math.floor(elapsed / 3500) % 3 === 1 ? 1 : Math.floor(elapsed / 3500) % 3 === 2 ? 2 : 0;
-      else raw = (tick + idx) % (1 << Math.min(sig.length, 4));
-    }
-    const active = raw !== (sig.idle || 0);
-    const burstCount = noFrames ? 0 : Math.floor(elapsed / 3500) + (active ? 1 : 0);
-    const currentRunFrames = active ? Math.floor((elapsed % 3500) / (sig.channel === 'B' ? 10 : 167)) + 1 : 0;
-    const lastRunFrames = active ? Math.max(0, Math.floor(3500 / (sig.channel === 'B' ? 10 : 167)) - 3) : Math.floor((elapsed % 3500) / (sig.channel === 'B' ? 10 : 167));
-    return {
-      ...sig,
-      channel: sig.channel,
-      frame_hex: `0x${sig.frame_id.toString(16).toUpperCase().padStart(3, '0')}`,
-      seen: frameCount > 0,
-      active,
-      raw,
-      prev_raw: Math.max(0, raw - 1),
-      frame_count: frameCount,
-      active_frame_count: active ? Math.floor(frameCount / 2) : Math.floor(frameCount / 3),
-      change_count: noFrames ? 0 : Math.floor(elapsed / 1500),
-      burst_count: burstCount,
-      current_run_frames: currentRunFrames,
-      last_run_frames: lastRunFrames,
-      max_run_frames: Math.max(currentRunFrames, lastRunFrames),
-      first_seen_ms: frameCount > 0 ? state.observerResetMs : 0,
-      last_seen_ms: frameCount > 0 ? sampleMs : 0,
-      last_change_ms: frameCount > 0 ? Math.max(state.observerResetMs, sampleMs - 400) : 0,
-      age_ms: frameCount > 0 ? Math.max(0, uptimeMs - sampleMs) : 0,
-    };
-  });
-  return {
-    enabled: state.observerRuntime,
-    max_signals: 10,
-    max_a_filter_ids: 6,
-    event_count: Math.min(256, Math.floor(elapsed / 1500)),
-    event_capacity: 256,
-    event_overwritten: 0,
-    count: signals.length,
-    signals,
-  };
 }
 
 function statusJson(url) {
@@ -580,7 +478,6 @@ function statusJson(url) {
         health_level: c.bBusOff ? 2 : c.noFrames || c.bBusErr ? 1 : 0,
       },
     },
-    signal_observer: observerStatusJson(c, uptimeMs),
     can: {
       state: c.bBusOff ? 'BUS_OFF' : 'RUNNING',
       state_channel: 'B',
@@ -702,7 +599,6 @@ function canDiagLogJson() {
 
 function logsBundleText() {
   const c = tickCounts();
-  const obs = observerStatusJson(c, nowMs());
   return [
     '=== CanMod Mock 통합 로그 ===',
     `Generated: ${new Date().toISOString()}`,
@@ -714,7 +610,6 @@ function logsBundleText() {
     `[mock] A RX=${c.aFrames} B RX=${c.bFrames} Echo=${c.echo}`,
     `[mock] SUMMON enabled=${state.toggles.summon_unlock_enabled ? 1 : 0} gate=${state.scenario === 'ap_block' ? 0 : 1}`,
     `[mock] NAG decision=${state.scenario === 'ap_block' ? 'AP_BLOCK' : 'ECHO'}`,
-    ...obs.signals.map((sig) => `[mock] OBS ${sig.name},${sig.channel},${sig.frame_hex},raw=${sig.raw},frames=${sig.frame_count},active=${sig.active_frame_count},bursts=${sig.burst_count},run=${sig.current_run_frames}/${sig.last_run_frames}/${sig.max_run_frames}`),
     '',
     '=== [2] BUS-OFF 이벤트 로그 ===',
     state.scenario === 'bus_off' ? 'seq,timestamp_ms,tec,rec,recovered\n1,0,255,0,0' : '(BUS-OFF 없음)',
@@ -749,54 +644,6 @@ async function handlePost(req, res, url) {
     }
     pushLog(`[mock] ${key}: ${state.toggles[key] ? 'ON' : 'OFF'}`);
     sendJson(res, { ok: true });
-    return;
-  }
-
-  if (url.pathname === '/api/signal-observer/config') {
-    const rawSignals = Array.isArray(body) ? body : body.signals;
-    if (!Array.isArray(rawSignals) || rawSignals.length === 0) {
-      sendJson(res, { ok: false, error: 'signals array required' }, 400);
-      return;
-    }
-    try {
-      const signals = rawSignals.slice(0, 10).map(normalizeObserverSignal);
-      if (!observerAFilterFits(signals)) {
-        sendJson(res, { ok: false, error: 'too many A-channel IDs for MCP2515 filters' }, 400);
-        return;
-      }
-      state.observerSignals = signals;
-      state.observerResetMs = nowMs();
-      state.observerRuntime = true;
-      state.observerFrozenElapsedMs = 0;
-      pushLog(`[mock] signal_observer loaded ${signals.length} signals`);
-      sendJson(res, { ok: true, count: signals.length });
-    } catch (error) {
-      sendJson(res, { ok: false, error: error.message }, 400);
-    }
-    return;
-  }
-
-  if (url.pathname === '/api/signal-observer/reset') {
-    state.observerResetMs = nowMs();
-    state.observerFrozenElapsedMs = 0;
-    pushLog('[mock] signal_observer counters reset');
-    sendJson(res, { ok: true });
-    return;
-  }
-
-  if (url.pathname === '/api/signal-observer/capture') {
-    const enabled = boolFromBody(body, state.observerRuntime);
-    if (enabled) {
-      state.observerResetMs = nowMs();
-      state.observerFrozenElapsedMs = 0;
-      state.observerRuntime = true;
-      pushLog('[mock] signal_observer capture started');
-    } else {
-      state.observerFrozenElapsedMs = Math.max(0, nowMs() - state.observerResetMs);
-      state.observerRuntime = false;
-      pushLog('[mock] signal_observer capture stopped');
-    }
-    sendJson(res, { ok: true, enabled: state.observerRuntime });
     return;
   }
 

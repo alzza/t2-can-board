@@ -224,89 +224,6 @@ void test_finalizeTeslaCounter52Checksum56_ignores_short_frame()
     TEST_ASSERT_EQUAL_HEX8(0xEE, f.data[7]);
 }
 
-void test_signalObserverExtractRaw_reads_little_endian_signal()
-{
-    CanFrame f = {.id = 585, .dlc = 8};
-    f.data[2] = 0x05;
-    SignalObserverDef def = {};
-    def.enabled = true;
-    def.channelMask = kSignalObserverChannelBoth;
-    def.byteOrder = kSignalObserverByteOrderLittle;
-    def.frameId = 585;
-    def.startBit = 16;
-    def.length = 4;
-
-    uint32_t raw = 0;
-    TEST_ASSERT_TRUE(signalObserverExtractRaw(f, def, raw));
-    TEST_ASSERT_EQUAL_UINT32(5, raw);
-}
-
-void test_signalObserverExtractRaw_reads_big_endian_signal()
-{
-    CanFrame f = {.id = 880, .dlc = 8};
-    f.data[2] = 0x08;
-    f.data[3] = 0xB6;
-    SignalObserverDef def = {};
-    def.enabled = true;
-    def.channelMask = kSignalObserverChannelB;
-    def.byteOrder = kSignalObserverByteOrderBig;
-    def.frameId = 880;
-    def.startBit = 19;
-    def.length = 12;
-
-    uint32_t raw = 0;
-    TEST_ASSERT_TRUE(signalObserverExtractRaw(f, def, raw));
-    TEST_ASSERT_EQUAL_HEX32(0x8B6, raw);
-}
-
-void test_signalObserverExtractRaw_rejects_short_big_endian_frame()
-{
-    CanFrame f = {.id = 880, .dlc = 3};
-    f.data[2] = 0x08;
-    SignalObserverDef def = {};
-    def.enabled = true;
-    def.channelMask = kSignalObserverChannelB;
-    def.byteOrder = kSignalObserverByteOrderBig;
-    def.frameId = 880;
-    def.startBit = 19;
-    def.length = 12;
-
-    uint32_t raw = 0;
-    TEST_ASSERT_FALSE(signalObserverExtractRaw(f, def, raw));
-}
-
-void test_signalObserver_defaults_start_stopped_without_retired_experiment_signal()
-{
-    TEST_ASSERT_FALSE(signalObserverRuntime);
-    TEST_ASSERT_EQUAL_UINT8(0, signalObserverCount);
-    TEST_ASSERT_FALSE(signalObserverDefs[0].enabled);
-}
-
-void test_signalObserverExtractRaw_requires_matching_mux_value()
-{
-    CanFrame f = {.id = 585, .dlc = 8};
-    f.data[0] = 0x00;
-    f.data[2] = 0x05;
-
-    SignalObserverDef def = {};
-    def.enabled = true;
-    def.channelMask = kSignalObserverChannelA;
-    def.byteOrder = kSignalObserverByteOrderLittle;
-    def.frameId = 585;
-    def.startBit = 16;
-    def.length = 4;
-    def.muxStartBit = 0;
-    def.muxLength = 3;
-    def.muxValue = 1;
-
-    uint32_t raw = 0;
-    TEST_ASSERT_FALSE(signalObserverExtractRaw(f, def, raw));
-
-    f.data[0] = 0x01;
-    TEST_ASSERT_TRUE(signalObserverExtractRaw(f, def, raw));
-    TEST_ASSERT_EQUAL_UINT32(5, raw);
-}
-
 // --- Runtime BYPASS_TLSSC_REQUIREMENT ---
 
 void test_runtime_bypass_tlssc_overrides_when_bit_clear()
@@ -397,12 +314,6 @@ int main()
     RUN_TEST(test_finalizeTeslaCounter52Checksum56_advances_counter_and_checksum);
     RUN_TEST(test_finalizeTeslaCounter52Checksum56_wraps_counter);
     RUN_TEST(test_finalizeTeslaCounter52Checksum56_ignores_short_frame);
-    RUN_TEST(test_signalObserverExtractRaw_reads_little_endian_signal);
-    RUN_TEST(test_signalObserverExtractRaw_reads_big_endian_signal);
-    RUN_TEST(test_signalObserverExtractRaw_rejects_short_big_endian_frame);
-    RUN_TEST(test_signalObserver_defaults_start_stopped_without_retired_experiment_signal);
-    RUN_TEST(test_signalObserverExtractRaw_requires_matching_mux_value);
-
     RUN_TEST(test_runtime_bypass_tlssc_overrides_when_bit_clear);
     RUN_TEST(test_runtime_bypass_tlssc_off_reads_frame);
     RUN_TEST(test_runtime_bypass_tlssc_off_still_reads_real_bit);

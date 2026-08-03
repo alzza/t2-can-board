@@ -71,6 +71,14 @@ struct TsSample {
     uint32_t aTxAborted;
     uint32_t aMerrf;
     uint32_t aRxOvr;
+    uint32_t aRx0Ovr;
+    uint32_t aRx1Ovr;
+    uint32_t aRxBuffer0Frames;
+    uint32_t aRxBuffer1Frames;
+    uint32_t aRxDrainFrames;
+    uint32_t aRxDrainCalls;
+    uint32_t aRxQueueHighWater;
+    uint32_t aRxQueueDrops;
     uint32_t aEflgEvents;
     uint16_t dAFrames;
     uint16_t dATxOk;
@@ -108,6 +116,9 @@ struct TsSample {
     uint8_t  summonGateOpen;
     uint8_t  summonConditionLimit;
     uint8_t  summonApState;
+    uint8_t  summonApActive;
+    uint8_t  summonParked;
+    uint8_t  summoning;
     uint8_t  summonGateReason;
     uint16_t summonApStableMs;
     uint8_t  summonInjectReady;
@@ -127,8 +138,12 @@ struct TsSample {
     uint16_t dTsllcTxFail;
     uint32_t aLoopGapLastUs;
     uint32_t aLoopGapPeakUs;
+    uint32_t aLoopGapOver250us;
+    uint32_t aLoopGapOver500us;
+    uint32_t aLoopGapOver1ms;
     uint32_t aLoopGapOver2ms;
     uint16_t dALoopGapOver2ms;
+    uint8_t  aLastOverrunPhase;
 };
 
 static constexpr size_t TS_CAP = 240;  // 240 × 5s = 20분
@@ -300,6 +315,14 @@ static void timeseriesTaskFn(void*) {
         s.aTxAborted = (uint32_t)aChannelDiag.aTxAborted;
         s.aMerrf = tsDelta(curAMerrf, (uint32_t)tsBaseAMerrf);
         s.aRxOvr = tsDelta(curARxOvr, (uint32_t)tsBaseARxOvr);
+        s.aRx0Ovr = (uint32_t)aChannelDiag.aRx0OvrCount;
+        s.aRx1Ovr = (uint32_t)aChannelDiag.aRx1OvrCount;
+        s.aRxBuffer0Frames = (uint32_t)aChannelDiag.aRxBuffer0Frames;
+        s.aRxBuffer1Frames = (uint32_t)aChannelDiag.aRxBuffer1Frames;
+        s.aRxDrainFrames = (uint32_t)aChannelDiag.aRxDrainFrames;
+        s.aRxDrainCalls = (uint32_t)aChannelDiag.aRxDrainCalls;
+        s.aRxQueueHighWater = (uint32_t)aChannelDiag.aRxQueueHighWater;
+        s.aRxQueueDrops = (uint32_t)aChannelDiag.aRxQueueDropCount;
         s.aEflgEvents = tsDelta(curAEflgEvents, (uint32_t)tsBaseAEflgEvents);
         s.dAFrames = tsDelta16(curAFrames, (uint32_t)tsPrevAFrames);
         s.dATxOk = tsDelta16(curATxOk, (uint32_t)tsPrevATxOk);
@@ -319,8 +342,12 @@ static void timeseriesTaskFn(void*) {
         s.dTsllcTxFail = tsDelta16(curTsllcTxFail, (uint32_t)tsPrevTsllcTxFail);
         s.aLoopGapLastUs = (uint32_t)aChannelDiag.loopGapLastUs;
         s.aLoopGapPeakUs = (uint32_t)aChannelDiag.loopGapPeakUs;
+        s.aLoopGapOver250us = (uint32_t)aChannelDiag.loopGapOver250usCount;
+        s.aLoopGapOver500us = (uint32_t)aChannelDiag.loopGapOver500usCount;
+        s.aLoopGapOver1ms = (uint32_t)aChannelDiag.loopGapOver1msCount;
         s.aLoopGapOver2ms = tsDelta(curALoopGapOver2ms, (uint32_t)tsBaseALoopGapOver2ms);
         s.dALoopGapOver2ms = tsDelta16(curALoopGapOver2ms, (uint32_t)tsPrevALoopGapOver2ms);
+        s.aLastOverrunPhase = (uint8_t)aChannelDiag.lastOverrunPhase;
         s.handsOn  = (uint8_t)bChannelDiag.realHo;
         s.dasState = (uint8_t)bChannelDiag.dasHandsOnStateRx;
         s.nagMode = (uint8_t)bChannelDiag.nagMode;
@@ -364,6 +391,9 @@ static void timeseriesTaskFn(void*) {
         s.summonGateOpen = summonGateOpen(s.t_ms) ? 1U : 0U;
         s.summonConditionLimit = (bool)summonConditionLimitRuntime ? 1U : 0U;
         s.summonApState = (uint8_t)summonGateDiag.apState;
+        s.summonApActive = (bool)summonGateDiag.apActive ? 1U : 0U;
+        s.summonParked = (bool)summonGateDiag.parked ? 1U : 0U;
+        s.summoning = (bool)summonGateDiag.summoning ? 1U : 0U;
         s.summonGateReason = summonGateReasonCode(s.t_ms);
         s.summonApStableMs = tsDelta16(summonApStableMs(s.t_ms), 0);
         s.summonInjectReady =
@@ -511,18 +541,6 @@ inline void timeseriesCopyAt(size_t idx, TsSample& out) {
     portEXIT_CRITICAL(&tsMux);
 }
 
-// logsBundleHandler 전용: Critical Section 1회로 전체 스냅샷을 dst에 복사.
-// dst는 malloc(count * sizeof(TsSample))으로 사전 할당해야 한다.
-// count, head는 timeseriesSnapshot()이 반환한 값을 그대로 넘긴다.
-inline void timeseriesBundleSnapshot(TsSample* dst, size_t count, size_t head) {
-    size_t n     = (count < TS_CAP) ? count : TS_CAP;
-    size_t start = (count < TS_CAP) ? 0 : head;
-    portENTER_CRITICAL(&tsMux);
-    for (size_t i = 0; i < n; ++i)
-        dst[i] = tsBuf[(start + i) % TS_CAP];
-    portEXIT_CRITICAL(&tsMux);
-}
-
 inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
     httpd_resp_set_type(req, "text/csv; charset=utf-8");
     httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"can_timeseries_ab.csv\"");
@@ -547,11 +565,15 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
         "b_real_torque_nm,b_nag_inject,b_nag_last_nm,b_age_880_ms,b_age_das_ms,b_age_echo_ms,b_d_nag_inject,"
         "a_frames,a_frame_hz,a_eflg,a_eflg_state,a_eflg_peak,a_tec,a_rec,a_tec_peak,a_rec_peak,"
         "a_tx_queued,a_tx_busy,a_tx_hard_error,a_tx_completed,a_tx_arbitration_lost,a_tx_aborted,a_merrf,"
-        "a_rx_overrun,a_eflg_events,a_frame_age_ms,a_loop_age_ms,a_guard_active,a_guard_reason,a_guard_remaining_ms,"
+        "a_rx_overrun,a_rx0_overrun,a_rx1_overrun,a_rx_buffer0_frames,a_rx_buffer1_frames,"
+        "a_rx_drain_frames,a_rx_drain_calls,a_rx_queue_high_water,a_rx_queue_drops,"
+        "a_eflg_events,a_frame_age_ms,a_loop_age_ms,a_guard_active,a_guard_reason,a_guard_remaining_ms,"
         "a_wake_count,a_wake_to_summon_tx_ms,a_wake_awaiting_tx,a_d_frames,a_d_tx_ok,a_d_tx_fail,a_d_merrf,a_d_rx_overrun,a_d_eflg_events,"
         "a_driver_ok,a_tx_enabled,a_summon_enabled,a_tsllc_enabled,a_one_shot_enabled,a_tx_guard_enabled,a_spi_mhz,a_spi_target_mhz,"
-        "b_driver_state,b_nag_enabled,a_loop_gap_last_us,a_loop_gap_peak_us,a_loop_gap_over_2ms,a_d_loop_gap_over_2ms,"
-        "a_summon_gate_open,a_summon_condition_limit,a_summon_ap_state,a_summon_ap_stable_ms,a_summon_gate_reason,"
+        "b_driver_state,b_nag_enabled,a_loop_gap_last_us,a_loop_gap_peak_us,a_loop_gap_over_250us,a_loop_gap_over_500us,"
+        "a_loop_gap_over_1ms,a_loop_gap_over_2ms,a_d_loop_gap_over_2ms,a_last_overrun_phase,"
+        "a_summon_gate_open,a_summon_condition_limit,a_summon_ap_state,a_summon_ap_active,a_summon_parked,a_summoning,"
+        "a_summon_ap_stable_ms,a_summon_gate_reason,"
         "a_summon_inject_ready,a_summon_tx_ok,a_summon_tx_fail,a_summon_blocked,"
         "a_d_summon_tx_ok,a_d_summon_tx_fail,a_d_summon_blocked,a_tsllc_inject_ready,a_tsllc_tx_ok,a_tsllc_tx_fail,"
         "a_d_tsllc_tx_ok,a_d_tsllc_tx_fail,b_nag_ap_only,b_nag_ap_active,b_nag_injecting,b_nag_tx_ok,b_d_nag_tx_ok\r\n";
@@ -564,7 +586,7 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
         timeseriesCopyAt(start + i, s);
         timeseriesFormatTime(s.t_ms, wallTime, sizeof(wallTime));
         int used = snprintf(line, sizeof(line),
-            "3,%s,%u,%s,"
+            "4,%s,%u,%s,"
             "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
             "%u,%u,%s,%s,%u,%u,"
             "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
@@ -596,11 +618,11 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
         if (used < 0 || (size_t)used >= sizeof(line)) continue;
         snprintf(line + used, sizeof(line) - (size_t)used,
             ",%u,%.1f,%u,%s,%u,%u,%u,%u,%u,"
-            "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,"
+            "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,"
             "%u,%u,%u,%u,%u,%u,%u,%u,%u,"
             "%u,%u,%u,%u,%u,%u,%u,%u,"
-            "%u,%u,%u,%u,%u,%u,"
-            "%u,%u,%u,%u,%s,"
+            "%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,"
+            "%u,%u,%u,%u,%u,%u,%u,%s,"
             "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
             (unsigned)s.aFrames, (double)s.aFrameHz,
             (unsigned)s.aEflg, aMcpEflgStateName(s.aEflg), (unsigned)s.aEflgPeak,
@@ -608,7 +630,11 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
             (unsigned)s.aTxOk, (unsigned)s.aTxBusy, (unsigned)s.aTxFail,
             (unsigned)s.aTxCompleted, (unsigned)s.aTxArbitrationLost,
             (unsigned)s.aTxAborted, (unsigned)s.aMerrf,
-            (unsigned)s.aRxOvr, (unsigned)s.aEflgEvents,
+            (unsigned)s.aRxOvr, (unsigned)s.aRx0Ovr, (unsigned)s.aRx1Ovr,
+            (unsigned)s.aRxBuffer0Frames, (unsigned)s.aRxBuffer1Frames,
+            (unsigned)s.aRxDrainFrames, (unsigned)s.aRxDrainCalls,
+            (unsigned)s.aRxQueueHighWater, (unsigned)s.aRxQueueDrops,
+            (unsigned)s.aEflgEvents,
             (unsigned)s.aFrameAgeMs, (unsigned)s.aLoopAgeMs,
             (unsigned)s.aGuardActive, aTxGuardReasonName(s.aGuardReason),
             (unsigned)s.aGuardRemainingMs,
@@ -621,9 +647,14 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
             (unsigned)s.aSpiMhz, (unsigned)s.aSpiTargetMhz,
             (unsigned)s.bDriverState, (unsigned)s.nagEnabled,
             (unsigned)s.aLoopGapLastUs, (unsigned)s.aLoopGapPeakUs,
+            (unsigned)s.aLoopGapOver250us, (unsigned)s.aLoopGapOver500us,
+            (unsigned)s.aLoopGapOver1ms,
             (unsigned)s.aLoopGapOver2ms, (unsigned)s.dALoopGapOver2ms,
+            aCanPhaseName(s.aLastOverrunPhase),
             (unsigned)s.summonGateOpen, (unsigned)s.summonConditionLimit,
-            (unsigned)s.summonApState, (unsigned)s.summonApStableMs,
+            (unsigned)s.summonApState, (unsigned)s.summonApActive,
+            (unsigned)s.summonParked, (unsigned)s.summoning,
+            (unsigned)s.summonApStableMs,
             summonGateReasonNameFromCode(s.summonGateReason),
             (unsigned)s.summonInjectReady,
             (unsigned)s.summonTxOk, (unsigned)s.summonTxFail,

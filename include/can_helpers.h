@@ -303,322 +303,40 @@ inline void summonGateMaintain(uint32_t nowMs) {
     }
 }
 
-inline constexpr uint8_t kSignalObserverMaxSignals = 10;
-inline constexpr uint8_t kSignalObserverMaxAFilterIds = 6;
-inline constexpr uint8_t kSignalObserverChannelA = 0x01;
-inline constexpr uint8_t kSignalObserverChannelB = 0x02;
-inline constexpr uint8_t kSignalObserverChannelBoth = kSignalObserverChannelA | kSignalObserverChannelB;
-inline constexpr uint8_t kSignalObserverByteOrderLittle = 0;
-inline constexpr uint8_t kSignalObserverByteOrderBig = 1;
-inline constexpr uint8_t kSignalObserverNameLen = 40;
-inline constexpr size_t kSignalObserverEventCap = 256;
-
-struct SignalObserverDef {
-    bool enabled;
-    uint8_t channelMask;
-    uint8_t byteOrder;
-    uint16_t frameId;
-    uint8_t startBit;
-    uint8_t length;
-    uint32_t idleRaw;
-    char name[kSignalObserverNameLen];
-    uint8_t muxStartBit;
-    uint8_t muxLength;
-    uint32_t muxValue;
-};
-
-struct SignalObserverState {
-    bool seen;
-    bool active;
-    uint32_t frameCount;
-    uint32_t activeFrameCount;
-    uint32_t changeCount;
-    uint32_t burstCount;
-    uint32_t currentRunFrames;
-    uint32_t lastRunFrames;
-    uint32_t maxRunFrames;
-    uint32_t firstSeenMs;
-    uint32_t lastSeenMs;
-    uint32_t lastChangeMs;
-    uint32_t lastRaw;
-    uint32_t prevRaw;
-};
-
-enum SignalObserverEventType : uint8_t {
-    SO_EVT_CAPTURE_START = 0,
-    SO_EVT_CAPTURE_STOP = 1,
-    SO_EVT_RESET = 2,
-    SO_EVT_CONFIG_LOADED = 3,
-    SO_EVT_FIRST_SEEN = 4,
-    SO_EVT_RAW_CHANGE = 5,
-    SO_EVT_ACTIVE_START = 6,
-    SO_EVT_ACTIVE_END = 7,
-};
-
-struct SignalObserverEvent {
-    uint32_t tMs;
-    uint8_t type;
-    uint8_t signalIndex;
-    uint8_t channelMask;
-    uint8_t byteOrder;
-    uint8_t active;
-    uint16_t frameId;
-    uint8_t startBit;
-    uint8_t length;
-    uint32_t prevRaw;
-    uint32_t raw;
-    uint32_t frameCount;
-    uint32_t activeFrameCount;
-    uint32_t changeCount;
-    uint32_t burstCount;
-    uint32_t currentRunFrames;
-    uint32_t lastRunFrames;
-    uint32_t maxRunFrames;
-};
-
-inline Shared<bool> signalObserverRuntime{false};  // 부팅 시 정지 상태; 시작 버튼 누를 때까지 카운트 없음
-inline Shared<uint8_t> signalObserverCount{0};      // 기본 프리셋 없음; 사용자가 올린 수동 관찰 설정만 사용
-inline SignalObserverDef signalObserverDefs[kSignalObserverMaxSignals] = {};
-inline SignalObserverState signalObserverStates[kSignalObserverMaxSignals] = {};
-inline SignalObserverEvent signalObserverEvents[kSignalObserverEventCap] = {};
-inline volatile size_t signalObserverEventHead = 0;
-inline volatile size_t signalObserverEventCount = 0;
-inline volatile uint32_t signalObserverEventOverwritten = 0;
-
-inline const char* signalObserverEventTypeName(uint8_t type) {
-    switch (type) {
-    case SO_EVT_CAPTURE_START: return "CAPTURE_START";
-    case SO_EVT_CAPTURE_STOP: return "CAPTURE_STOP";
-    case SO_EVT_RESET: return "RESET";
-    case SO_EVT_CONFIG_LOADED: return "CONFIG_LOADED";
-    case SO_EVT_FIRST_SEEN: return "FIRST_SEEN";
-    case SO_EVT_RAW_CHANGE: return "RAW_CHANGE";
-    case SO_EVT_ACTIVE_START: return "ACTIVE_START";
-    case SO_EVT_ACTIVE_END: return "ACTIVE_END";
-    default: return "UNKNOWN";
-    }
-}
-
-inline void signalObserverResetEvents() {
-    std::memset(signalObserverEvents, 0, sizeof(signalObserverEvents));
-    signalObserverEventHead = 0;
-    signalObserverEventCount = 0;
-    signalObserverEventOverwritten = 0;
-}
-
-inline void signalObserverEventPush(uint8_t type, uint8_t signalIndex, const SignalObserverDef &def,
-                                    const SignalObserverState &st, uint32_t nowMs,
-                                    uint32_t prevRaw, uint32_t raw, bool active) {
-    SignalObserverEvent &ev = signalObserverEvents[signalObserverEventHead];
-    ev.tMs = nowMs;
-    ev.type = type;
-    ev.signalIndex = signalIndex;
-    ev.channelMask = def.channelMask;
-    ev.byteOrder = def.byteOrder;
-    ev.active = active ? 1 : 0;
-    ev.frameId = def.frameId;
-    ev.startBit = def.startBit;
-    ev.length = def.length;
-    ev.prevRaw = prevRaw;
-    ev.raw = raw;
-    ev.frameCount = st.frameCount;
-    ev.activeFrameCount = st.activeFrameCount;
-    ev.changeCount = st.changeCount;
-    ev.burstCount = st.burstCount;
-    ev.currentRunFrames = st.currentRunFrames;
-    ev.lastRunFrames = st.lastRunFrames;
-    ev.maxRunFrames = st.maxRunFrames;
-
-    signalObserverEventHead = (signalObserverEventHead + 1) % kSignalObserverEventCap;
-    if (signalObserverEventCount < kSignalObserverEventCap) {
-        ++signalObserverEventCount;
-    } else {
-        ++signalObserverEventOverwritten;
-    }
-}
-
-inline void signalObserverEventPushSystem(uint8_t type, uint32_t nowMs) {
-    SignalObserverDef def = {};
-    SignalObserverState st = {};
-    signalObserverEventPush(type, 0xFF, def, st, nowMs, 0, 0, false);
-}
-
-inline void signalObserverEventSnapshot(size_t &count, size_t &head, uint32_t &overwritten) {
-    count = signalObserverEventCount;
-    head = signalObserverEventHead;
-    overwritten = signalObserverEventOverwritten;
-}
-
-inline void signalObserverEventCopyAt(size_t idx, SignalObserverEvent &out) {
-    out = signalObserverEvents[idx % kSignalObserverEventCap];
-}
-
-inline bool signalObserverFrameIdIsBaseA(uint16_t frameId) {
-    return frameId == 659 || frameId == 1016 || frameId == 1021;
-}
-
-inline void signalObserverResetStats() {
-    std::memset(signalObserverStates, 0, sizeof(signalObserverStates));
-}
-
-inline const char* signalObserverChannelName(uint8_t channelMask) {
-    switch (channelMask & kSignalObserverChannelBoth) {
-    case kSignalObserverChannelA: return "A";
-    case kSignalObserverChannelB: return "B";
-    case kSignalObserverChannelBoth: return "A+B";
-    default: return "OFF";
-    }
-}
-
-inline const char* signalObserverByteOrderName(uint8_t byteOrder) {
-    return byteOrder == kSignalObserverByteOrderBig ? "big" : "little";
-}
-
-inline uint8_t signalObserverNextBigEndianBit(uint8_t bitPosition) {
-    return (bitPosition % 8U == 0U) ? static_cast<uint8_t>(bitPosition + 15U) : static_cast<uint8_t>(bitPosition - 1U);
-}
-
-inline bool signalObserverExtractRawBits(const CanFrame &frame, uint8_t startBit, uint8_t length,
-                                         uint8_t byteOrder, uint32_t &rawOut) {
-    if (length == 0 || length > 32) return false;
-    if (startBit > 63) return false;
-    uint8_t dlc = frame.dlc > 8 ? 8 : frame.dlc;
-    if (byteOrder == kSignalObserverByteOrderBig) {
-        uint32_t raw = 0;
-        uint8_t bitPosition = startBit;
-        for (uint8_t bitIndex = 0; bitIndex < length; ++bitIndex) {
-            if (bitPosition >= (uint8_t)(dlc * 8U)) return false;
-            raw = (raw << 1U) | ((frame.data[bitPosition / 8U] >> (bitPosition % 8U)) & 0x01U);
-            if (bitIndex + 1U < length) bitPosition = signalObserverNextBigEndianBit(bitPosition);
-        }
-        rawOut = raw;
-        return true;
-    }
-
-    if ((uint16_t)startBit + (uint16_t)length > 64) return false;
-    uint8_t neededBytes = static_cast<uint8_t>(((uint16_t)startBit + (uint16_t)length + 7U) / 8U);
-    if (dlc < neededBytes) return false;
-
-    uint64_t payload = 0;
-    for (uint8_t byteIndex = 0; byteIndex < dlc; ++byteIndex) {
-        payload |= (static_cast<uint64_t>(frame.data[byteIndex]) << (8U * byteIndex));
-    }
-    uint64_t mask = (length >= 32) ? 0xFFFFFFFFULL : ((1ULL << length) - 1ULL);
-    rawOut = static_cast<uint32_t>((payload >> startBit) & mask);
-    return true;
-}
-
-inline bool signalObserverExtractRaw(const CanFrame &frame, const SignalObserverDef &def, uint32_t &rawOut) {
-    if (!def.enabled) return false;
-    if (def.muxLength > 0) {
-        uint32_t muxRaw = 0;
-        if (!signalObserverExtractRawBits(frame, def.muxStartBit, def.muxLength, def.byteOrder, muxRaw)) {
-            return false;
-        }
-        if (muxRaw != def.muxValue) return false;
-    }
-    return signalObserverExtractRawBits(frame, def.startBit, def.length, def.byteOrder, rawOut);
-}
-
-inline void signalObserverObserveFrame(uint8_t channelMask, const CanFrame &frame, uint32_t nowMs) {
-    if (!(bool)signalObserverRuntime) return;
-    uint8_t count = (uint8_t)signalObserverCount;
-    if (count > kSignalObserverMaxSignals) count = kSignalObserverMaxSignals;
-
-    for (uint8_t i = 0; i < count; ++i) {
-        const SignalObserverDef &def = signalObserverDefs[i];
-        if (!def.enabled || (def.channelMask & channelMask) == 0 || def.frameId != frame.id) continue;
-
-        uint32_t raw = 0;
-        if (!signalObserverExtractRaw(frame, def, raw)) continue;
-
-        SignalObserverState &st = signalObserverStates[i];
-        bool wasSeen = st.seen;
-        bool wasActive = st.active;
-        uint32_t prevRaw = st.lastRaw;
-        bool rawChanged = st.seen && raw != st.lastRaw;
-        if (!st.seen) {
-            st.seen = true;
-            st.firstSeenMs = nowMs;
-        } else if (rawChanged) {
-            st.prevRaw = st.lastRaw;
-            st.changeCount++;
-            st.lastChangeMs = nowMs;
-        }
-
-        bool active = raw != def.idleRaw;
-        st.frameCount++;
-        if (active) {
-            st.activeFrameCount++;
-            if (!st.active) {
-                st.burstCount++;
-                st.currentRunFrames = 1;
-            } else {
-                st.currentRunFrames++;
-            }
-            if (st.currentRunFrames > st.maxRunFrames) st.maxRunFrames = st.currentRunFrames;
-        } else if (st.active) {
-            st.lastRunFrames = st.currentRunFrames;
-            if (st.currentRunFrames > st.maxRunFrames) st.maxRunFrames = st.currentRunFrames;
-            st.currentRunFrames = 0;
-        }
-        st.active = active;
-        st.lastRaw = raw;
-        st.lastSeenMs = nowMs;
-
-        if (!wasSeen) {
-            signalObserverEventPush(SO_EVT_FIRST_SEEN, i, def, st, nowMs, prevRaw, raw, active);
-        } else if (rawChanged) {
-            signalObserverEventPush(SO_EVT_RAW_CHANGE, i, def, st, nowMs, prevRaw, raw, active);
-        }
-        if (!wasActive && active) {
-            signalObserverEventPush(SO_EVT_ACTIVE_START, i, def, st, nowMs, prevRaw, raw, active);
-        } else if (wasActive && !active) {
-            signalObserverEventPush(SO_EVT_ACTIVE_END, i, def, st, nowMs, prevRaw, raw, active);
-        }
-    }
-}
-
-inline bool signalObserverIdAlreadyPresent(const uint32_t *ids, uint8_t count, uint32_t frameId) {
-    for (uint8_t i = 0; i < count; ++i) {
-        if (ids[i] == frameId) return true;
-    }
-    return false;
-}
-
-inline uint8_t signalObserverFillAFilterIds(uint32_t *ids, uint8_t maxCount) {
-    if (!ids || maxCount < 5) return 0;
-    uint8_t count = 0;
-    ids[count++] = 280;
-    ids[count++] = 390;
-    ids[count++] = 921;
-    ids[count++] = 1016;
-    ids[count++] = 1021;
-
-    uint8_t observerCount = (uint8_t)signalObserverCount;
-    if (observerCount > kSignalObserverMaxSignals) observerCount = kSignalObserverMaxSignals;
-    for (uint8_t i = 0; i < observerCount && count < maxCount; ++i) {
-        const SignalObserverDef &def = signalObserverDefs[i];
-        if (!def.enabled || (def.channelMask & kSignalObserverChannelA) == 0) continue;
-        if (signalObserverIdAlreadyPresent(ids, count, def.frameId)) continue;
-        ids[count++] = def.frameId;
-    }
-    return count;
-}
-
-
 inline constexpr uint8_t kATxGuardReasonNone = 0;
 inline constexpr uint8_t kATxGuardReasonTec = 1;
 inline constexpr uint8_t kATxGuardReasonEflg = 2;
 inline constexpr uint8_t kATxGuardReasonTxFail = 3;
 inline constexpr uint32_t kATxGuardDurationMs = 15000;
 inline constexpr uint8_t kATxGuardTecThreshold = 24;
-// One-shot 모드의 단발성 중재 손실은 TEC/MERRF 없이 TX Fail로 끝날 수 있다.
-// 상세 결과에서 큐 포화(BUSY)는 제외되므로 실제 컨트롤러 오류 1건이면 보호한다.
-inline constexpr uint8_t kATxGuardTxFailBurstThreshold = 1;
+// One-shot에서는 TEC/MERRF 없이 단발 TXERR가 남을 수 있다. 실차 로그에서
+// 수십 초 간격의 단발 8건이 15초 Guard를 반복 시작했으므로, TX_FAIL 사유만은
+// 1초 창에서 2건 이상일 때 보호한다. EFLG·TEC 보호는 즉시 유지한다.
+inline constexpr uint8_t kATxGuardTxFailBurstThreshold = 2;
 inline constexpr uint32_t kAChannelWakeGapMs = 2000;
 inline constexpr uint32_t kAMcpBusOffRecoverIntervalMs = 1000;
 inline constexpr uint32_t kAMcpBusOffRestartFallbackMs = 10000;
+
+inline constexpr uint8_t kACanPhaseIdle = 0;
+inline constexpr uint8_t kACanPhaseRxDrain = 1;
+inline constexpr uint8_t kACanPhaseFrameHandle = 2;
+inline constexpr uint8_t kACanPhaseTxResult = 3;
+inline constexpr uint8_t kACanPhaseBReceive = 4;
+inline constexpr uint8_t kACanPhaseErrorPoll = 5;
+inline constexpr uint8_t kACanPhaseIdleWait = 6;
+
+inline const char *aCanPhaseName(uint8_t phase)
+{
+    switch (phase) {
+    case kACanPhaseRxDrain: return "A_RX_DRAIN";
+    case kACanPhaseFrameHandle: return "A_HANDLE";
+    case kACanPhaseTxResult: return "A_TX_RESULT";
+    case kACanPhaseBReceive: return "B_RX";
+    case kACanPhaseErrorPoll: return "A_ERROR_POLL";
+    case kACanPhaseIdleWait: return "IDLE_WAIT";
+    default: return "IDLE";
+    }
+}
 
 
 // 로그 분석에서 임의 이벤트 구간을 표시하는 일반 수동 마커.
@@ -914,13 +632,27 @@ struct AChannelDiagnostics {
     Shared<uint8_t>  aTecPeak{0};
     Shared<uint32_t> aMerrfCount{0};
     Shared<uint32_t> aRxOvrCount{0};
+    Shared<uint32_t> aRx0OvrCount{0};
+    Shared<uint32_t> aRx1OvrCount{0};
+    Shared<uint32_t> aRxBuffer0Frames{0};
+    Shared<uint32_t> aRxBuffer1Frames{0};
+    Shared<uint32_t> aRxDrainCalls{0};
+    Shared<uint32_t> aRxDrainFrames{0};
+    Shared<uint32_t> aRxQueueHighWater{0};
+    Shared<uint32_t> aRxQueueDropCount{0};
     Shared<uint8_t>  aRecPeak{0};               // REC 피크값 (세션 내 최대값)
     Shared<uint32_t> lastFrameRxMs{0};          // 마지막 A채널 프레임 수신 시각
     Shared<uint32_t> lastTxMs{0};               // 마지막 TX 성공 시각
     Shared<uint32_t> loopGapLastUs{0};           // A 폴링 호출 사이 최근 간격
     Shared<uint32_t> loopGapPeakUs{0};           // 부팅 후 A 폴링 최대 공백
     Shared<uint32_t> loopGapWindowPeakUs{0};     // 최근 EFLG 폴링 구간의 최대 공백
+    Shared<uint32_t> loopGapOver250usCount{0};   // 250us 초과 A 폴링 공백 횟수
+    Shared<uint32_t> loopGapOver500usCount{0};   // 500us 초과 A 폴링 공백 횟수
+    Shared<uint32_t> loopGapOver1msCount{0};     // 1ms 초과 A 폴링 공백 횟수
     Shared<uint32_t> loopGapOver2msCount{0};     // 2ms를 넘긴 A 폴링 공백 횟수
+    Shared<uint8_t>  canTaskPhase{kACanPhaseIdle};
+    Shared<uint8_t>  loopGapWindowPeakPhase{kACanPhaseIdle};
+    Shared<uint8_t>  lastOverrunPhase{kACanPhaseIdle};
     Shared<uint32_t> mcpEflgEventCount{0};      // EFLG 0→비제로 전환 횟수 (에러 발생 이벤트)
     Shared<uint32_t> mcpRecoveryAttemptCount{0}; // MCP2515 BUS-OFF 재초기화 시도 횟수
     Shared<uint32_t> mcpRecoverySuccessCount{0}; // MCP2515 BUS-OFF 재초기화 성공 횟수

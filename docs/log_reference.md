@@ -4,6 +4,11 @@
 >
 > 로그 파일 예시: `canmod_20260508_194303.txt`
 
+현재 통합 로그는 시계열 전체를 큰 임시 버퍼에 복사하지 않고 링버퍼에서 한 행씩
+복사해 HTTP 응답으로 전송한다. 따라서 저장 버튼을 누른 뒤 Safari가 파일을 만드는
+동안 잠시 기다려야 할 수 있지만, 과거처럼 약 79.7KB의 추가 힙을 한 번에 요구하지
+않는다. Web UI 상태 갱신은 통합 로그 저장 시 최대 15초 후 자동 재개된다.
+
 ---
 
 ## 목차
@@ -548,15 +553,20 @@ CSV 앞에 열 수가 다른 `#` 메타행을 두지 않는다. 첫 행부터 �
 
 `ARB_LOST`는 다른 프레임에 우선권을 양보했다는 뜻이다. TEC/REC, BUS_ERR, TX_FAIL, BUS-OFF가 모두 0이면 이것만으로 물리 통신 오류로 판단하지 않는다.
 
-### 개별 A/B 시계열 CSV v2
+### 개별 A/B 시계열 CSV v4
 
 `/api/timeseries.csv`는 5초 간격 A/B 상태를 한 행에 저장한다.
 
 - `wall_time`과 `uptime_ms`를 함께 기록한다.
 - `a_`, `b_`, `system_` 접두사로 채널과 공통 값을 구분한다.
 - `capture_mode=AUTO`는 기본 최근 20분 버퍼, `MANUAL`은 사용자가 시작한 고정 구간이다.
-- A 오버런 분석 핵심 열은 `a_d_rx_overrun`, `a_d_eflg_events`, `a_loop_gap_last_us`, `a_loop_gap_peak_us`, `a_d_loop_gap_over_2ms`다.
+- A 오버런 분석 핵심 열은 `a_d_rx_overrun`, `a_d_eflg_events`, `a_rx0_overrun`, `a_rx1_overrun`, `a_loop_gap_last_us`, `a_loop_gap_peak_us`, `a_d_loop_gap_over_2ms`다.
+- `a_rx_buffer0_frames`/`a_rx_buffer1_frames`는 MCP2515 RXB0/RXB1에서 실제 회수한 누적 프레임 수다. 한쪽만 빠르게 증가하면 필터 부하 편중을 의심한다.
+- `a_rx_drain_frames`는 RAM 큐로 선회수한 누적 프레임 수이고 `a_rx_drain_calls`는 빈 폴링을 제외한 실제 회수 배치 수다.
+- `a_rx_queue_high_water`는 32프레임 RAM 큐의 부팅 이후 최대 사용량이며 `a_rx_queue_drops`는 큐 포화로 넣지 못한 프레임 수다. 정상 목표는 드롭 0이다.
+- `a_loop_gap_over_250us`, `a_loop_gap_over_500us`, `a_loop_gap_over_1ms`, `a_loop_gap_over_2ms`는 부팅 이후 처리 공백 누적 분포다. `a_last_overrun_phase`는 마지막 오버런을 발견한 CAN 태스크 단계다.
 - A 송신 안전 플래그는 `a_tx_enabled`, `a_summon_enabled`, `a_tsllc_enabled`, `a_one_shot_enabled`, `a_tx_guard_enabled`에 샘플 시점 값으로 저장한다.
+- Summon 게이트는 `a_summon_gate_open`, `a_summon_gate_reason`, `a_summon_ap_state`, `a_summon_ap_active`, `a_summon_ap_stable_ms`, `a_summon_parked`, `a_summoning`으로 허용 결과와 당시 근거를 함께 저장한다.
 - B Nag 플래그는 `b_nag_enabled`, `b_nag_mode`, `b_driver_state`에 저장한다.
 
 수동 기록을 정지하면 이후 샘플을 추가하지 않는다. 수동 기록을 시작하지 않은 상태에서는 자동 최근 20분 버퍼가 계속 갱신된다.

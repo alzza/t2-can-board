@@ -85,7 +85,7 @@ lines_c0 = [
     "   └─ TWAIDriver::pollAlerts() → eventLog [5] 기록",
     "       (nagKillerTask 핫패스와 분리)",
     "",
-    "  [statusLogTask]  prio = 1  (5s 주기, T2CAN_STATUS_LOG_TASK=0 시 OFF)",
+    "  [statusLogTask]  prio = 1  (5초 주기, Core 0)",
     "   └─ 5초 상태 요약 Serial 출력",
     "",
     "  [timeseriesTask] prio = 1  (5s 주기)",
