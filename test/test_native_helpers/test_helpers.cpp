@@ -2,6 +2,7 @@
 #include "can_frame_types.h"
 #include "can_helpers.h"
 #include "event_log.h"
+#include "web/monitor_protocol.h"
 
 void setUp()
 {
@@ -284,6 +285,69 @@ void test_feature_activity_detail_maps_each_feature()
         eventFeatureActivityDetail(true, false, true, true, false, true));
 }
 
+void test_monitor_protocol_is_compact_versioned_and_read_only()
+{
+    MonitorSnapshot s;
+    s.uptimeS = 42;
+    s.firmwareVersion = "1.3.7";
+    s.firmwareBuild = "FW137-test";
+    s.aHealthLevel = 0;
+    s.aHealthState = "OK";
+    s.bHealthLevel = 1;
+    s.bHealthState = "RECOVERING";
+    s.eceR79 = true;
+    s.summon = true;
+    s.gateReason = "AP_STABLE";
+    s.userMarkCount = 3;
+    char json[2048];
+    const size_t len = formatMonitorJson(json, sizeof(json), s);
+    TEST_ASSERT_GREATER_THAN_UINT32(0, len);
+    TEST_ASSERT_LESS_THAN_UINT32(sizeof(json), len);
+    TEST_ASSERT_NOT_NULL(strstr(json, "\"schema\":1"));
+    TEST_ASSERT_NOT_NULL(strstr(json, "\"state\":\"RECOVERING\""));
+    TEST_ASSERT_NOT_NULL(strstr(json, "\"ece_r79\":true"));
+    TEST_ASSERT_NOT_NULL(strstr(json, "\"reason\":\"AP_STABLE\""));
+}
+
+void test_busoff_recorder_keeps_entry_pending_until_recovery_result()
+{
+    BusOffEventLog log;
+    BusOffEventRecorder recorder;
+    const BusOffEvent ev = recorder.begin(1000, 1, 256, 7);
+
+    TEST_ASSERT_TRUE(recorder.pendingValid);
+    TEST_ASSERT_EQUAL_UINT32(0, log.count());
+    TEST_ASSERT_EQUAL_UINT32(1, ev.seqNum);
+    TEST_ASSERT_EQUAL_UINT32(0, ev.sinceLastMs);
+
+    TEST_ASSERT_TRUE(recorder.complete(log, true, 420));
+    TEST_ASSERT_FALSE(recorder.pendingValid);
+    TEST_ASSERT_EQUAL_UINT32(1, log.count());
+    TEST_ASSERT_EQUAL_UINT32(420, log.at(0).recoveryDurMs);
+    TEST_ASSERT_EQUAL_UINT8(1, log.at(0).recovered);
+}
+
+void test_busoff_recorder_writes_one_row_per_success_or_failure()
+{
+    BusOffEventLog log;
+    BusOffEventRecorder recorder;
+
+    recorder.begin(1000, 1, 256, 0);
+    TEST_ASSERT_TRUE(recorder.complete(log, true, 300));
+    TEST_ASSERT_FALSE(recorder.complete(log, true, 999));
+
+    const BusOffEvent ev2 = recorder.begin(2500, 2, 256, 12);
+    TEST_ASSERT_EQUAL_UINT32(1500, ev2.sinceLastMs);
+    TEST_ASSERT_TRUE(recorder.complete(log, false, 800));
+
+    TEST_ASSERT_EQUAL_UINT32(2, log.count());
+    TEST_ASSERT_EQUAL_UINT32(1, log.at(0).seqNum);
+    TEST_ASSERT_EQUAL_UINT8(1, log.at(0).recovered);
+    TEST_ASSERT_EQUAL_UINT32(2, log.at(1).seqNum);
+    TEST_ASSERT_EQUAL_UINT8(0, log.at(1).recovered);
+    TEST_ASSERT_EQUAL_UINT32(800, log.at(1).recoveryDurMs);
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -321,6 +385,9 @@ int main()
     RUN_TEST(test_user_marker_names_are_generic);
     RUN_TEST(test_feature_state_detail_includes_nag_ap_only_and_summon_condition);
     RUN_TEST(test_feature_activity_detail_maps_each_feature);
+    RUN_TEST(test_monitor_protocol_is_compact_versioned_and_read_only);
+    RUN_TEST(test_busoff_recorder_keeps_entry_pending_until_recovery_result);
+    RUN_TEST(test_busoff_recorder_writes_one_row_per_success_or_failure);
 
     return UNITY_END();
 }

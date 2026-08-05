@@ -535,6 +535,8 @@ struct BChannelDiagnostics {
     Shared<uint32_t> lastRecoveryDoneMs{0};      // 최근 복구 완료 시각(ms)
     Shared<uint32_t> lastRecoveryDurationMs{0};  // 최근 복구 소요 시간(ms)
     Shared<uint32_t> maxRecoveryDurationMs{0};   // 세션 내 최대 복구 소요 시간(ms)
+    Shared<uint32_t> recoveryQuietRemainingMs{0}; // BUS-OFF 복구 후 B채널 TX 정지 잔여 시간
+    Shared<uint32_t> recoveryQuietSkipCount{0};   // 복구 안정화 대기 중 억제한 Nag TX 누적
     Shared<uint32_t> twaiRxErrPeak{0};           // RX 에러 카운터 최대값 (피크)
     Shared<uint32_t> twaiTxErrPeak{0};           // TX 에러 카운터 최대값 (피크)
     Shared<uint32_t> twaiRxErrNow{0};            // RX 에러 카운터 현재값
@@ -732,6 +734,39 @@ struct BusOffEventLog {
         return entries[idx % kCapacity];
     }
     void clear() { head = 0; }
+};
+
+// BUS-OFF 진입과 복구 결과를 정확히 한 행으로 묶는 순수 기록기.
+// CAN 드라이버 제어와 무관하며 native 회귀 테스트에서 동일한 기록 경로를 검증한다.
+struct BusOffEventRecorder {
+    uint32_t lastTimestampMs = 0;
+    BusOffEvent pending = {};
+    bool pendingValid = false;
+
+    BusOffEvent begin(uint32_t timestampMs, uint32_t seqNum,
+                      uint32_t tec, uint32_t rec) {
+        BusOffEvent ev = {};
+        ev.timestampMs = timestampMs;
+        ev.seqNum = seqNum;
+        ev.tec = tec;
+        ev.rec = rec;
+        ev.sinceLastMs = (lastTimestampMs > 0)
+                         ? (uint32_t)(timestampMs - lastTimestampMs) : 0;
+        pending = ev;
+        pendingValid = true;
+        lastTimestampMs = timestampMs;
+        return ev;
+    }
+
+    bool complete(BusOffEventLog& log, bool recovered,
+                  uint32_t recoveryDurationMs) {
+        if (!pendingValid) return false;
+        pending.recoveryDurMs = recoveryDurationMs;
+        pending.recovered = recovered ? 1U : 0U;
+        log.push(pending);
+        pendingValid = false;
+        return true;
+    }
 };
 
 inline BusOffEventLog busOffLog;

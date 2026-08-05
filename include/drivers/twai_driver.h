@@ -23,6 +23,23 @@ public:
         // 버스트를 흡수하되 오래된 프레임 체류를 과도하게 늘리지 않도록 128로 둔다.
         g_config_.rx_queue_len = 128;
         g_config_.tx_queue_len = 16;
+        // DEFAULT는 alerts_enabled=NONE이다. 경보 태스크가 있어도 이 값을
+        // 지정하지 않으면 BUS-OFF/에러 경보를 한 건도 받을 수 없다.
+        // ARB_LOST/RX_DATA/TX_SUCCESS는 실차에서 고빈도로 발생해 중요 이벤트를
+        // 밀어내므로 제외하고, 장애·복구에 필요한 경보만 활성화한다.
+        g_config_.alerts_enabled =
+            TWAI_ALERT_BELOW_ERR_WARN |
+            TWAI_ALERT_ERR_ACTIVE |
+            TWAI_ALERT_RECOVERY_IN_PROGRESS |
+            TWAI_ALERT_BUS_RECOVERED |
+            TWAI_ALERT_ABOVE_ERR_WARN |
+            TWAI_ALERT_BUS_ERROR |
+            TWAI_ALERT_TX_FAILED |
+            TWAI_ALERT_RX_QUEUE_FULL |
+            TWAI_ALERT_ERR_PASS |
+            TWAI_ALERT_BUS_OFF |
+            TWAI_ALERT_RX_FIFO_OVERRUN |
+            TWAI_ALERT_PERIPH_RESET;
         // ESP_INTR_FLAG_IRAM은 CONFIG_TWAI_ISR_IN_IRAM이 켜진 빌드에서만 유효하다.
         // Arduino-ESP32 기본 S3 sdkconfig는 보통 비활성이라 무조건 설정하면
         // twai_driver_install()이 실패할 수 있다.
@@ -99,6 +116,15 @@ public:
             return false;
         }
 
+        // BUS-OFF 복구 직후 밀려 있던 Nag 프레임을 곧바로 다시 주입하면
+        // 동일 장애로 재진입할 수 있다. 수신은 계속 유지하고 B채널 TX만
+        // 짧게 정지해 차량 버스가 안정된 뒤 재개한다.
+        if (recoveryQuietUntilMs_ != 0 &&
+            static_cast<int32_t>(millis() - recoveryQuietUntilMs_) < 0) {
+            recoveryQuietSuppressedCount_++;
+            return false;
+        }
+
         twai_message_t msg = {};
         uint8_t dlc = (frame.dlc <= 8) ? frame.dlc : 8;
         msg.identifier = frame.id;
@@ -131,6 +157,7 @@ public:
 
     // ── 진단 getters (web API, timeseries, BUS-OFF 이벤트 로그에서 사용) ──
     bool     isDriverOK()              const { return driverOK_; }
+    void     serviceBusState()               { (void)updateRecoveryProgress(); }
     bool     isBusOffState()                 { return isBusOff(); }
     uint8_t  getStateCode()                  { return stateCode(); }
     uint32_t getBusoffCount()          const { return busoffCount_; }
@@ -140,9 +167,18 @@ public:
     uint32_t getLastRecoveryDurationMs() const { return lastRecoveryDurationMs_; }
     uint32_t getMaxRecoveryDurationMs()  const { return maxRecoveryDurationMs_; }
     uint32_t getLastBusOffMs()         const { return lastBusOffMs_; }
+    uint32_t getLastRecoveryStartMs()  const { return recoveryStartMs_; }
+    uint32_t getLastRecoveryDoneMs()   const { return lastRecoveryDoneMs_; }
     uint32_t getBusOffTec()            const { return busOffTec_; }
     uint32_t getBusOffRec()            const { return busOffRec_; }
     uint32_t getTxSuppressedCount()    const { return txSuppressedCount_; }
+    uint32_t getRecoveryQuietSuppressedCount() const { return recoveryQuietSuppressedCount_; }
+    uint32_t getRecoveryQuietRemainingMs() const {
+        const uint32_t until = recoveryQuietUntilMs_;
+        if (until == 0) return 0;
+        const uint32_t now = millis();
+        return static_cast<int32_t>(now - until) < 0 ? until - now : 0;
+    }
     uint32_t getCooldownMs()           const { return cooldownMs_; }
     void     setCooldownMs(uint32_t ms)      { cooldownMs_ = ms; }
     int      getLastInstallErr()       const { return (int)lastInstallErr_; }
@@ -211,9 +247,12 @@ private:
         driverOK_ = true;
         recoveryInProgress_ = false;
         recoverySuccessCount_++;
-        uint32_t dur = millis() - startMs;
+        const uint32_t now = millis();
+        uint32_t dur = now - startMs;
         lastRecoveryDurationMs_ = dur;
         if (dur > maxRecoveryDurationMs_) maxRecoveryDurationMs_ = dur;
+        lastRecoveryDoneMs_ = now;
+        recoveryQuietUntilMs_ = now + kPostRecoveryQuietMs;
     }
 
     bool hardReinstall(uint32_t startMs, bool countSoftFallback)
@@ -240,6 +279,11 @@ private:
             driverOK_ = false;
             recoveryInProgress_ = false;
             recoveryFailCount_++;
+            const uint32_t now = millis();
+            lastRecoveryDurationMs_ = now - startMs;
+            if (lastRecoveryDurationMs_ > maxRecoveryDurationMs_)
+                maxRecoveryDurationMs_ = lastRecoveryDurationMs_;
+            lastRecoveryDoneMs_ = now;
             return false;
         }
 
@@ -345,6 +389,7 @@ private:
     bool     recoveryInProgress_ = false;
     uint32_t lastRecovery_ = 0;
     uint32_t recoveryStartMs_ = 0;
+    uint32_t lastRecoveryDoneMs_ = 0;
     uint32_t cooldownMs_ = 1000;
 
     // BUS-OFF / 복구 진단 카운터 (web API/timeseries에서 폴링)
@@ -358,6 +403,9 @@ private:
     uint32_t busOffTec_ = 0;
     uint32_t busOffRec_ = 0;
     uint32_t txSuppressedCount_ = 0;
+    static constexpr uint32_t kPostRecoveryQuietMs = 3000;
+    uint32_t recoveryQuietUntilMs_ = 0;
+    uint32_t recoveryQuietSuppressedCount_ = 0;
     uint32_t softRecoveryFallbackCount_ = 0;
     esp_err_t lastInstallErr_ = ESP_OK;
     esp_err_t lastStartErr_ = ESP_OK;

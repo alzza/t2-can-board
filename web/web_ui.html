@@ -602,7 +602,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
     <div class="health-mini">
       <div><div class="k">TWAI</div><div class="v" id="s-main-b-twai">--</div></div>
       <div><div class="k">최근 880</div><div class="v" id="s-main-b-age">--</div></div>
-      <div><div class="k">BUS-OFF</div><div class="v" id="s-main-busoff">0</div></div>
+      <div title="BUS-ERR는 CAN 프로토콜 오류 누적이며 BUS-OFF 진입 횟수가 아닙니다."><div class="k">OFF / ERR</div><div class="v" id="s-main-busoff">0 / 0</div></div>
       <div><div class="k">Nag 준비</div><div class="v" id="s-main-b-ready">확인 중</div></div>
     </div>
   </div>
@@ -829,7 +829,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
       <div class="diag-lbl">B채널</div>
       <div class="diag-row">
         <span class="chip ok" id="d-b-arb"    title="Arbitration Lost. 다른 프레임에 우선권을 양보한 횟수이며 TEC/REC·BUS-ERR가 0이면 물리 오류가 아님">ARB 0</span>
-        <span class="chip ok" id="d-b-err"    title="Bus Error 누적. ↑ = 배선/ACK 부재">BUS-ERR 0</span>
+        <span class="chip ok" id="d-b-err"    title="BUS-ERR는 CAN 프로토콜 오류 누적이며 BUS-OFF 진입 횟수가 아닙니다.">BUS-OFF 0 · ERR 0</span>
         <span class="chip ok" id="d-b-txf"    title="TX-FAILED 누적. Single-shot 충돌 회피 동작 검증">TX-FAIL 0</span>
         <span class="chip ok" id="d-b-rxm"    title="RX-MISSED 누적. ↑ = nagKillerTask 폴링 부족">RX-MISS 0</span>
         <span class="chip ok" id="d-b-state"  title="TWAI 현재 상태">TWAI --</span>
@@ -839,7 +839,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
         <span class="chip ok" id="d-b-age"    title="B채널 마지막 프레임/루프 경과시간">AGE --</span>
         <span class="chip ok" id="d-b-recovery" title="BUS-OFF 복구 시도/성공/실패">RECOVERY 0/0/0</span>
       </div>
-      <div class="diag-help"><b>ARB</b>: 중재 손실 · <b>BUS-ERR</b>: 버스 에러 누적 · <b>TX-FAIL</b>: TWAI 송신 실패 · <b>RX-MISS</b>: 수신 큐 누락</div>
+      <div class="diag-help"><b>ARB</b>: 중재 손실 · <b>BUS-ERR</b>: CAN 프로토콜 오류 누적이며 BUS-OFF 횟수가 아님 · <b>TX-FAIL</b>: TWAI 송신 실패 · <b>RX-MISS</b>: 수신 큐 누락</div>
     </div>
   </div>
 </div>
@@ -913,7 +913,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
     <label class="sw"><input type="checkbox" id="tBNagMaster" onchange="togSwitch('/api/nag-killer',this)"><span class="sl"></span></label>
   </div>
   <div class="row"><span class="label">에코 전송 (누적)</span><span class="val" id="bEcho">0</span></div>
-  <div class="row"><span class="label">BUS-OFF 발생</span><span class="val" id="bBusOff">0</span></div>
+  <div class="row"><span class="label">BUS-OFF / BUS-ERR</span><span class="val" id="bBusOff">0 / 0</span></div>
   <div class="row"><span class="label">복구 (시도/성공/실패)</span><span class="val" id="bRecStat">0 / 0 / 0</span></div>
   <div class="row"><span class="label">최근 복구 소요</span><span class="val" id="bRecMs">-- ms</span></div>
   <div class="row"><span class="label">오류 피크 (RX/TX)</span><span class="val" id="bErrPeak">0 / 0</span></div>
@@ -942,6 +942,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
 </div>
 <div class="card no-collapse busoff-card">
   <h2>BUS-OFF 이벤트</h2>
+  <div class="diag-help">실제 TWAI BUS-OFF 진입과 복구 결과만 기록합니다. BUS-ERR 누적은 이 표에 포함되지 않습니다.</div>
   <div class="row" style="justify-content:center;gap:8px;margin-top:0;flex-wrap:wrap">
     <button onclick="loadBusOffLog()" style="padding:5px 12px;font-size:12px;background:var(--acc);color:#fff;border:none;border-radius:4px;cursor:pointer">&#8635; 새로고침</button>
     <button onclick="clearBusOffLog()" style="padding:5px 12px;font-size:12px;background:#c0392b;color:#fff;border:none;border-radius:4px;cursor:pointer">&#128465; 로그 클리어</button>
@@ -1574,7 +1575,8 @@ function updateChannelStatus(d){
   var bMainLevel=bState.level;
   setTxt('s-main-a',aHz.toFixed(1)+'Hz','health-rate '+(aMainLevel==='ok'?'v-ok':aMainLevel==='warn'?'v-warn':'v-err'));
   setTxt('s-main-b',bHz.toFixed(1)+'Hz','health-rate '+(bMainLevel==='ok'?'v-ok':bMainLevel==='warn'?'v-warn':'v-err'));
-  setTxt('s-main-busoff',n(b.busoff_count),'v '+(n(b.busoff_count)?'v-err':'v-ok'));
+  var bBusOffCount=n(b.busoff_count),bBusErrCount=n(b.bus_error);
+  setTxt('s-main-busoff',bBusOffCount+' / '+bBusErrCount,'v '+(bBusOffCount?'v-err':bBusErrCount?'v-warn':'v-ok'));
   setTxt('s-main-a-reason',aState.reason||a.health_reason||'정상 수신 중','health-reason');
   setTxt('s-main-a-eflg','0x'+hex2(a.mcp_eflg)+' · '+aEflgBits(a.mcp_eflg),'v');
   setTxt('s-main-a-age',n(a.frame_age_ms)+' ms','v');
@@ -1615,7 +1617,7 @@ function updateChannelStatus(d){
   setTxt('b921Info',n(b.frames_921)+' / '+fmtPeriod(b.id_921_period_ms),'val');
   setTxt('b923Info',n(b.frames_923)+' / '+fmtPeriod(b.id_923_period_ms),'val');
   setTxt('bEcho',n(b.echo_count),'val');
-  setTxt('bBusOff',n(b.busoff_count),'val '+(n(b.busoff_count)?'off':'on'));
+  setTxt('bBusOff',bBusOffCount+' / '+bBusErrCount,'val '+(bBusOffCount?'off':bBusErrCount?'warn':'on'));
   setTxt('bRecStat',n(b.recovery_attempt_count)+' / '+n(b.recovery_success_count)+' / '+n(b.recovery_fail_count),'val');
   setTxt('bRecMs',n(b.last_recovery_duration_ms)+' ms','val');
   setTxt('bErrPeak',n(b.twai_rx_err_peak)+' / '+n(b.twai_tx_err_peak),'val');
@@ -1637,7 +1639,7 @@ function updateChannelStatus(d){
   setChip('d-a-ovrphase','OVR-PHASE '+(a.last_overrun_phase||'--'),n(a.rx_ovr)?'warn':'ok');
   setChip('d-a-wake',a.wake_waiting_summon_tx?'WAKE→TX 대기':('WAKE→TX '+(n(a.wake_count)?n(a.wake_to_summon_tx_ms)+'ms':'--')),a.wake_waiting_summon_tx?'warn':'ok');
   setChip('d-b-arb','ARB '+n(b.arb_lost),n(b.bus_error)||n(b.tx_failed)||n(b.twai_tx_err_now)||n(b.twai_rx_err_now)?'warn':'ok');
-  setChip('d-b-err','BUS-ERR '+n(b.bus_error),n(b.bus_error)?'warn':'ok');
+  setChip('d-b-err','BUS-OFF '+bBusOffCount+' · ERR '+bBusErrCount,bBusOffCount?'err':bBusErrCount?'warn':'ok');
   setChip('d-b-txf','TX-FAIL '+n(b.tx_failed),n(b.tx_failed)?'warn':'ok');
   setChip('d-b-rxm','RX-MISS '+n(b.rx_missed),n(b.rx_missed)?'warn':'ok');
   setChip('d-b-state','TWAI '+twaiName(b.twai_state_code),bState.level);
@@ -1646,7 +1648,8 @@ function updateChannelStatus(d){
   setChip('d-b-rec','REC '+bRecNow+'/'+bRecPeak,bRecNow>=128||bRecPeak>=128?'err':bRecNow>=96||bRecPeak>=96?'warn':'ok');
   setChip('d-b-task','TASK '+(b.can_task_created&&b.task_alive?'OK':'FAIL'),b.can_task_created&&b.task_alive?'ok':'err');
   setChip('d-b-age','AGE RX '+n(b.frame_age_ms)+' / LOOP '+n(b.loop_age_ms)+'ms',b.task_alive&&b.fresh?'ok':b.task_alive?'warn':'err');
-  setChip('d-b-recovery','RECOVERY '+n(b.recovery_attempt_count)+'/'+n(b.recovery_success_count)+'/'+n(b.recovery_fail_count),n(b.recovery_fail_count)?'err':n(b.recovery_attempt_count)?'warn':'ok');
+  var bQuiet=n(b.recovery_quiet_remaining_ms);
+  setChip('d-b-recovery',bQuiet?('RECOVERY QUIET '+bQuiet+'ms · SKIP '+n(b.recovery_quiet_skip_count)):('RECOVERY '+n(b.recovery_attempt_count)+'/'+n(b.recovery_success_count)+'/'+n(b.recovery_fail_count)),n(b.recovery_fail_count)?'err':bQuiet||n(b.recovery_attempt_count)?'warn':'ok');
   var issues=[];if(aState.level!=='ok')issues.push('A '+aState.text);if(bState.level!=='ok')issues.push('B '+bState.text);
   var ds=document.getElementById('diag-sum');
   if(ds){ds.textContent=issues.length?issues.join(' · '):'A/B 정상';ds.className='diag-sum '+(issues.some(function(x){return x.indexOf('FAIL')>=0||x.indexOf('OFF')>=0;})?'err':issues.length?'warn':'ok');}
@@ -1945,23 +1948,19 @@ function updateOtaConfirmBanner(d){
   }
 }
 function otaConfirmFw(){
-  if(!confirm('이 펌웨어를 계속 사용합니다. 확인하시겠습니까?'))return;
   fetch('/api/ota-confirm',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     if(d.ok){var b=document.getElementById('otaConfirmBanner');if(b)b.style.display='none';}
   }).catch(function(){alert('요청 실패');});
 }
 function otaRollbackFw(){
-  if(!confirm('이전 펌웨어로 되돌립니다. 기기가 재부팅됩니다.'))return;
   fetch('/api/ota-rollback',{method:'POST'}).catch(function(){});
 }
 function otaRecoveryConfirmFw(){
-  if(!confirm('복구가 완료되었음을 확인합니다.'))return;
   fetch('/api/ota-recovery-confirm',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     if(d.ok){var b=document.getElementById('otaRollbackConfirmBanner');if(b)b.style.display='none';}
   }).catch(function(){alert('요청 실패');});
 }
 function otaEnterRecoveryFw(){
-  if(!confirm('OTA 복구모드로 전환합니다. CAN 기능이 비활성화됩니다.'))return;
   fetch('/api/ota-enter-recovery',{method:'POST'}).catch(function(){});
 }
 function scheduleOtaReload(st){
@@ -1974,10 +1973,8 @@ function scheduleOtaReload(st){
       return r.json();
     }).then(function(d){
       _otaUploadInProgress=false;
-      if(typeof updateOtaConfirmBanner==='function')updateOtaConfirmBanner(d);
       var state=d.ota_pending_state||0;
-      if(st)st.textContent=(state===2)?'재연결됨. 새 펌웨어 확인 창 표시 중...':(state===4)?'재연결됨. 복구 확인 창 표시 중...':'재연결됨. 새 페이지 로드 중...';
-      if((state===2||state===4)&&typeof poll==='function'){poll();return;}
+      if(st)st.textContent=(state===2)?'재연결됨. 새 펌웨어 확정 페이지 로드 중...':(state===4)?'재연결됨. 복구 확정 페이지 로드 중...':'재연결됨. 새 페이지 로드 중...';
       location.replace('/?ota_reload='+Date.now());
     }).catch(function(){
       if(st)st.textContent='업로드 완료. 보드 재부팅 중... 재연결 대기 '+Math.floor((Date.now()-started)/1000)+'초';

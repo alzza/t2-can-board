@@ -63,14 +63,18 @@ void test_main_ui_download_uses_direct_attachment_not_blob_buffer()
     TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "/api/events-bundle"));
 }
 
-void test_main_ui_ota_reconnect_resets_timer_and_shows_confirm_banner()
+void test_main_ui_ota_reconnect_reloads_page_and_uses_only_firmware_banner()
 {
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "function scheduleOtaReload(st){"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "_otaReloadTimer=null;"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "return r.json();"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "_otaUploadInProgress=false;"));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "if(typeof updateOtaConfirmBanner==='function')updateOtaConfirmBanner(d);"));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "if((state===2||state===4)&&typeof poll==='function'){poll();return;}"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "location.replace('/?ota_reload='+Date.now());"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "if((state===2||state===4)&&typeof poll==='function'){poll();return;}"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "confirm('이 펌웨어를 계속 사용합니다."));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "confirm('이전 펌웨어로 되돌립니다."));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "confirm('복구가 완료되었음을 확인합니다."));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "confirm('OTA 복구모드로 전환합니다."));
 }
 
 void test_main_ui_keeps_can_nag_tsllc_and_summon_status_together()
@@ -165,6 +169,16 @@ void test_main_ui_exposes_authoritative_channel_health_and_csv_diagnostics()
     TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "id=\"tBoStop\""));
 }
 
+void test_main_ui_distinguishes_bus_error_from_bus_off()
+{
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, ">OFF / ERR<"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, ">BUS-OFF / BUS-ERR<"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "BUS-ERR는 CAN 프로토콜 오류 누적이며 BUS-OFF 진입 횟수가 아닙니다."));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "실제 TWAI BUS-OFF 진입과 복구 결과만 기록합니다."));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "bBusOffCount+' / '+bBusErrCount"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "'BUS-OFF '+bBusOffCount+' · ERR '+bBusErrCount"));
+}
+
 void test_main_ui_defaults_to_summary_and_important_live_logs()
 {
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "<details class=\"card diag-details\" id=\"diagDetails\">"));
@@ -224,13 +238,14 @@ int main()
     RUN_TEST(test_recovery_status_card_renders_upload_time_and_fallback_firmware);
     RUN_TEST(test_main_ui_logs_bundle_pauses_background_polling_during_download);
     RUN_TEST(test_main_ui_download_uses_direct_attachment_not_blob_buffer);
-    RUN_TEST(test_main_ui_ota_reconnect_resets_timer_and_shows_confirm_banner);
+    RUN_TEST(test_main_ui_ota_reconnect_reloads_page_and_uses_only_firmware_banner);
     RUN_TEST(test_main_ui_keeps_can_nag_tsllc_and_summon_status_together);
     RUN_TEST(test_main_ui_uses_ino_summon_control_and_monitoring_fields);
     RUN_TEST(test_main_ui_removes_retired_can_injection_experiments);
     RUN_TEST(test_main_ui_uses_verified_nag_modes_and_removes_smart_profiles);
     RUN_TEST(test_status_view_removes_duplicate_switches_and_keeps_control_switches);
     RUN_TEST(test_main_ui_exposes_authoritative_channel_health_and_csv_diagnostics);
+    RUN_TEST(test_main_ui_distinguishes_bus_error_from_bus_off);
     RUN_TEST(test_main_ui_defaults_to_summary_and_important_live_logs);
     RUN_TEST(test_main_ui_uses_generic_paired_user_marker);
     RUN_TEST(test_main_ui_has_readable_iphone_safari_layout);

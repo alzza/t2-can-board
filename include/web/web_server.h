@@ -29,6 +29,7 @@
 #include "timeseries.h"
 #include "../event_log.h"
 #include "web/web_ui.h"
+#include "web/monitor_protocol.h"
 #include "version.h"
 #include "drivers/twai_driver.h"
 
@@ -948,6 +949,109 @@ static esp_err_t rootHandler(httpd_req_t *req)
     return ESP_OK;
 }
 
+// T-Display-S3용 경량 읽기 전용 응답. 로그·NVS·CAN 송신을 수행하지 않는다.
+static esp_err_t monitorHandler(httpd_req_t *req)
+{
+    const uint32_t now = millis();
+    MonitorSnapshot s;
+    s.uptimeS = now / 1000U;
+    s.firmwareVersion = FIRMWARE_VERSION;
+    s.firmwareBuild = FIRMWARE_BUILD_ID;
+    s.otaState = gOtaBootPendingState;
+    s.apStations = WiFi.softAPgetStationNum();
+
+    const uint32_t aLastFrame = (uint32_t)aChannelDiag.lastFrameRxMs;
+    const uint32_t aLastLoop = (uint32_t)aChannelDiag.lastLoopMs;
+    s.aFrameAgeMs = webSafeAgeMs(now, aLastFrame);
+    const uint32_t aLoopAgeMs = webSafeAgeMs(now, aLastLoop);
+    const bool aDriverOk = (bool)aChannelDiag.driverInitialized;
+    const bool aFresh = aLastFrame > 0 && s.aFrameAgeMs <= 2000U;
+    const bool aTaskAlive = aLastLoop > 0 && aLoopAgeMs <= 2000U;
+    const uint8_t aEflg = (uint8_t)aChannelDiag.mcpEflg;
+    s.aHealthLevel = 0;
+    s.aHealthState = "OK";
+    if (!aDriverOk) { s.aHealthLevel = 2; s.aHealthState = "INIT_FAILED"; }
+    else if (!aTaskAlive) { s.aHealthLevel = 2; s.aHealthState = "LOOP_STALLED"; }
+    else if (aEflg & 0x20U) { s.aHealthLevel = 2; s.aHealthState = "BUS_OFF"; }
+    else if (!aFresh) { s.aHealthLevel = 1; s.aHealthState = "NO_FRAMES"; }
+    else if (aEflg != 0) {
+        s.aHealthLevel = aMcpEflgSeverity(aEflg);
+        s.aHealthState = aMcpEflgStateName(aEflg);
+    }
+    s.aHz = (float)aChannelDiag.frameHz;
+    s.aBusoffCount = (uint32_t)aChannelDiag.mcpTxBoCount;
+    s.aEflg = aEflg;
+    s.aTec = (uint32_t)(uint8_t)aChannelDiag.aTec;
+    s.aRec = (uint32_t)(uint8_t)aChannelDiag.aRec;
+    s.aRxOverrun = (uint32_t)aChannelDiag.aRxOvrCount;
+    s.aTxQueued = (uint32_t)aChannelDiag.aTxOk;
+    s.aTxBusy = (uint32_t)aChannelDiag.aTxBusy;
+    s.aTxHard = (uint32_t)aChannelDiag.aTxFail;
+    s.aTxGuard = aTxGuardActive(now);
+
+    const uint32_t bLastFrame = (uint32_t)bChannelDiag.lastFrameRxMs;
+    const uint32_t bLastLoop = (uint32_t)bChannelDiag.lastLoopMs;
+    s.bFrameAgeMs = webSafeAgeMs(now, bLastFrame);
+    const uint32_t bLoopAgeMs = webSafeAgeMs(now, bLastLoop);
+    const bool bFresh = bLastFrame > 0 && s.bFrameAgeMs <= 2000U;
+    const bool bTaskAlive = bLastLoop > 0 && bLoopAgeMs <= 2000U;
+    const bool bDriverOk = gWebDriverB && gWebDriverB->isDriverOK();
+    const uint32_t twaiState = (uint32_t)bChannelDiag.twaiStateCode;
+    s.bHealthLevel = 0;
+    s.bHealthState = "OK";
+    if (!(bool)bChannelDiag.nagTaskCreated) { s.bHealthLevel = 2; s.bHealthState = "TASK_OFF"; }
+    else if (!bDriverOk) { s.bHealthLevel = 2; s.bHealthState = "DRIVER_FAILED"; }
+    else if (!bTaskAlive) { s.bHealthLevel = 2; s.bHealthState = "LOOP_STALLED"; }
+    else if (twaiState == 2U) { s.bHealthLevel = 2; s.bHealthState = "BUS_OFF"; }
+    else if (twaiState == 3U) { s.bHealthLevel = 1; s.bHealthState = "RECOVERING"; }
+    else if (!bFresh) { s.bHealthLevel = 1; s.bHealthState = "NO_FRAMES"; }
+    else if ((uint32_t)bChannelDiag.twaiTxErrNow >= 96U ||
+             (uint32_t)bChannelDiag.twaiRxErrNow >= 96U) {
+        s.bHealthLevel = 1;
+        s.bHealthState = "ERROR_WARNING";
+    }
+    s.bHz = (float)bChannelDiag.frameHz;
+    s.bBusoffCount = (uint32_t)bChannelDiag.busoffCount;
+    s.bTwaiState = twaiState;
+    s.bTec = (uint32_t)bChannelDiag.twaiTxErrNow;
+    s.bRec = (uint32_t)bChannelDiag.twaiRxErrNow;
+    s.bRecoveryQuietMs = (uint32_t)bChannelDiag.recoveryQuietRemainingMs;
+    s.bArbLost = (uint32_t)bChannelDiag.bArbLost;
+    s.bBusError = (uint32_t)bChannelDiag.bBusError;
+    s.bTxFailed = (uint32_t)bChannelDiag.bTxFailed;
+    s.bEchoCount = (uint32_t)bChannelDiag.echoConfirmCount;
+
+    s.eceR79 = (bool)summonUnlockRuntime;
+    s.summon = (bool)summonUnlockRuntime;
+    s.tsllc = (bool)tsllcRuntime;
+    s.nag = (bool)nagKillerRuntime;
+    s.nagMode = nagModeClamp((uint8_t)bChannelDiag.nagMode);
+    s.nagApOnly = (bool)nagApOnlyRuntime;
+    s.nagReady = (bool)bChannelDiag.nagReady;
+    s.gateOpen = summonGateOpen(now);
+    s.gateReason = summonGateReasonName(now);
+    s.apActive = (bool)summonGateDiag.apActive;
+    s.apState = (uint32_t)(uint8_t)summonGateDiag.apState;
+    s.apStableMs = summonApStableMs(now);
+    s.parked = (bool)summonGateDiag.parked;
+    s.summoning = (bool)summonGateDiag.summoning;
+    s.summonTxOk = (uint32_t)summonGateDiag.txOk;
+    s.summonTxFail = (uint32_t)summonGateDiag.txFail;
+    s.summonBlocked = (uint32_t)summonGateDiag.blocked;
+    s.userMarkActive = (bool)userMarkerActive;
+    s.userMarkCount = (uint32_t)userMarkerCount;
+
+    char json[2048];
+    const size_t len = formatMonitorJson(json, sizeof(json), s);
+    if (len == 0) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "monitor response overflow");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_send(req, json, len);
+}
+
 static esp_err_t statusHandler(httpd_req_t *req)
 {
     const uint32_t handlerStartMs = millis();
@@ -1477,6 +1581,8 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(bch, "last_recovery_start_ms", (uint32_t)bChannelDiag.lastRecoveryStartMs);
     cJSON_AddNumberToObject(bch, "last_recovery_done_ms", (uint32_t)bChannelDiag.lastRecoveryDoneMs);
     cJSON_AddNumberToObject(bch, "last_recovery_duration_ms", (uint32_t)bChannelDiag.lastRecoveryDurationMs);
+    cJSON_AddNumberToObject(bch, "recovery_quiet_remaining_ms", (uint32_t)bChannelDiag.recoveryQuietRemainingMs);
+    cJSON_AddNumberToObject(bch, "recovery_quiet_skip_count", (uint32_t)bChannelDiag.recoveryQuietSkipCount);
     cJSON_AddNumberToObject(bch, "twai_rx_err_peak", (uint32_t)bChannelDiag.twaiRxErrPeak);
     cJSON_AddNumberToObject(bch, "twai_tx_err_peak", (uint32_t)bChannelDiag.twaiTxErrPeak);
     cJSON_AddNumberToObject(bch, "twai_rx_err_now", (uint32_t)bChannelDiag.twaiRxErrNow);
@@ -2426,7 +2532,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
     httpd_resp_sendstr_chunk(req, line);
     // B채널 심층 진단: TWAI 누적 카운터 + 에코 품질 + 스킵 사유
     snprintf(line, sizeof(line),
-        "B심층: ArbLost=%u BusErr=%u TxFailed=%u RxMissed=%u | TxLat/EchoLat=%u/%uus EchoDrop=%u | Skip RT/WARM/AP/HO/DAS=%u/%u/%u/%u/%u\r\n",
+        "B심층: ArbLost=%u BusErr=%u TxFailed=%u RxMissed=%u | TxLat/EchoLat=%u/%uus EchoDrop=%u | RecoveryQuiet=%ums Skip=%u | Skip RT/WARM/AP/HO/DAS=%u/%u/%u/%u/%u\r\n",
         (unsigned)bChannelDiag.bArbLost,
         (unsigned)bChannelDiag.bBusError,
         (unsigned)bChannelDiag.bTxFailed,
@@ -2434,6 +2540,8 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         (unsigned)bChannelDiag.txLatencyUs,
         (unsigned)bChannelDiag.echoLatUs,
         (unsigned)bChannelDiag.echoDroppedLate,
+        (unsigned)bChannelDiag.recoveryQuietRemainingMs,
+        (unsigned)bChannelDiag.recoveryQuietSkipCount,
         (unsigned)bChannelDiag.skipRuntimeOrInactive,
         (unsigned)bChannelDiag.skipWarmup,
         (unsigned)bChannelDiag.skipApState,
@@ -3516,6 +3624,8 @@ static void webServerInit(TWAIDriver* drv = nullptr)
         .uri = "/", .method = HTTP_GET, .handler = rootHandler, .user_ctx = NULL};
     httpd_uri_t uriStatus = {
         .uri = "/api/status", .method = HTTP_GET, .handler = statusHandler, .user_ctx = NULL};
+    httpd_uri_t uriMonitor = {
+        .uri = "/api/monitor", .method = HTTP_GET, .handler = monitorHandler, .user_ctx = NULL};
     httpd_uri_t uriIsaSpeedChime = {
         .uri = "/api/isa-speed-chime-suppress", .method = HTTP_POST, .handler = isaSpeedChimeSuppressHandler, .user_ctx = NULL};
     httpd_uri_t uriEmergencyVehicleDetection = {
@@ -3601,6 +3711,7 @@ static void webServerInit(TWAIDriver* drv = nullptr)
 
     httpd_register_uri_handler(webServer, &uriRoot);
     httpd_register_uri_handler(webServer, &uriStatus);
+    httpd_register_uri_handler(webServer, &uriMonitor);
     httpd_register_uri_handler(webServer, &uriIsaSpeedChime);
     httpd_register_uri_handler(webServer, &uriEmergencyVehicleDetection);
     httpd_register_uri_handler(webServer, &uriSummonUnlock);

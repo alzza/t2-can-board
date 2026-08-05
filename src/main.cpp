@@ -106,25 +106,8 @@ static NagHandler nagHandlerB;
 
 TaskHandle_t nagTaskHandle = nullptr;
 
-// [v4.4 ALERT] B채널 alert 폴링 태스크 — 20ms 주기, Core 0, prio 1
-// nagKillerTask(prio 10)와 분리되어 핫패스 영향 없음
-static TWAIDriver* gAlertDrv = nullptr;
-static void canAlertTask(void*) {
-    for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(20));  // [결함 3 수정] burst 정확도 5배
-        if (!gAlertDrv) continue;
-        uint16_t tec = 0, rec = 0;
-        uint32_t a = gAlertDrv->pollAlerts(tec, rec);
-        if (!a) continue;
-        // BUS_OFF는 driver 내부에서 직접 push되므로 여기선 alert 비트로만 부가 기록
-        if (a & TWAI_ALERT_ERR_PASS)       eventLogPush(EV_ALERT_ERR_PASS, tec, rec, a);
-        if (a & TWAI_ALERT_ARB_LOST)       eventLogPush(EV_ALERT_ARB_LOST, tec, rec, a);
-        if (a & TWAI_ALERT_BUS_ERROR)      eventLogPush(EV_ALERT_BUS_ERR,  tec, rec, a);
-        if (a & TWAI_ALERT_TX_FAILED)      eventLogPush(EV_ALERT_TX_FAIL,  tec, rec, a);
-        if (a & TWAI_ALERT_RX_QUEUE_FULL)  eventLogPush(EV_ALERT_RX_FULL,  tec, rec, a);
-    }
-}
-
+// B채널 TWAI alert는 nagKillerTask에서 20ms마다 폴링한다.
+// 상태 확인·복구·alert 소비를 한 태스크에 모아 TWAI API의 코어 간 경쟁을 피한다.
 // 5초 상태 문자열 생성은 CAN 핫패스에서 분리해 Core 0에서 실행한다.
 // CAN 태스크는 숫자 카운터만 갱신하고 이 태스크가 스냅샷을 포맷한다.
 static void statusLogTask(void*) {
@@ -268,9 +251,9 @@ static void statusLogTask(void*) {
             nagDecisionName((uint8_t)bChannelDiag.nagLastDecision));
         logRing.push(bGate, millis());
 
-        char bDeep[260];
+        char bDeep[300];
         snprintf(bDeep, sizeof(bDeep),
-            "🔬 [B-DEEP] ArbLost:%u|BusErr:%u|TxFailed:%u|RxMissed:%u|Try/OK/Ack:%u/%u/%u|TxLat/EchoLat:%u/%uus|EchoDrop:%u|Skip RT/WARM/AP/HO/DAS:%u/%u/%u/%u/%u",
+            "🔬 [B-DEEP] ArbLost:%u|BusErr:%u|TxFailed:%u|RxMissed:%u|Try/OK/Ack:%u/%u/%u|TxLat/EchoLat:%u/%uus|EchoDrop:%u|RecoveryQuiet:%ums/%u|Skip RT/WARM/AP/HO/DAS:%u/%u/%u/%u/%u",
             (unsigned)bChannelDiag.bArbLost,
             (unsigned)bChannelDiag.bBusError,
             (unsigned)bChannelDiag.bTxFailed,
@@ -281,6 +264,8 @@ static void statusLogTask(void*) {
             (unsigned)bChannelDiag.txLatencyUs,
             (unsigned)bChannelDiag.echoLatUs,
             (unsigned)bChannelDiag.echoDroppedLate,
+            (unsigned)bChannelDiag.recoveryQuietRemainingMs,
+            (unsigned)bChannelDiag.recoveryQuietSkipCount,
             (unsigned)bChannelDiag.skipRuntimeOrInactive,
             (unsigned)bChannelDiag.skipWarmup,
             (unsigned)bChannelDiag.skipApState,
@@ -332,9 +317,10 @@ void nagKillerTask(void* pvParameters) {
     uint32_t prevRecovAttempt = 0; // 복구 시도 이벤트 직전값
     uint32_t prevRecovSuccess = 0; // 복구 성공 이벤트 직전값
     uint32_t prevRecovFail    = 0; // 복구 실패 카운터 직전값
-    uint32_t lastBusoffEventMs = 0; // 이전 BUS-OFF 시각 (시간간격 계산용)
+    BusOffEventRecorder busOffEventRecorder;
     uint32_t prevCooldown = 1000;  // 쿨다운 변경 감지용
     uint32_t lastBlockingYieldUs = micros();
+    uint32_t lastBAlertPollMs = 0;
 
     while (true) {
         bChannelDiag.lastLoopMs = millis();
@@ -351,8 +337,32 @@ void nagKillerTask(void* pvParameters) {
 #endif
 
         if (driverB) {
-            // TWAI 상태 추적
+            // BUS-OFF 감지는 RX 큐가 빌 때까지 기다리지 않고 매 루프 먼저
+            // 서비스한다. 복구와 alert 폴링도 같은 CAN 태스크에서 처리해
+            // Core 0/1 동시 TWAI API 호출 경쟁을 피한다.
             uint8_t twaiStateCode = driverB->getStateCode();
+            if (twaiStateCode != 1U) {
+                driverB->serviceBusState();
+                twaiStateCode = driverB->getStateCode();
+            }
+
+            const uint32_t alertNowMs = millis();
+            if (alertNowMs - lastBAlertPollMs >= 20U) {
+                uint16_t alertTec = 0;
+                uint16_t alertRec = 0;
+                const uint32_t alerts = driverB->pollAlerts(alertTec, alertRec);
+                if (alerts & TWAI_ALERT_ERR_PASS)
+                    eventLogPush(EV_ALERT_ERR_PASS, alertTec, alertRec, alerts);
+                if (alerts & TWAI_ALERT_BUS_ERROR)
+                    eventLogPush(EV_ALERT_BUS_ERR, alertTec, alertRec, alerts);
+                if (alerts & TWAI_ALERT_TX_FAILED)
+                    eventLogPush(EV_ALERT_TX_FAIL, alertTec, alertRec, alerts);
+                if (alerts & TWAI_ALERT_RX_QUEUE_FULL)
+                    eventLogPush(EV_ALERT_RX_FULL, alertTec, alertRec, alerts);
+                lastBAlertPollMs = alertNowMs;
+            }
+
+            // TWAI 상태 추적
             bChannelDiag.twaiStateCode = twaiStateCode;
 
             // 쿨다운 런타임 설정 변경 시 드라이버에 전달
@@ -369,21 +379,12 @@ void nagKillerTask(void* pvParameters) {
             // send() void 반환이므로 드라이버 내부 suppressed 카운터를 txFail로 노출
             bChannelDiag.txFail = driverB->getTxSuppressedCount();
 
-            // BUS-OFF 이벤트 자동 로그 (복구 완료 후 카운터 증가 감지하면 기록)
+            // BUS-OFF 진입은 즉시 이벤트로 남기되, CSV 이력 행은 실제 복구
+            // 성공/실패가 확정된 뒤 기록해야 duration/recovered가 정확하다.
             if (curBo > prevBusoffForLog) {
-                uint32_t curFail = driverB->getRecoveryFailCount();
-                BusOffEvent ev;
-                ev.timestampMs   = driverB->getLastBusOffMs();
-                ev.seqNum        = curBo;
-                ev.tec           = driverB->getBusOffTec();
-                ev.rec           = driverB->getBusOffRec();
-                ev.recoveryDurMs = driverB->getLastRecoveryDurationMs();
-                // millis() overflow(49.7일) 안전: unsigned 뺄셈 wrap-around 활용
-                ev.sinceLastMs   = (lastBusoffEventMs > 0)
-                                    ? (uint32_t)(ev.timestampMs - lastBusoffEventMs) : 0;
-                ev.recovered     = (curFail == prevRecovFail) ? 1 : 0;
-                ev.pad[0] = ev.pad[1] = ev.pad[2] = 0;
-                busOffLog.push(ev);
+                BusOffEvent ev = busOffEventRecorder.begin(
+                    driverB->getLastBusOffMs(), curBo,
+                    driverB->getBusOffTec(), driverB->getBusOffRec());
                 eventLogPushAt(ev.timestampMs, EV_BUSOFF,
                                (uint16_t)ev.tec, (uint16_t)ev.rec, ev.seqNum);
                 char busOffBuf[112];
@@ -392,7 +393,6 @@ void nagKillerTask(void* pvParameters) {
                          (unsigned)ev.seqNum, (unsigned)ev.tec, (unsigned)ev.rec);
                 logRing.push(busOffBuf, ev.timestampMs);
                 Serial.println(busOffBuf);
-                lastBusoffEventMs = ev.timestampMs;
                 prevBusoffForLog  = curBo;
             }
 
@@ -406,6 +406,10 @@ void nagKillerTask(void* pvParameters) {
             bChannelDiag.lastRecoveryDurationMs = driverB->getLastRecoveryDurationMs();
             bChannelDiag.maxRecoveryDurationMs  = driverB->getMaxRecoveryDurationMs();
             bChannelDiag.lastBusoffMs           = driverB->getLastBusOffMs();
+            bChannelDiag.lastRecoveryStartMs    = driverB->getLastRecoveryStartMs();
+            bChannelDiag.lastRecoveryDoneMs     = driverB->getLastRecoveryDoneMs();
+            bChannelDiag.recoveryQuietRemainingMs = driverB->getRecoveryQuietRemainingMs();
+            bChannelDiag.recoveryQuietSkipCount = driverB->getRecoveryQuietSuppressedCount();
             if (curRecovAttempt > prevRecovAttempt) {
                 eventLogPush(EV_RECOVERY_SOFT,
                              (uint16_t)driverB->getBusOffTec(),
@@ -431,6 +435,8 @@ void nagKillerTask(void* pvParameters) {
                          (unsigned)driverB->getLastRecoveryDurationMs());
                 logRing.push(recoveryBuf, millis());
                 Serial.println(recoveryBuf);
+                busOffEventRecorder.complete(
+                    busOffLog, true, driverB->getLastRecoveryDurationMs());
                 prevRecovSuccess = curRecovSuccess;
             }
             if (curRecovFail > prevRecovFail) {
@@ -444,6 +450,8 @@ void nagKillerTask(void* pvParameters) {
                          (unsigned)curRecovFail);
                 logRing.push(recoveryBuf, millis());
                 Serial.println(recoveryBuf);
+                busOffEventRecorder.complete(
+                    busOffLog, false, driverB->getLastRecoveryDurationMs());
                 prevRecovFail = curRecovFail;
             }
 
@@ -856,9 +864,6 @@ void setup() {
     if (!gOtaRecoveryModeActive) {
         timeseriesStart();  // 5초 간격 시계열 수집 (최근 20분)
         xTaskCreatePinnedToCore(statusLogTask, "status_log", 6144, nullptr, 1, nullptr, 0);
-        // [v4.4 ALERT] alert 폴링 태스크 시작 (20ms 주기, Core 0, prio 1)
-        gAlertDrv = driverB.get();
-        xTaskCreatePinnedToCore(canAlertTask, "alert", 2048, nullptr, 1, nullptr, 0);
         // TWAI는 accept-all로 두고 드라이버/태스크 소프트 필터에서 880/921/923만 감시한다.
         char fBuf[64];
         snprintf(fBuf, sizeof(fBuf), "[B-CH] SW 필터 기준: ID %u / 921 / 923", (unsigned)kNagFixedTargetId);

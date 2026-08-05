@@ -25,7 +25,7 @@ LILYGO T2-CAN ESP32-S3에서 동작하는 Tesla HW3용 듀얼 CAN 펌웨어입�
 |---|---|---|---|
 | CAN-A | MCP2515 SPI | CS=10, SCK=12, MISO=13, MOSI=11, RST=9 | 조건부 Summon Unlock, TSLLC, 수신 진단 |
 | CAN-B | ESP32 TWAI | TX=7, RX=6 | Nag Killer, EPAS 수신·재송신 |
-| Wi-Fi | AP 모드 | - | Web UI, OTA, 로그·진단 다운로드 |
+| Wi-Fi | AP 모드 | - | Web UI, OTA, 로그·진단 다운로드, 읽기 전용 외부 모니터 API |
 
 > [!IMPORTANT]
 > 차량 CAN 버스는 이미 종단되어 있습니다. 별도 CAN 트랜시버 보드의 120 Ω 종단 저항은 제거하거나 우회해야 합니다. 중복 종단은 통신 오류와 BUS-OFF를 유발할 수 있습니다.
@@ -39,6 +39,7 @@ LILYGO T2-CAN ESP32-S3에서 동작하는 Tesla HW3용 듀얼 CAN 펌웨어입�
 | TSLLC | CAN-A | ID `0x3FD` mux 0의 TSLLC·녹색 신호 계속 주행 비트 수정 |
 | Nag Killer | CAN-B | EPAS 토크 프레임 ID 880을 조건에 맞춰 수정·재송신 |
 | Web UI·OTA | Wi-Fi | 실시간 CAN 상태, 런타임 토글, OTA 및 복구 UI |
+| T-Display-S3 모니터 | Wi-Fi | 경량 `GET /api/monitor`로 A/B·기능·게이트 상태를 읽기 전용 제공 |
 
 ### 외부 검증 원본
 
@@ -74,7 +75,7 @@ pio run -e lilygo_t2can -t upload
 
 ### 4. Web UI 연결
 
-- Wi-Fi AP **`TeslaCAN`**에 연결합니다. 기본 비밀번호는 없습니다.
+- Wi-Fi AP **`TeslaCAN`**에 연결합니다. 비밀번호는 **`asdf1234`**입니다.
 - 브라우저에서 `http://192.168.4.1`을 엽니다.
 - 처음에는 CAN-A/B 수신, TEC, REC, BUS-OFF를 확인하고 송신 기능은 OFF로 유지합니다.
 
@@ -104,6 +105,22 @@ Web UI의 일반 본문·보조 정보는 최소 12px, 주요 조작 영역은 4
 사용합니다. iPhone에서는 채널과 제어 카드를 한 열로 재배치하지만 상태 색상,
 정보 우선순위와 조작 방식은 PC 화면과 동일합니다.
 
+### T-Display-S3 읽기 전용 모니터
+
+별도 저장소 `/Users/akanus/T-Display-S3`의 LILYGO T-Display-S3가 이 보드의 AP에 STA로 자동 연결할 수 있습니다.
+
+| 항목 | 값 |
+|---|---|
+| 상태 주소 | `GET http://192.168.4.1/api/monitor` |
+| 스키마 | `1` |
+| 권장 폴링 | 1초 |
+| 응답 방식 | 2048바이트 고정 버퍼 JSON, `Cache-Control: no-store` |
+| 외부 모니터 권한 | 읽기 전용 |
+
+이 API는 A/B 채널 상태·오류, ECE R79/Summon/TSLLC/Nag 상태, AP·Summon 게이트, USER_MARK와 펌웨어 정보를 제공합니다. 요청을 처리할 때 NVS·로그를 기록하거나 CAN 송신을 수행하지 않습니다. T-Display-S3 쪽에도 기능 제어, CAN 송신, 설정 POST, OTA 요청 경로를 두지 않습니다.
+
+`/api/monitor`는 Web UI의 상세 `/api/status`보다 작고 고정된 응답입니다. 외부 화면에서 `/api/status`를 빠르게 반복 호출해 Web 서버·힙·로그 다운로드에 부담을 주는 것을 피하기 위한 전용 경로입니다.
+
 ## HW3 ECE R79 / Summon 제한 해제 사용법
 
 ### 먼저 알아둘 점
@@ -122,6 +139,8 @@ Web UI의 일반 본문·보조 정보는 최소 12px, 주요 조작 영역은 4
 6. 기본값인 **송신 허용 조건 ON**에서 `PARKED`, 실제 `SUMMONING`, 또는 AP 상태 3~6이 1초 이상 안정된 경우에만 수정 프레임이 전송되는지 확인합니다.
 
 OTA 직후 첫 부팅에서는 Summon Unlock, TSLLC, Nag Killer, A TX 마스터가 모두 OFF/stock 값으로 저장됩니다. 수신 상태를 확인하고 OTA 확인을 완료한 후 필요한 기능을 하나씩 활성화하십시오.
+
+OTA 업로드 후 보드가 재부팅되어 다시 응답하면 Web UI가 자동으로 새로 고침됩니다. 이후 녹색 `새 펌웨어 확정` 또는 빨간색 `복구 확정` 화면에서 한 번만 선택하며, 같은 내용의 브라우저 기본 확인창은 추가로 표시되지 않습니다. OTA 시작 전 CAN TX 차단 안내창은 안전 절차로 계속 표시됩니다.
 
 ### 실제 전송 조건
 
@@ -188,11 +207,17 @@ MCP2515 one-shot과 TX Guard는 계속 켜는 것을 권장합니다. One-shot�
 
 진단 화면은 A/B 상태 요약을 항상 표시하고, 채널별 상세 카운터와 BUS-OFF 이력은 필요할 때 펼칩니다. Web 실시간 로그는 기본적으로 경고·오류, BUS-OFF/복구, TX Guard, 기능 변경, `USER_MARK`만 보여줍니다. `USER_MARK`는 차량 상태를 자동 판정하지 않는 일반 분석 마커입니다. 첫 클릭은 `USER_MARK_START`, 다음 클릭은 `USER_MARK_END`를 남기며 START↔END 한 쌍이 끝날 때 완료 횟수가 1회 증가합니다. 로그 초기화나 새 기록 시작으로 마커 상태·횟수·원문은 지워지지 않고 보드 재부팅 때만 초기화됩니다. **전체**를 선택하면 최근 수신한 일반 상태 로그도 확인할 수 있으며, **전체 로그 저장** 파일에는 화면 필터와 관계없이 모든 로그가 포함됩니다.
 
+B채널의 `BUS-ERR`는 CAN 프로토콜 오류 누적값이고 `BUS-OFF` 진입 횟수가 아닙니다. Web UI는 두 값을 `BUS-OFF / BUS-ERR` 순서로 함께 표시합니다. 실제 BUS-OFF가 발생하면 진입 이벤트는 즉시 이벤트 CSV에 남고, 복구 성공 또는 실패가 확정된 뒤 BUS-OFF 전용 이력에 한 행이 추가됩니다. BUS-ERR만 증가한 경우 전용 BUS-OFF 이력이 비어 있는 것이 정상입니다.
+
 Serial은 115200 baud에서 부팅·OTA·초기화 실패·BUS-OFF/복구·TEC/REC 임계값 전환만 출력합니다. 제거된 `Enable Log` 스위치와 `enable_print` API는 실제 출력 경로를 제어하지 않던 불용 항목이었습니다.
 
 ### B채널 `ARB` 해석
 
 `ARB`는 Arbitration Lost 누적값으로, 다른 CAN 프레임에 우선권을 양보한 횟수입니다. 값이 증가해도 B채널 TEC/REC, BUS-ERR, TX-FAIL, BUS-OFF가 모두 0이면 물리 통신 오류로 판정하지 않습니다.
+
+2026-08-04 실차 로그에서는 Nag 주입 5,858회 동안 `ARB=3,446`, `BUS-ERR=5`가 기록됐지만 저장된 20분 구간의 `BUS-OFF/TEC/REC/TX-FAIL`은 모두 0이었습니다. 따라서 그 파일만으로 화면에서 보였던 BUS-OFF를 확정할 수는 없습니다. 당시 코드에서 TWAI 경보가 기본값 `NONE`으로 남아 있어 별도 경보 태스크가 실제 이벤트를 받지 못한 기록 결함을 확인했습니다.
+
+현재 펌웨어는 BUS-OFF·복구·에러 패시브·BUS-ERR·TX-FAIL·RX 큐 포화 경보만 활성화하고, 고빈도 `ARB_LOST` 경보는 누적 카운터로만 관찰합니다. BUS-OFF 상태는 수신 큐가 빌 때까지 기다리지 않고 CAN 태스크가 즉시 확인·복구하며, 복구 성공 후 3초 동안 B채널 Nag TX만 정지합니다. 이 안정화 대기는 수신을 중단하지 않으며 Web UI의 `RECOVERY QUIET`과 전체 로그의 `RecoveryQuiet`에서 잔여시간·억제 횟수를 확인할 수 있습니다.
 
 ## TSLLC 사용 조건
 
