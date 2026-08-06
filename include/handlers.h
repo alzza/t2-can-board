@@ -121,7 +121,7 @@ struct HW3Handler : public CarManagerBase
                 setBit(frame, 39, true);  // UI_fsdContinueOnGreenWithCIPV: 앞차 있을 때 녹색신호 자동 출발 활성화 (TSLLC 검증)
                 aChannelDiag.tsllcModifiedCount++;
                 framesSent++;
-                const CanTxResult txResult = driver.sendDetailed(frame);
+                const CanTxResult txResult = driver.sendDetailed(frame, CanTxSource::Tsllc);
                 if (txResult == CanTxResult::Queued) {
                     const uint32_t sentAtMs = millis();
                     aChannelDiag.aTxOk++;
@@ -169,7 +169,7 @@ struct HW3Handler : public CarManagerBase
 #endif
                 aChannelDiag.summonUnlockModifiedCount++;
                 framesSent++;
-                const CanTxResult txResult = driver.sendDetailed(frame);
+                const CanTxResult txResult = driver.sendDetailed(frame, CanTxSource::Summon);
                 if (txResult == CanTxResult::Queued) {
                     const uint32_t sentAtMs = millis();
                     aChannelDiag.aTxOk++;

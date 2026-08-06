@@ -550,8 +550,11 @@ CSV 앞에 열 수가 다른 `#` 메타행을 두지 않는다. 첫 행부터 �
 | 22 | `FEATURE_STATE` | SYSTEM | A TX, Summon, TSLLC, Nag, One-Shot, TX Guard 상태 |
 | 23~24 | `A_TX_GUARD_SET`, `A_TX_GUARD_CLEAR` | A | A TX Guard 진입·해제 |
 | 25 | `A_SPI_TARGET` | A | 재부팅 후 적용할 SPI 목표 변경 |
+| 27 | `A_TX_FAILURE` | A | Summon/TSLLC별 MCP2515 TXERR. 출처, 즉시 큐 거절 또는 완료 폴링 단계, TX 버퍼와 `TXERR`·`MLOA`·`ABTF`를 함께 기록 |
 
 `ARB_LOST`는 다른 프레임에 우선권을 양보했다는 뜻이다. TEC/REC, BUS_ERR, TX_FAIL, BUS-OFF가 모두 0이면 이것만으로 물리 통신 오류로 판단하지 않는다.
+
+`A_TX_FAILURE`의 `phase=QUEUE_REJECT`는 MCP2515가 수정 프레임을 TX 버퍼에 올리지 못한 경우이고, `phase=TX_RESULT`는 올린 뒤 TX 버퍼 완료 폴링에서 `TXERR`가 확인된 경우다. `source`와 `tx_buffer`를 Guard 이벤트의 `trigger`와 함께 보면 Summon 단독 실패인지 TSLLC와 같은 1초 창에서 겹친 실패인지 구분할 수 있다.
 
 `BUS_ERR`는 CAN 프로토콜 오류 누적값이며 `BUS-OFF` 진입 횟수가 아니다. `BUS_ERR`만 증가하고 TWAI가 RUNNING이며 TEC/REC가 정상으로 복귀했다면 BUS-OFF 전용 이력이 비어 있을 수 있다. 전용 이력은 실제 BUS-OFF 진입 뒤 복구 성공 또는 실패가 확정될 때 한 행씩 기록된다.
 

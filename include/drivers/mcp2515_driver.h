@@ -5,6 +5,7 @@
 #include <mcp2515.h>
 #include "../can_frame_types.h"
 #include "../can_helpers.h"
+#include "../event_log.h"
 #include "can_driver.h"
 
 #ifndef NATIVE_BUILD
@@ -133,17 +134,18 @@ public:
 
     void send(const CanFrame &frame) override
     {
-        (void)sendDetailed(frame);
+        (void)sendDetailed(frame, CanTxSource::Unknown);
     }
 
     // 프레임 송신 + 결과 반환. ERROR_OK=true, ALLTXBUSY/FAILTX=false.
     // 진단용: HW3Handler 에서 TX 성공/실패 카운트 추적.
     bool sendCheck(const CanFrame &frame) override
     {
-        return canTxQueued(sendDetailed(frame));
+        return canTxQueued(sendDetailed(frame, CanTxSource::Unknown));
     }
 
-    CanTxResult sendDetailed(const CanFrame &frame) override
+    CanTxResult sendDetailed(const CanFrame &frame,
+                             CanTxSource source = CanTxSource::Unknown) override
     {
         Lock lock(mutex_);
         if (txQuiesced_) return CanTxResult::Aborted;
@@ -166,9 +168,11 @@ public:
                 mcp_->sendMessage(static_cast<MCP2515::TXBn>(i), &raw);
             if (result == MCP2515::ERROR_OK) {
                 txPending_[i] = true;
+                txPendingSource_[i] = source;
                 return CanTxResult::Queued;
             }
             if (result == MCP2515::ERROR_ALLTXBUSY) return CanTxResult::Busy;
+            recordTxFailureUnlocked(source, false, 3, 0, (uint8_t)result);
             return CanTxResult::ControllerError;
         }
         return CanTxResult::Busy;
@@ -292,6 +296,7 @@ private:
             txPending_[i] = false;
             if ((ctrl & kTxErrorMask) != 0) {
                 aChannelDiag.aTxFail = (uint32_t)aChannelDiag.aTxFail + 1;
+                recordTxFailureUnlocked(txPendingSource_[i], true, i, ctrl, 0);
             } else if ((ctrl & kTxArbitrationLostMask) != 0) {
                 aChannelDiag.aTxArbitrationLost =
                     (uint32_t)aChannelDiag.aTxArbitrationLost + 1;
@@ -300,8 +305,26 @@ private:
             } else {
                 aChannelDiag.aTxCompleted = (uint32_t)aChannelDiag.aTxCompleted + 1;
             }
+            txPendingSource_[i] = CanTxSource::Unknown;
             bitModifyUnlocked(kTxCtrlRegisters[i], kTxResultMask, 0);
         }
+    }
+
+    void recordTxFailureUnlocked(CanTxSource source, bool pending, uint8_t buffer,
+                                 uint8_t ctrl, uint8_t driverCode)
+    {
+        const uint8_t sourceValue = (uint8_t)source;
+        if (source == CanTxSource::Summon) {
+            aChannelDiag.aTxFailSummon = (uint32_t)aChannelDiag.aTxFailSummon + 1U;
+        } else if (source == CanTxSource::Tsllc) {
+            aChannelDiag.aTxFailTsllc = (uint32_t)aChannelDiag.aTxFailTsllc + 1U;
+        } else {
+            aChannelDiag.aTxFailOther = (uint32_t)aChannelDiag.aTxFailOther + 1U;
+        }
+        eventLogPush(EV_A_TX_FAILURE,
+                     (uint16_t)(uint8_t)aChannelDiag.aTec,
+                     (uint16_t)(uint8_t)aChannelDiag.aRec,
+                     eventATxFailureDetail(sourceValue, pending, buffer, ctrl, driverCode));
     }
 
     bool configureChipUnlocked(bool verbose)
@@ -355,6 +378,7 @@ private:
     uint32_t currentSpiFreqHz_;
     std::unique_ptr<MCP2515> mcp_;
     bool txPending_[3] = {};
+    CanTxSource txPendingSource_[3] = {};
     bool txQuiesced_{false};
 #ifndef NATIVE_BUILD
     SemaphoreHandle_t mutex_{nullptr};

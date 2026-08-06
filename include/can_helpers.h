@@ -317,6 +317,11 @@ inline constexpr uint32_t kAChannelWakeGapMs = 2000;
 inline constexpr uint32_t kAMcpBusOffRecoverIntervalMs = 1000;
 inline constexpr uint32_t kAMcpBusOffRestartFallbackMs = 10000;
 
+inline constexpr uint8_t kATxSourceMaskNone   = 0;
+inline constexpr uint8_t kATxSourceMaskSummon = 1U << 0;
+inline constexpr uint8_t kATxSourceMaskTsllc  = 1U << 1;
+inline constexpr uint8_t kATxSourceMaskOther  = 1U << 2;
+
 inline constexpr uint8_t kACanPhaseIdle = 0;
 inline constexpr uint8_t kACanPhaseRxDrain = 1;
 inline constexpr uint8_t kACanPhaseFrameHandle = 2;
@@ -624,6 +629,11 @@ struct AChannelDiagnostics {
     Shared<uint32_t> aTxOk{0};
     Shared<uint32_t> aTxBusy{0};
     Shared<uint32_t> aTxFail{0};
+    // MCP2515 TXERR을 요청 기능별로 분리한 카운터. sendDetailed() 즉시 거절과
+    // 이후 TX 버퍼 완료 폴링에서 확인된 TXERR를 모두 포함한다.
+    Shared<uint32_t> aTxFailSummon{0};
+    Shared<uint32_t> aTxFailTsllc{0};
+    Shared<uint32_t> aTxFailOther{0};
     Shared<uint32_t> aTxCompleted{0};
     Shared<uint32_t> aTxArbitrationLost{0};
     Shared<uint32_t> aTxAborted{0};
@@ -665,6 +675,7 @@ struct AChannelDiagnostics {
     Shared<uint32_t> aTxGuardCount{0};         // 보호모드 진입 횟수
     Shared<uint32_t> aTxGuardSkipCount{0};     // 보호모드로 TSLLC/Summon 송신을 건너뛴 횟수
     Shared<uint8_t>  aTxGuardLastReason{0};    // kATxGuardReason*
+    Shared<uint8_t>  aTxGuardTriggerSourceMask{0}; // 이번 Guard를 만든 기능 조합
     Shared<uint32_t> wakeCount{0};             // 2초 이상 수신 공백 뒤 A채널 재수신 횟수
     Shared<uint32_t> lastWakeRxMs{0};          // 최근 A채널 재수신 시작 시각
     Shared<bool>     wakeAwaitingSummonTx{false}; // 재수신 뒤 첫 Summon TX 대기
@@ -701,6 +712,39 @@ inline const char* aTxGuardReasonName(uint8_t reason)
     case kATxGuardReasonTec: return "TEC";
     case kATxGuardReasonEflg: return "EFLG";
     case kATxGuardReasonTxFail: return "TX_FAIL";
+    default: return "NONE";
+    }
+}
+
+inline const char* aTxSourceName(uint8_t source)
+{
+    switch (source) {
+    case 1: return "SUMMON";
+    case 2: return "TSLLC";
+    default: return "OTHER";
+    }
+}
+
+inline uint8_t aTxSourceMaskFor(uint8_t source)
+{
+    switch (source) {
+    case 1: return kATxSourceMaskSummon;
+    case 2: return kATxSourceMaskTsllc;
+    default: return kATxSourceMaskOther;
+    }
+}
+
+inline const char* aTxSourceMaskName(uint8_t mask)
+{
+    switch (mask) {
+    case kATxSourceMaskSummon: return "SUMMON";
+    case kATxSourceMaskTsllc: return "TSLLC";
+    case kATxSourceMaskOther: return "OTHER";
+    case kATxSourceMaskSummon | kATxSourceMaskTsllc: return "SUMMON+TSLLC";
+    case kATxSourceMaskSummon | kATxSourceMaskOther: return "SUMMON+OTHER";
+    case kATxSourceMaskTsllc | kATxSourceMaskOther: return "TSLLC+OTHER";
+    case kATxSourceMaskSummon | kATxSourceMaskTsllc | kATxSourceMaskOther:
+        return "SUMMON+TSLLC+OTHER";
     default: return "NONE";
     }
 }

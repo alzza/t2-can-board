@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "can_helpers.h"
+#include "version.h"
 
 #ifndef NATIVE_BUILD
 #include <Arduino.h>
@@ -39,6 +40,7 @@ enum CanEventType : uint8_t {
     EV_A_TX_GUARD_CLEAR = 24, // A채널 TX Guard 해제
     EV_A_SPI_TARGET = 25, // A채널 SPI 목표 속도 변경(재부팅 적용)
     EV_FEATURE_ACTIVITY = 26, // 5초 구간 기능별 실제 주입 활동 전이
+    EV_A_TX_FAILURE = 27, // A채널 MCP2515 TXERR 기능/버퍼/결과 세부 기록
     EV_TYPE_COUNT
 };
 
@@ -84,6 +86,7 @@ inline const char* eventTypeName(uint8_t type) {
     case EV_A_TX_GUARD_CLEAR: return "A_TX_GUARD_CLEAR";
     case EV_A_SPI_TARGET: return "A_SPI_TARGET";
     case EV_FEATURE_ACTIVITY: return "FEATURE_ACTIVITY";
+    case EV_A_TX_FAILURE: return "A_TX_FAILURE";
     default: return "UNKNOWN";
     }
 }
@@ -97,6 +100,7 @@ inline uint8_t eventChannel(uint8_t type) {
     case EV_A_TX_GUARD_SET:
     case EV_A_TX_GUARD_CLEAR:
     case EV_A_SPI_TARGET:
+    case EV_A_TX_FAILURE:
         return EV_CH_A;
     case EV_BUSOFF:
     case EV_RECOVERY_OK:
@@ -140,6 +144,7 @@ inline uint8_t eventSeverity(uint8_t type, uint32_t detail) {
         return (detail & 0x20U) ? EV_SEV_ERROR : EV_SEV_WARN;
     case EV_A_RX_OVERRUN:
     case EV_A_TX_GUARD_SET:
+    case EV_A_TX_FAILURE:
         return EV_SEV_WARN;
     default:
         return EV_SEV_INFO;
@@ -163,6 +168,7 @@ inline bool eventTypeIsAggregated(uint8_t type) {
     case EV_A_EFLG_SET:
     case EV_A_EFLG_CLEAR:
     case EV_A_RX_OVERRUN:
+    case EV_A_TX_FAILURE:
         return true;
     default:
         return false;
@@ -201,6 +207,20 @@ inline uint32_t eventFeatureActivityDetail(bool summonTx, bool tsllcTx, bool nag
     if (apActive) detail |= 1U << 5;
     if ((bool)nagApOnlyRuntime) detail |= 1U << 6;
     return detail;
+}
+
+// source: 0=OTHER, 1=SUMMON, 2=TSLLC
+// pending: 0=sendDetailed 즉시 거절, 1=TX 버퍼 완료 폴링 결과
+// buffer: 0~2=TXB0~2, 3=버퍼 미배정(즉시 거절)
+// ctrl: pending일 때 TXBnCTRL 스냅샷, driverCode: 즉시 거절 시 MCP 오류 코드
+inline uint32_t eventATxFailureDetail(uint8_t source, bool pending, uint8_t buffer,
+                                      uint8_t ctrl, uint8_t driverCode)
+{
+    return (uint32_t)(source & 0x03U) |
+           (pending ? (1U << 2) : 0U) |
+           ((uint32_t)(buffer & 0x03U) << 3) |
+           ((uint32_t)ctrl << 8) |
+           ((uint32_t)driverCode << 16);
 }
 
 #ifndef NATIVE_BUILD
@@ -285,8 +305,29 @@ inline const char* eventDetailText(uint8_t type, uint32_t detail, char* out, siz
         break;
     case EV_A_TX_GUARD_SET:
     case EV_A_TX_GUARD_CLEAR:
-        snprintf(out, outLen, "reason=%s", aTxGuardReasonName((uint8_t)detail));
+        snprintf(out, outLen, "reason=%s trigger=%s",
+                 aTxGuardReasonName((uint8_t)detail),
+                 aTxSourceMaskName((uint8_t)(detail >> 8)));
         break;
+    case EV_A_TX_FAILURE: {
+        const uint8_t source = (uint8_t)(detail & 0x03U);
+        const bool pending = (detail & (1U << 2)) != 0;
+        const uint8_t buffer = (uint8_t)((detail >> 3) & 0x03U);
+        const uint8_t ctrl = (uint8_t)((detail >> 8) & 0xFFU);
+        const uint8_t driverCode = (uint8_t)((detail >> 16) & 0xFFU);
+        if (pending) {
+            snprintf(out, outLen,
+                     "source=%s phase=TX_RESULT tx_buffer=TXB%u ctrl=0x%02X TXERR=%u MLOA=%u ABTF=%u",
+                     aTxSourceName(source), (unsigned)buffer, (unsigned)ctrl,
+                     (unsigned)((ctrl >> 4) & 1U), (unsigned)((ctrl >> 5) & 1U),
+                     (unsigned)((ctrl >> 6) & 1U));
+        } else {
+            snprintf(out, outLen,
+                     "source=%s phase=QUEUE_REJECT tx_buffer=NONE driver_error=%u",
+                     aTxSourceName(source), (unsigned)driverCode);
+        }
+        break;
+    }
     case EV_A_SPI_TARGET:
         snprintf(out, outLen, "spi_target_mhz=%u reboot_required=1", (unsigned)detail);
         break;
@@ -440,7 +481,7 @@ inline void eventLogCsvEscape(const char *in, char *out, size_t outLen) {
 
 inline void eventLogCsvHeader(httpd_req_t* req) {
     httpd_resp_sendstr_chunk(req,
-        "schema_version,wall_time_first,wall_time_last,uptime_first_ms,uptime_last_ms,"
+        "schema_version,firmware_version,firmware_build_id,wall_time_first,wall_time_last,uptime_first_ms,uptime_last_ms,"
         "sequence,channel,severity,event,type,occurrences,tec,rec,detail,detail_text\r\n");
 }
 
@@ -456,8 +497,8 @@ inline esp_err_t eventLogCsvRow(httpd_req_t* req, const CanEvent& e) {
         eventDetailText(e.type, e.detail, detailText, sizeof(detailText)),
         detailCsv, sizeof(detailCsv));
     snprintf(line, sizeof(line),
-        "2,%s,%s,%u,%u,%u,%s,%s,%s,%u,%u,%u,%u,%u,%s\r\n",
-        firstTime, lastTime,
+        "2,%s,%s,%s,%s,%u,%u,%u,%s,%s,%s,%u,%u,%u,%u,%u,%s\r\n",
+        FIRMWARE_VERSION, FIRMWARE_BUILD_ID, firstTime, lastTime,
         (unsigned)e.t_ms, (unsigned)e.last_ms, (unsigned)e.sequence,
         eventChannelName(eventChannel(e.type)),
         eventSeverityName(eventSeverity(e.type, e.detail)),

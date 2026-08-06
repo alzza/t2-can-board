@@ -10,6 +10,7 @@ public:
     static constexpr bool kSupportsISR = false;
 
     std::vector<CanFrame> sent;
+    std::vector<CanTxSource> sentSources;
     bool sendSucceeds = true;
 
     bool init() override { return true; }
@@ -33,9 +34,19 @@ public:
         return true;
     }
 
+    CanTxResult sendDetailed(const CanFrame &frame,
+                             CanTxSource source = CanTxSource::Unknown) override
+    {
+        if (!sendSucceeds) return CanTxResult::ControllerError;
+        sent.push_back(frame);
+        sentSources.push_back(source);
+        return CanTxResult::Queued;
+    }
+
     void reset()
     {
         sent.clear();
+        sentSources.clear();
         sendSucceeds = true;
     }
 };

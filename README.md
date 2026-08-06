@@ -314,17 +314,17 @@ git diff --check
 펌웨어 테스트 후 OTA 또는 실차 테스트에 사용할 `.bin` 복사본은 아래 형식으로 이름을 남깁니다.
 
 ```text
-YYYY-MM-DD_짧은변경요약.bin
+버전_YY-MM-DD_짧은변경요약.bin
 ```
 
 예시입니다.
 
 ```text
-2026-07-31_ece-r79-gate-log.bin
-2026-07-31_ota-tx-safe.bin
+1.3.8_26-08-07_summon-txdiag.bin
+1.3.8_26-08-07_ota-tx-safe.bin
 ```
 
-날짜는 KST 기준 빌드·테스트 당일 날짜를 쓰고, 변경 요약은 오늘 수정한 핵심 내용을 공백 없이 최대한 짧게 기록합니다. PlatformIO 원본 산출물 `.pio/build/lilygo_t2can/firmware.bin`은 그대로 두고, OTA 업로드·보관용 복사본에만 이 이름을 붙입니다.
+버전은 `VERSION`의 Semantic Version을 쓰고, 날짜는 KST 기준 빌드·테스트 당일을 2자리 연·월·일로 씁니다. 변경 요약은 `include/version.h`의 `FIRMWARE_ARTIFACT_NOTE`에 공백 없이 최대한 짧게 기록합니다. `lilygo_t2can` 빌드가 성공하면 이 이름의 OTA 업로드·보관용 복사본을 프로젝트 루트에 자동 생성합니다. PlatformIO 원본 산출물 `.pio/build/lilygo_t2can/firmware.bin`은 그대로 둡니다.
 
 ## 버전 정책
 

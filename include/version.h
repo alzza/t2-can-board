@@ -1,12 +1,16 @@
 #pragma once
 
-#define FIRMWARE_VERSION "1.3.7"
+#define FIRMWARE_VERSION "1.3.8"
 #define FIRMWARE_VERSION_MAJOR 1
 #define FIRMWARE_VERSION_MINOR 3
-#define FIRMWARE_VERSION_PATCH 7
+#define FIRMWARE_VERSION_PATCH 8
+
+// OTA/실차 테스트용 보관 bin 파일명에 사용할 당일 핵심 변경 요약.
+// 예: 1.3.8_26-08-07_summon-txdiag.bin
+#define FIRMWARE_ARTIFACT_NOTE "summon-txdiag"
 
 #ifndef FIRMWARE_BUILD_ID
-#define FIRMWARE_BUILD_ID "FW137-dev"
+#define FIRMWARE_BUILD_ID "FW138-summon-txdiag"
 #endif
 
 #ifndef FIRMWARE_BUILD_AT

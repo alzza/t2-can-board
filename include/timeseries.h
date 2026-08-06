@@ -3,6 +3,7 @@
 #pragma once
 #include "can_helpers.h"
 #include "event_log.h"
+#include "version.h"
 
 #ifndef NATIVE_BUILD
 #include <freertos/FreeRTOS.h>
@@ -556,7 +557,7 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
     (void)recording;
     httpd_resp_sendstr_chunk(req, "\xEF\xBB\xBF");
     const char* hdr =
-        "schema_version,wall_time,uptime_ms,capture_mode,"
+        "schema_version,firmware_version,firmware_build_id,wall_time,uptime_ms,capture_mode,"
         "b_busoff,b_tec,b_rec,b_arb_lost,b_bus_error,b_tx_fail,b_echo,b_frames_880,b_frames_921,b_frames_923,"
         "b_hands_on,b_das_state,b_das_state_name,b_das_state_group,b_das_warn_level,b_das_warning,"
         "b_nag_mode,b_nag_mode_default,b_das_source,b_echo_drop,b_skip_off,b_skip_ap,b_skip_hands_on,b_skip_das,b_no_das,"
@@ -586,7 +587,7 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
         timeseriesCopyAt(start + i, s);
         timeseriesFormatTime(s.t_ms, wallTime, sizeof(wallTime));
         int used = snprintf(line, sizeof(line),
-            "4,%s,%u,%s,"
+            "4,%s,%s,%s,%u,%s,"
             "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
             "%u,%u,%s,%s,%u,%u,"
             "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
@@ -594,7 +595,7 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
             "%u,%u,%u,%u,"
             "%.2f,%u,%.2f,"
             "%u,%u,%u,%u",
-            wallTime, (unsigned)s.t_ms, s.captureMode ? "MANUAL" : "AUTO",
+            FIRMWARE_VERSION, FIRMWARE_BUILD_ID, wallTime, (unsigned)s.t_ms, s.captureMode ? "MANUAL" : "AUTO",
             (unsigned)s.busoff, (unsigned)s.tec, (unsigned)s.rec,
             (unsigned)s.arbLost, (unsigned)s.busErr, (unsigned)s.txFail,
             (unsigned)s.echoCnt, (unsigned)s.f880, (unsigned)s.f921, (unsigned)s.f923,

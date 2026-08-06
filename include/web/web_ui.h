@@ -1636,7 +1636,8 @@ function updateChannelStatus(d){
   var aEflg=n(a.mcp_eflg),aEflgPeak=n(a.mcp_eflg_peak);
   setChip('d-a-eflg-now','EFLG 0x'+hex2(aEflg)+' '+aEflgBits(aEflg),aState.level);
   setChip('d-a-eflg-peak','EFLG-PEAK 0x'+hex2(aEflgPeak),aEflgPeak?'warn':'ok');
-  setChip('d-a-guard',a.tx_guard_active?('GUARD '+(a.tx_guard_reason||'ON')+' '+n(a.tx_guard_remaining_ms)+'ms'):'GUARD OFF',a.tx_guard_active?'warn':'ok');
+  var aGuardTrigger=a.tx_guard_trigger||'NONE';
+  setChip('d-a-guard',a.tx_guard_active?('GUARD '+(a.tx_guard_reason||'ON')+' · '+aGuardTrigger+' · '+n(a.tx_guard_remaining_ms)+'ms'):'GUARD OFF · '+aGuardTrigger,a.tx_guard_active?'warn':'ok');
   setChip('d-a-age','AGE RX '+n(a.frame_age_ms)+' / LOOP '+n(a.loop_age_ms)+'ms',a.task_alive&&a.fresh?'ok':a.task_alive?'warn':'err');
   var aGap=n(a.loop_gap_last_us);setChip('d-a-gap','LOOP-GAP '+aGap+'/'+n(a.loop_gap_peak_us)+'us >1/2ms:'+n(a.loop_gap_over_1ms)+'/'+n(a.loop_gap_over_2ms),aGap>2000?'err':aGap>1000?'warn':'ok');
   setChip('d-a-ovrphase','OVR-PHASE '+(a.last_overrun_phase||'--'),n(a.rx_ovr)?'warn':'ok');

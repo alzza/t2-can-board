@@ -72,6 +72,7 @@ void test_tsllc_mux0_sets_only_validated_bits()
     TEST_ASSERT_TRUE((mock.sent[0].data[4] >> 6) & 0x01U);
     TEST_ASSERT_TRUE((mock.sent[0].data[4] >> 7) & 0x01U);
     TEST_ASSERT_FALSE((mock.sent[0].data[5] >> 6) & 0x01U);
+    TEST_ASSERT_EQUAL_UINT8((uint8_t)CanTxSource::Tsllc, (uint8_t)mock.sentSources[0]);
 }
 
 void test_summon_mux1_sets_hw3_bit46_and_clears_bit19()
@@ -85,6 +86,7 @@ void test_summon_mux1_sets_hw3_bit46_and_clears_bit19()
     TEST_ASSERT_FALSE((mock.sent[0].data[2] >> 3) & 0x01U);
     TEST_ASSERT_TRUE((mock.sent[0].data[5] >> 6) & 0x01U);
     TEST_ASSERT_FALSE((mock.sent[0].data[5] >> 7) & 0x01U);
+    TEST_ASSERT_EQUAL_UINT8((uint8_t)CanTxSource::Summon, (uint8_t)mock.sentSources[0]);
 }
 
 void test_short_1021_frame_never_transmits()

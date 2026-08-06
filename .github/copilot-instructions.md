@@ -236,11 +236,11 @@ BUS-OFF 수정 성공 기준:
 
 **펌웨어 테스트 후 OTA/실차 테스트용 bin을 만들 때는 날짜와 변경 요약이 파일명에 남아야 한다.**
 
-- 산출물 이름은 `YYYY-MM-DD_짧은변경요약.bin` 형식을 사용한다.
-- 날짜는 빌드·테스트한 당일 날짜를 KST 기준으로 쓴다.
+- 산출물 이름은 `버전_YY-MM-DD_짧은변경요약.bin` 형식을 사용한다.
+- 버전은 `VERSION`, 날짜는 빌드·테스트한 당일 날짜를 KST 기준 2자리 연·월·일로 쓴다.
 - 변경 요약은 오늘 수정한 핵심 내용을 최대한 압축해 적고, 공백 대신 `-` 또는 `_`를 쓴다.
-- 예시는 `2026-07-31_ece-r79-gate-log.bin`, `2026-07-31_ota-tx-safe.bin`이다.
-- 원본 빌드 산출물 `.pio/build/lilygo_t2can/firmware.bin`을 그대로 두고, 배포·OTA 확인용 복사본에만 위 이름을 붙인다.
+- 예시는 `1.3.8_26-08-07_summon-txdiag.bin`, `1.3.8_26-08-07_ota-tx-safe.bin`이다.
+- `include/version.h`의 `FIRMWARE_ARTIFACT_NOTE`을 당일 핵심 변경 요약으로 갱신한다. `lilygo_t2can` 빌드 성공 시 스크립트가 원본 `.pio/build/lilygo_t2can/firmware.bin`을 유지한 채 프로젝트 루트에 위 이름의 복사본을 자동 생성한다.
 - 최종 응답에는 생성한 bin 파일 경로와 어떤 변경분을 담은 빌드인지 함께 적는다.
 
 ---

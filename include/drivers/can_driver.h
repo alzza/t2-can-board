@@ -14,6 +14,15 @@ enum class CanTxResult : uint8_t
     InvalidFrame
 };
 
+// A채널에서 어떤 기능이 수정 프레임을 요청했는지 MCP2515 완료 결과까지
+// 연결하기 위한 진단 전용 문맥이다. 송신 조건·주기에는 관여하지 않는다.
+enum class CanTxSource : uint8_t
+{
+    Unknown = 0,
+    Summon = 1,
+    Tsllc = 2,
+};
+
 inline bool canTxQueued(CanTxResult result)
 {
     return result == CanTxResult::Queued;
@@ -40,7 +49,8 @@ struct CanDriver
     // 결과 확인을 구현하지 않은 드라이버의 기본값은 send() 호출 후 true다.
     virtual bool sendCheck(const CanFrame &frame) { send(frame); return true; }
     // 큐 포화와 실제 CAN 오류를 구분하는 상세 송신 결과.
-    virtual CanTxResult sendDetailed(const CanFrame &frame)
+    virtual CanTxResult sendDetailed(const CanFrame &frame,
+                                     CanTxSource /*source*/ = CanTxSource::Unknown)
     {
         return sendCheck(frame) ? CanTxResult::Queued : CanTxResult::ControllerError;
     }

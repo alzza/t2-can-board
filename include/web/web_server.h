@@ -1426,6 +1426,9 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(ach, "tx_busy", (uint32_t)aChannelDiag.aTxBusy);
     cJSON_AddNumberToObject(ach, "tx_fail", (uint32_t)aChannelDiag.aTxFail);
     cJSON_AddNumberToObject(ach, "tx_hard_error", (uint32_t)aChannelDiag.aTxFail);
+    cJSON_AddNumberToObject(ach, "tx_fail_summon", (uint32_t)aChannelDiag.aTxFailSummon);
+    cJSON_AddNumberToObject(ach, "tx_fail_tsllc", (uint32_t)aChannelDiag.aTxFailTsllc);
+    cJSON_AddNumberToObject(ach, "tx_fail_other", (uint32_t)aChannelDiag.aTxFailOther);
     cJSON_AddNumberToObject(ach, "tx_completed", (uint32_t)aChannelDiag.aTxCompleted);
     cJSON_AddNumberToObject(ach, "tx_arbitration_lost", (uint32_t)aChannelDiag.aTxArbitrationLost);
     cJSON_AddNumberToObject(ach, "tx_aborted", (uint32_t)aChannelDiag.aTxAborted);
@@ -1471,6 +1474,8 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(ach, "tx_guard_count", (uint32_t)aChannelDiag.aTxGuardCount);
     cJSON_AddNumberToObject(ach, "tx_guard_skip", (uint32_t)aChannelDiag.aTxGuardSkipCount);
     cJSON_AddStringToObject(ach, "tx_guard_reason", aTxGuardReasonName((uint8_t)aChannelDiag.aTxGuardLastReason));
+    cJSON_AddStringToObject(ach, "tx_guard_trigger",
+                            aTxSourceMaskName((uint8_t)aChannelDiag.aTxGuardTriggerSourceMask));
     const uint32_t aLastFrameMs = (uint32_t)aChannelDiag.lastFrameRxMs;
     const uint32_t aLastLoopMs = (uint32_t)aChannelDiag.lastLoopMs;
     const uint32_t aFrameAgeMs = webSafeAgeMs(statusNowMs, aLastFrameMs);
@@ -2853,13 +2858,15 @@ static esp_err_t busoffLogHandler(httpd_req_t *req) {
 static esp_err_t busoffLogDlHandler(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/csv");
     httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"busoff_log.csv\"");
-    httpd_resp_sendstr_chunk(req, "seq,timestamp_ms,tec,rec,recovery_dur_ms,since_last_ms,recovered\r\n");
+    httpd_resp_sendstr_chunk(req,
+        "firmware_version,firmware_build_id,seq,timestamp_ms,tec,rec,recovery_dur_ms,since_last_ms,recovered\r\n");
     uint32_t h = busOffLog.count();
     uint32_t oldest = (h > (uint32_t)BusOffEventLog::kCapacity) ? (h - BusOffEventLog::kCapacity) : 0;
     char row[128];
     for (uint32_t i = oldest; i < h; i++) {
         const BusOffEvent& ev = busOffLog.at(i);
-        snprintf(row, sizeof(row), "%u,%u,%u,%u,%u,%u,%u\r\n",
+        snprintf(row, sizeof(row), "%s,%s,%u,%u,%u,%u,%u,%u,%u\r\n",
+            FIRMWARE_VERSION, FIRMWARE_BUILD_ID,
             (unsigned)ev.seqNum, (unsigned)ev.timestampMs,
             (unsigned)ev.tec,    (unsigned)ev.rec,
             (unsigned)ev.recoveryDurMs, (unsigned)ev.sinceLastMs,
@@ -2965,7 +2972,7 @@ static esp_err_t canDiagLogDlHandler(httpd_req_t *req) {
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_sendstr_chunk(req, "\xEF\xBB\xBF");
     httpd_resp_sendstr_chunk(req,
-        "schema_version,wall_time,uptime_ms,diag_state,sequence,scope,message\r\n");
+        "schema_version,firmware_version,firmware_build_id,wall_time,uptime_ms,diag_state,sequence,scope,message\r\n");
 
     const uint32_t head = diagLog.currentHead();
     const uint32_t start = head > LogRingBuffer::kCapacity ? head - LogRingBuffer::kCapacity : 0;
@@ -2980,16 +2987,16 @@ static esp_err_t canDiagLogDlHandler(httpd_req_t *req) {
         formatLogTimestamp(now, wallTime, sizeof(wallTime));
         csvEscapeCell("자가 진단을 실행한 기록이 없습니다. 먼저 '자가 진단 실행'을 완료한 뒤 저장하세요.",
                       escaped, sizeof(escaped));
-        snprintf(line, sizeof(line), "2,%s,%u,NOT_RUN,0,A/B,%s\r\n",
-                 wallTime, (unsigned)now, escaped);
+        snprintf(line, sizeof(line), "2,%s,%s,%s,%u,NOT_RUN,0,A/B,%s\r\n",
+                 FIRMWARE_VERSION, FIRMWARE_BUILD_ID, wallTime, (unsigned)now, escaped);
         httpd_resp_sendstr_chunk(req, line);
     }
     for (uint32_t i = start; i < head; ++i) {
         const LogRingBuffer::Entry &entry = diagLog.at(i);
         formatLogTimestamp(entry.timestamp_ms, wallTime, sizeof(wallTime));
         csvEscapeCell(entry.msg, escaped, sizeof(escaped));
-        snprintf(line, sizeof(line), "2,%s,%u,%s,%u,A/B,%s\r\n",
-                 wallTime, (unsigned)entry.timestamp_ms, stateName,
+        snprintf(line, sizeof(line), "2,%s,%s,%s,%u,%s,%u,A/B,%s\r\n",
+                 FIRMWARE_VERSION, FIRMWARE_BUILD_ID, wallTime, (unsigned)entry.timestamp_ms, stateName,
                  (unsigned)(i - start + 1U), escaped);
         if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) return ESP_FAIL;
     }

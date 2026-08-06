@@ -253,8 +253,10 @@ static uint16_t appLoop()
             static bool _prevGuardActive = false;
             const bool guardActiveBeforeUpdate = aTxGuardActive(_nowMs);
             if (_prevGuardActive && !guardActiveBeforeUpdate) {
-                eventLogPush(EV_A_TX_GUARD_CLEAR, tec, rec,
-                             (uint32_t)(uint8_t)aChannelDiag.aTxGuardLastReason);
+                const uint32_t guardDetail =
+                    (uint32_t)(uint8_t)aChannelDiag.aTxGuardLastReason |
+                    ((uint32_t)(uint8_t)aChannelDiag.aTxGuardTriggerSourceMask << 8);
+                eventLogPush(EV_A_TX_GUARD_CLEAR, tec, rec, guardDetail);
             }
             if (eflg != 0 && _prevEflg == 0) {
                 aChannelDiag.mcpEflgEventCount = (uint32_t)aChannelDiag.mcpEflgEventCount + 1;
@@ -325,6 +327,9 @@ static uint16_t appLoop()
             }
 
             const uint32_t currentATxFail = (uint32_t)aChannelDiag.aTxFail;
+            const uint32_t currentATxFailSummon = (uint32_t)aChannelDiag.aTxFailSummon;
+            const uint32_t currentATxFailTsllc = (uint32_t)aChannelDiag.aTxFailTsllc;
+            const uint32_t currentATxFailOther = (uint32_t)aChannelDiag.aTxFailOther;
             const uint32_t rawATxFailDelta = currentATxFail - _prevATxFail;
             const uint8_t aTxFailDelta =
                 (uint8_t)(rawATxFailDelta > 255U ? 255U : rawATxFailDelta);
@@ -332,6 +337,19 @@ static uint16_t appLoop()
             if (aTxFailDelta > (uint8_t)aChannelDiag.aTxFailWindowPeak) {
                 aChannelDiag.aTxFailWindowPeak = aTxFailDelta;
             }
+            static uint32_t _prevATxFailSummon = 0;
+            static uint32_t _prevATxFailTsllc = 0;
+            static uint32_t _prevATxFailOther = 0;
+            const uint32_t summonFailDelta = currentATxFailSummon - _prevATxFailSummon;
+            const uint32_t tsllcFailDelta = currentATxFailTsllc - _prevATxFailTsllc;
+            const uint32_t otherFailDelta = currentATxFailOther - _prevATxFailOther;
+            uint8_t txFailSourceMask = kATxSourceMaskNone;
+            if (summonFailDelta > 0) txFailSourceMask |= kATxSourceMaskSummon;
+            if (tsllcFailDelta > 0) txFailSourceMask |= kATxSourceMaskTsllc;
+            if (otherFailDelta > 0) txFailSourceMask |= kATxSourceMaskOther;
+            _prevATxFailSummon = currentATxFailSummon;
+            _prevATxFailTsllc = currentATxFailTsllc;
+            _prevATxFailOther = currentATxFailOther;
 
             uint8_t guardReason = kATxGuardReasonNone;
             if ((bool)aTxGuardRuntime) {
@@ -349,13 +367,18 @@ static uint16_t appLoop()
                 bool wasGuardActive = aTxGuardActive(_nowMs);
                 aChannelDiag.aTxGuardUntilMs = _nowMs + kATxGuardDurationMs;
                 aChannelDiag.aTxGuardLastReason = guardReason;
+                aChannelDiag.aTxGuardTriggerSourceMask =
+                    guardReason == kATxGuardReasonTxFail ? txFailSourceMask : kATxSourceMaskNone;
                 if (!wasGuardActive) {
                     aChannelDiag.aTxGuardCount = (uint32_t)aChannelDiag.aTxGuardCount + 1;
-                    eventLogPush(EV_A_TX_GUARD_SET, tec, rec, guardReason);
+                    const uint32_t guardDetail = (uint32_t)guardReason |
+                        ((uint32_t)(uint8_t)aChannelDiag.aTxGuardTriggerSourceMask << 8);
+                    eventLogPush(EV_A_TX_GUARD_SET, tec, rec, guardDetail);
                     char buf[120];
-                    snprintf(buf, sizeof(buf), "🛡️ [A-CH] TX guard %ums 시작: %s TEC=%u EFLG=0x%02X Fail=%u Fail1s=%u",
+                    snprintf(buf, sizeof(buf), "🛡️ [A-CH] TX guard %ums 시작: %s(%s) TEC=%u EFLG=0x%02X Fail=%u Fail1s=%u",
                              (unsigned)kATxGuardDurationMs,
                              aTxGuardReasonName(guardReason),
+                             aTxSourceMaskName((uint8_t)aChannelDiag.aTxGuardTriggerSourceMask),
                              tec,
                              eflg,
                              (unsigned)currentATxFail,
