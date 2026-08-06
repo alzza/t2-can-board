@@ -25,8 +25,9 @@ def safe_name_part(value: str, fallback: str) -> str:
     return cleaned or fallback
 
 
-def copy_artifact(source, target, env):
-    source_path = Path(str(source[0]))
+def copy_artifact(target, source, env):
+    # SCons post-action은 target=생성된 firmware.bin, source=firmware.elf로 전달한다.
+    source_path = Path(str(target[0]))
     if not source_path.is_file():
         print(f"Firmware artifact skipped: missing {source_path}")
         return
