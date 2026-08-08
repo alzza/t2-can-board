@@ -550,11 +550,16 @@ CSV 앞에 열 수가 다른 `#` 메타행을 두지 않는다. 첫 행부터 �
 | 22 | `FEATURE_STATE` | SYSTEM | A TX, Summon, TSLLC, Nag, One-Shot, TX Guard 상태 |
 | 23~24 | `A_TX_GUARD_SET`, `A_TX_GUARD_CLEAR` | A | A TX Guard 진입·해제 |
 | 25 | `A_SPI_TARGET` | A | 재부팅 후 적용할 SPI 목표 변경 |
-| 27 | `A_TX_FAILURE` | A | Summon/TSLLC별 MCP2515 TXERR. 출처, 즉시 큐 거절 또는 완료 폴링 단계, TX 버퍼와 `TXERR`·`MLOA`·`ABTF`를 함께 기록 |
+| 26 | `FEATURE_ACTIVITY` | A/B | 5초 구간 기능별 실제 주입·게이트·AP 전이 |
+| 27 | `A_TX_FAILURE` | A | Summon/TSLLC별 MCP2515 송신 실패. 출처, 즉시 결과 또는 완료 폴링 단계, 실제 TX 버퍼와 `TXERR`·`MLOA`·`ABTF`를 함께 기록 |
+| 28 | `SUMMONING_STATE` | A | INO 기준 `ACA + SPR` 실제 Summoning 시작·종료와 세션별 Summon TX 성공·실패·차단 수 |
+| 29 | `NAG_INJECTION_SESSION` | B | 실제 Nag 송신 세션 시작·종료, 모드·AP 상태·마지막 판정·세션 주입 수 |
 
 `ARB_LOST`는 다른 프레임에 우선권을 양보했다는 뜻이다. TEC/REC, BUS_ERR, TX_FAIL, BUS-OFF가 모두 0이면 이것만으로 물리 통신 오류로 판단하지 않는다.
 
-`A_TX_FAILURE`의 `phase=QUEUE_REJECT`는 MCP2515가 수정 프레임을 TX 버퍼에 올리지 못한 경우이고, `phase=TX_RESULT`는 올린 뒤 TX 버퍼 완료 폴링에서 `TXERR`가 확인된 경우다. `source`와 `tx_buffer`를 Guard 이벤트의 `trigger`와 함께 보면 Summon 단독 실패인지 TSLLC와 같은 1초 창에서 겹친 실패인지 구분할 수 있다.
+`A_TX_FAILURE`의 `phase=IMMEDIATE_RESULT`는 `sendMessage(TXBn)`가 TXREQ 설정 직후 실패를 확인한 경우이며, 같은 순간 다시 읽은 실제 `TXBnCTRL`과 MCP 오류 코드를 남긴다. `phase=POLL_RESULT`는 큐 등록 뒤 완료 폴링에서 `TXERR`가 확인된 경우다. `source`와 `tx_buffer`, `TXERR`·`MLOA`·`ABTF`를 Guard 이벤트의 `trigger`와 함께 보면 Summon 단독 실패인지 TSLLC와 같은 1초 창에서 겹친 실패인지 구분할 수 있다.
+
+`SUMMONING_STATE`는 단순히 주차 상태에서 Unlock bit를 주입한 것을 Summon 실행으로 단정하지 않는다. 검증된 게이트와 같은 `ACA + SPR` 조합이 실제로 켜지고 꺼질 때만 `START`/`END`를 기록한다. `NAG_INJECTION_SESSION`은 Mode 2의 1.5초 내부 휴지 구간을 종료로 오인하지 않도록 5초 시계열 단위에서 실제 송신이 시작·종료한 구간만 기록한다.
 
 `BUS_ERR`는 CAN 프로토콜 오류 누적값이며 `BUS-OFF` 진입 횟수가 아니다. `BUS_ERR`만 증가하고 TWAI가 RUNNING이며 TEC/REC가 정상으로 복귀했다면 BUS-OFF 전용 이력이 비어 있을 수 있다. 전용 이력은 실제 BUS-OFF 진입 뒤 복구 성공 또는 실패가 확정될 때 한 행씩 기록된다.
 

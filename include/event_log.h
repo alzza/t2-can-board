@@ -41,6 +41,8 @@ enum CanEventType : uint8_t {
     EV_A_SPI_TARGET = 25, // A채널 SPI 목표 속도 변경(재부팅 적용)
     EV_FEATURE_ACTIVITY = 26, // 5초 구간 기능별 실제 주입 활동 전이
     EV_A_TX_FAILURE = 27, // A채널 MCP2515 TXERR 기능/버퍼/결과 세부 기록
+    EV_SUMMONING_STATE = 28, // 검증 INO 게이트의 실제 Summoning 상태 전이
+    EV_NAG_INJECTION_SESSION = 29, // 실제 Nag 주입 세션 시작/종료
     EV_TYPE_COUNT
 };
 
@@ -87,6 +89,8 @@ inline const char* eventTypeName(uint8_t type) {
     case EV_A_SPI_TARGET: return "A_SPI_TARGET";
     case EV_FEATURE_ACTIVITY: return "FEATURE_ACTIVITY";
     case EV_A_TX_FAILURE: return "A_TX_FAILURE";
+    case EV_SUMMONING_STATE: return "SUMMONING_STATE";
+    case EV_NAG_INJECTION_SESSION: return "NAG_INJECTION_SESSION";
     default: return "UNKNOWN";
     }
 }
@@ -101,6 +105,7 @@ inline uint8_t eventChannel(uint8_t type) {
     case EV_A_TX_GUARD_CLEAR:
     case EV_A_SPI_TARGET:
     case EV_A_TX_FAILURE:
+    case EV_SUMMONING_STATE:
         return EV_CH_A;
     case EV_BUSOFF:
     case EV_RECOVERY_OK:
@@ -113,6 +118,7 @@ inline uint8_t eventChannel(uint8_t type) {
     case EV_ALERT_RX_FULL:
     case EV_TX_BACKOFF:
     case EV_NAG_MODE:
+    case EV_NAG_INJECTION_SESSION:
         return EV_CH_B;
     case EV_USER_MARK:
     case EV_FEATURE_ACTIVITY:
@@ -210,17 +216,52 @@ inline uint32_t eventFeatureActivityDetail(bool summonTx, bool tsllcTx, bool nag
 }
 
 // source: 0=OTHER, 1=SUMMON, 2=TSLLC
-// pending: 0=sendDetailed 즉시 거절, 1=TX 버퍼 완료 폴링 결과
-// buffer: 0~2=TXB0~2, 3=버퍼 미배정(즉시 거절)
-// ctrl: pending일 때 TXBnCTRL 스냅샷, driverCode: 즉시 거절 시 MCP 오류 코드
-inline uint32_t eventATxFailureDetail(uint8_t source, bool pending, uint8_t buffer,
+// polledResult: 0=sendMessage 직후 결과, 1=TX 버퍼 완료 폴링 결과
+// buffer: 실제 TXB0~2. (3은 버퍼를 특정하지 못한 레거시 기록용)
+// ctrl: 실패 순간 TXBnCTRL 스냅샷, driverCode: 즉시 결과의 MCP 오류 코드
+inline uint32_t eventATxFailureDetail(uint8_t source, bool polledResult, uint8_t buffer,
                                       uint8_t ctrl, uint8_t driverCode)
 {
     return (uint32_t)(source & 0x03U) |
-           (pending ? (1U << 2) : 0U) |
+           (polledResult ? (1U << 2) : 0U) |
            ((uint32_t)(buffer & 0x03U) << 3) |
            ((uint32_t)ctrl << 8) |
            ((uint32_t)driverCode << 16);
+}
+
+// Summoning 상태와 해당 세션의 A채널 결과를 작은 이벤트 detail에 함께 보관한다.
+// count는 세션 범위에서 255로 포화한다. active=1은 START, 0은 END다.
+inline uint32_t eventSummoningStateDetail(bool active, bool parked, bool aca, bool spr,
+                                          bool gateOpen, uint8_t gateReason,
+                                          uint32_t txOk, uint32_t txFail,
+                                          uint32_t blocked)
+{
+    const uint32_t txOk8 = txOk > 255U ? 255U : txOk;
+    const uint32_t txFail8 = txFail > 255U ? 255U : txFail;
+    const uint32_t blocked8 = blocked > 255U ? 255U : blocked;
+    return (active ? 1U : 0U) |
+           (parked ? (1U << 1) : 0U) |
+           (aca ? (1U << 2) : 0U) |
+           (spr ? (1U << 3) : 0U) |
+           (gateOpen ? (1U << 4) : 0U) |
+           ((uint32_t)(gateReason & 0x07U) << 5) |
+           (txOk8 << 8) |
+           (txFail8 << 16) |
+           (blocked8 << 24);
+}
+
+// Nag 실제 주입 세션. active=1은 START, 0은 END, injections는 세션 누적값이다.
+inline uint32_t eventNagInjectionSessionDetail(bool active, uint8_t mode, bool apActive,
+                                               uint8_t phase, uint8_t decision,
+                                               uint32_t injections)
+{
+    const uint32_t injections16 = injections > 65535U ? 65535U : injections;
+    return (active ? 1U : 0U) |
+           ((uint32_t)(mode & 0x03U) << 1) |
+           (apActive ? (1U << 3) : 0U) |
+           ((uint32_t)(phase & 0x0FU) << 4) |
+           ((uint32_t)decision << 8) |
+           (injections16 << 16);
 }
 
 #ifndef NATIVE_BUILD
@@ -311,23 +352,41 @@ inline const char* eventDetailText(uint8_t type, uint32_t detail, char* out, siz
         break;
     case EV_A_TX_FAILURE: {
         const uint8_t source = (uint8_t)(detail & 0x03U);
-        const bool pending = (detail & (1U << 2)) != 0;
+        const bool polledResult = (detail & (1U << 2)) != 0;
         const uint8_t buffer = (uint8_t)((detail >> 3) & 0x03U);
         const uint8_t ctrl = (uint8_t)((detail >> 8) & 0xFFU);
         const uint8_t driverCode = (uint8_t)((detail >> 16) & 0xFFU);
-        if (pending) {
-            snprintf(out, outLen,
-                     "source=%s phase=TX_RESULT tx_buffer=TXB%u ctrl=0x%02X TXERR=%u MLOA=%u ABTF=%u",
-                     aTxSourceName(source), (unsigned)buffer, (unsigned)ctrl,
-                     (unsigned)((ctrl >> 4) & 1U), (unsigned)((ctrl >> 5) & 1U),
-                     (unsigned)((ctrl >> 6) & 1U));
-        } else {
-            snprintf(out, outLen,
-                     "source=%s phase=QUEUE_REJECT tx_buffer=NONE driver_error=%u",
-                     aTxSourceName(source), (unsigned)driverCode);
-        }
+        snprintf(out, outLen,
+                 "source=%s phase=%s tx_buffer=TXB%u ctrl=0x%02X TXERR=%u MLOA=%u ABTF=%u driver_error=%u",
+                 aTxSourceName(source), polledResult ? "POLL_RESULT" : "IMMEDIATE_RESULT",
+                 (unsigned)buffer, (unsigned)ctrl,
+                 (unsigned)((ctrl >> 4) & 1U), (unsigned)((ctrl >> 5) & 1U),
+                 (unsigned)((ctrl >> 6) & 1U), (unsigned)driverCode);
         break;
     }
+    case EV_SUMMONING_STATE: {
+        const bool active = (detail & 1U) != 0;
+        const bool parked = (detail & (1U << 1)) != 0;
+        const bool aca = (detail & (1U << 2)) != 0;
+        const bool spr = (detail & (1U << 3)) != 0;
+        const bool gateOpen = (detail & (1U << 4)) != 0;
+        const uint8_t reason = (uint8_t)((detail >> 5) & 0x07U);
+        snprintf(out, outLen,
+                 "state=%s gate=%s open=%u parked=%u aca=%u spr=%u tx_ok=%u tx_fail=%u blocked=%u",
+                 active ? "START" : "END", summonGateReasonNameFromCode(reason),
+                 (unsigned)gateOpen, (unsigned)parked, (unsigned)aca, (unsigned)spr,
+                 (unsigned)((detail >> 8) & 0xFFU), (unsigned)((detail >> 16) & 0xFFU),
+                 (unsigned)((detail >> 24) & 0xFFU));
+        break;
+    }
+    case EV_NAG_INJECTION_SESSION:
+        snprintf(out, outLen,
+                 "state=%s mode=%u ap_active=%u phase=%u decision=%s injections=%u",
+                 (detail & 1U) ? "START" : "END", (unsigned)((detail >> 1) & 0x03U),
+                 (unsigned)((detail >> 3) & 1U), (unsigned)((detail >> 4) & 0x0FU),
+                 nagDecisionName((uint8_t)((detail >> 8) & 0xFFU)),
+                 (unsigned)((detail >> 16) & 0xFFFFU));
+        break;
     case EV_A_SPI_TARGET:
         snprintf(out, outLen, "spi_target_mhz=%u reboot_required=1", (unsigned)detail);
         break;

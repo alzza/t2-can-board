@@ -20,6 +20,25 @@ void test_event_channel_and_severity_are_explicit()
     TEST_ASSERT_EQUAL_STRING("ERROR", eventSeverityName(eventSeverity(EV_A_EFLG_SET, 0x20)));
     TEST_ASSERT_EQUAL_UINT8(EV_CH_A, eventChannel(EV_A_TX_FAILURE));
     TEST_ASSERT_EQUAL_STRING("WARN", eventSeverityName(eventSeverity(EV_A_TX_FAILURE, 0)));
+    TEST_ASSERT_EQUAL_UINT8(EV_CH_A, eventChannel(EV_SUMMONING_STATE));
+    TEST_ASSERT_EQUAL_UINT8(EV_CH_B, eventChannel(EV_NAG_INJECTION_SESSION));
+}
+
+void test_auto_session_details_preserve_start_end_context()
+{
+    const uint32_t summon = eventSummoningStateDetail(
+        false, false, false, false, false, 3, 12, 2, 7);
+    TEST_ASSERT_FALSE((summon & 1U) != 0);
+    TEST_ASSERT_EQUAL_UINT8(3, (summon >> 5) & 0x07U);
+    TEST_ASSERT_EQUAL_UINT8(12, (summon >> 8) & 0xFFU);
+    TEST_ASSERT_EQUAL_UINT8(2, (summon >> 16) & 0xFFU);
+    TEST_ASSERT_EQUAL_UINT8(7, (summon >> 24) & 0xFFU);
+
+    const uint32_t nag = eventNagInjectionSessionDetail(true, 2, true, 2, 9, 1234);
+    TEST_ASSERT_TRUE((nag & 1U) != 0);
+    TEST_ASSERT_EQUAL_UINT8(2, (nag >> 1) & 0x03U);
+    TEST_ASSERT_TRUE((nag & (1U << 3)) != 0);
+    TEST_ASSERT_EQUAL_UINT16(1234, (nag >> 16) & 0xFFFFU);
 }
 
 void test_a_tx_failure_detail_preserves_source_phase_buffer_and_controller_bits()
@@ -31,6 +50,13 @@ void test_a_tx_failure_detail_preserves_source_phase_buffer_and_controller_bits(
     TEST_ASSERT_TRUE((detail & (1U << 2)) != 0);
     TEST_ASSERT_EQUAL_UINT8(2, (detail >> 3) & 0x03U);
     TEST_ASSERT_EQUAL_HEX8(0x30, (detail >> 8) & 0xFFU);
+
+    const uint32_t immediateDetail = eventATxFailureDetail(
+        2, false, 1, 0x50, 4); // TSLLC, 즉시 결과, TXB1, TXERR+ABTF
+    TEST_ASSERT_FALSE((immediateDetail & (1U << 2)) != 0);
+    TEST_ASSERT_EQUAL_UINT8(1, (immediateDetail >> 3) & 0x03U);
+    TEST_ASSERT_EQUAL_HEX8(0x50, (immediateDetail >> 8) & 0xFFU);
+    TEST_ASSERT_EQUAL_UINT8(4, (immediateDetail >> 16) & 0xFFU);
 }
 
 void test_noisy_event_is_coalesced_with_first_last_time_and_count()
@@ -84,6 +110,7 @@ int main()
     UNITY_BEGIN();
     RUN_TEST(test_event_channel_and_severity_are_explicit);
     RUN_TEST(test_a_tx_failure_detail_preserves_source_phase_buffer_and_controller_bits);
+    RUN_TEST(test_auto_session_details_preserve_start_end_context);
     RUN_TEST(test_noisy_event_is_coalesced_with_first_last_time_and_count);
     RUN_TEST(test_aggregate_window_or_detail_change_creates_new_record);
     RUN_TEST(test_rx_overrun_aggregation_keeps_largest_loop_gap);

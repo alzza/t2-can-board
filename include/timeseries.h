@@ -211,6 +211,9 @@ inline volatile uint32_t tsPrevTsllcTxOk = 0;
 inline volatile uint32_t tsPrevTsllcTxFail = 0;
 inline volatile bool tsFeatureActivitySeen = false;
 inline volatile uint32_t tsFeatureActivityLast = 0;
+inline volatile bool tsNagInjectionSessionActive = false;
+inline volatile uint32_t tsNagInjectionSessionBase = 0;
+inline volatile uint8_t tsNagInjectionSessionMode = 0;
 
 inline uint32_t tsDelta(uint32_t current, uint32_t base) {
     return current - base;
@@ -409,6 +412,8 @@ static void timeseriesTaskFn(void*) {
             s.dSummonTxOk > 0, s.dTsllcTxOk > 0, s.dModeBInject > 0,
             s.summonGateOpen != 0, s.aGuardActive != 0, s.nagApActive != 0);
         bool emitFeatureActivity = false;
+        uint32_t nagSessionDetail = 0;
+        bool emitNagSession = false;
         portENTER_CRITICAL(&tsMux);
         tsBuf[tsHead] = s;
         tsPrevEcho = curEcho;
@@ -440,6 +445,24 @@ static void timeseriesTaskFn(void*) {
             tsFeatureActivityLast = featureActivity;
             emitFeatureActivity = true;
         }
+        if (s.dModeBInject > 0) {
+            if (!tsNagInjectionSessionActive) {
+                tsNagInjectionSessionActive = true;
+                tsNagInjectionSessionBase = curModeBInject - s.dModeBInject;
+                tsNagInjectionSessionMode = s.nagMode;
+                nagSessionDetail = eventNagInjectionSessionDetail(
+                    true, s.nagMode, s.nagApActive != 0, s.modeBPhase,
+                    s.lastDecision, 0);
+                emitNagSession = true;
+            }
+        } else if (tsNagInjectionSessionActive) {
+            const uint32_t injections = curModeBInject - tsNagInjectionSessionBase;
+            nagSessionDetail = eventNagInjectionSessionDetail(
+                false, tsNagInjectionSessionMode, s.nagApActive != 0, s.modeBPhase,
+                s.lastDecision, injections);
+            tsNagInjectionSessionActive = false;
+            emitNagSession = true;
+        }
         tsHead = (tsHead + 1) % TS_CAP;
         if (tsCount < TS_CAP) ++tsCount;
         portEXIT_CRITICAL(&tsMux);
@@ -448,6 +471,12 @@ static void timeseriesTaskFn(void*) {
                          (uint16_t)bChannelDiag.twaiTxErrNow,
                          (uint16_t)bChannelDiag.twaiRxErrNow,
                          featureActivity);
+        }
+        if (emitNagSession) {
+            eventLogPush(EV_NAG_INJECTION_SESSION,
+                         (uint16_t)bChannelDiag.twaiTxErrNow,
+                         (uint16_t)bChannelDiag.twaiRxErrNow,
+                         nagSessionDetail);
         }
     }
 }
@@ -519,6 +548,9 @@ inline void timeseriesReset(bool beginManualRecording = false) {
     tsPrevTsllcTxFail = (uint32_t)aChannelDiag.tsllcTxFail;
     tsFeatureActivitySeen = false;
     tsFeatureActivityLast = 0;
+    tsNagInjectionSessionActive = false;
+    tsNagInjectionSessionBase = 0;
+    tsNagInjectionSessionMode = 0;
     portEXIT_CRITICAL(&tsMux);
     // USER_MARK는 부팅 세션 전체의 분석 기준점이다. 로그 초기화나 새 기록
     // 시작으로 지우지 않으며 RAM 상태이므로 보드 재부팅 때만 초기화된다.

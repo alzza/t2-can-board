@@ -172,7 +172,10 @@ public:
                 return CanTxResult::Queued;
             }
             if (result == MCP2515::ERROR_ALLTXBUSY) return CanTxResult::Busy;
-            recordTxFailureUnlocked(source, false, 3, 0, (uint8_t)result);
+            // sendMessage(TXBn)는 TXREQ 설정 직후 TXBnCTRL을 확인해 ERROR_FAILTX를
+            // 돌려준다. 같은 버퍼를 즉시 다시 읽어 TXERR/MLOA/ABTF를 보존한다.
+            const uint8_t resultCtrl = readRegisterUnlocked(kTxCtrlRegisters[i]);
+            recordTxFailureUnlocked(source, false, i, resultCtrl, (uint8_t)result);
             return CanTxResult::ControllerError;
         }
         return CanTxResult::Busy;
@@ -310,7 +313,7 @@ private:
         }
     }
 
-    void recordTxFailureUnlocked(CanTxSource source, bool pending, uint8_t buffer,
+    void recordTxFailureUnlocked(CanTxSource source, bool polledResult, uint8_t buffer,
                                  uint8_t ctrl, uint8_t driverCode)
     {
         const uint8_t sourceValue = (uint8_t)source;
@@ -324,7 +327,7 @@ private:
         eventLogPush(EV_A_TX_FAILURE,
                      (uint16_t)(uint8_t)aChannelDiag.aTec,
                      (uint16_t)(uint8_t)aChannelDiag.aRec,
-                     eventATxFailureDetail(sourceValue, pending, buffer, ctrl, driverCode));
+                     eventATxFailureDetail(sourceValue, polledResult, buffer, ctrl, driverCode));
     }
 
     bool configureChipUnlocked(bool verbose)

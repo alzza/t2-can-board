@@ -87,12 +87,14 @@ struct HW3Handler : public CarManagerBase
         if (frame.id == 280) {
             aChannelDiag.frames280++;
             summonHandle280(frame, nowMs);
+            trackSummoningState(nowMs);
             return;
         }
 
         if (frame.id == 390) {
             aChannelDiag.frames390++;
             summonHandle390(frame, nowMs);
+            trackSummoningState(nowMs);
             return;
         }
 
@@ -105,6 +107,7 @@ struct HW3Handler : public CarManagerBase
         if (frame.id == 1016) {
             aChannelDiag.frames1016++;
             summonHandle1016(frame);
+            trackSummoningState(nowMs);
             return;
         }
 
@@ -204,6 +207,45 @@ struct HW3Handler : public CarManagerBase
 #endif
         }
     }
+
+private:
+    void trackSummoningState(uint32_t nowMs)
+    {
+        const bool active = (bool)summonGateDiag.summoning;
+        if (!summoningStateSeen_) {
+            summoningStateSeen_ = true;
+            lastSummoningState_ = active;
+            if (!active) return;
+        } else if (active == lastSummoningState_) {
+            return;
+        }
+
+        const uint32_t txOk = (uint32_t)summonGateDiag.txOk;
+        const uint32_t txFail = (uint32_t)summonGateDiag.txFail;
+        const uint32_t blocked = (uint32_t)summonGateDiag.blocked;
+        const uint32_t detail = eventSummoningStateDetail(
+            active, (bool)summonGateDiag.parked, (bool)summonGateDiag.acaActive,
+            (bool)summonGateDiag.sprSeen, summonGateOpen(nowMs),
+            summonGateReasonCode(nowMs),
+            active ? 0U : txOk - summoningStartTxOk_,
+            active ? 0U : txFail - summoningStartTxFail_,
+            active ? 0U : blocked - summoningStartBlocked_);
+        eventLogPush(EV_SUMMONING_STATE,
+                     (uint16_t)(uint8_t)aChannelDiag.aTec,
+                     (uint16_t)(uint8_t)aChannelDiag.aRec, detail);
+        if (active) {
+            summoningStartTxOk_ = txOk;
+            summoningStartTxFail_ = txFail;
+            summoningStartBlocked_ = blocked;
+        }
+        lastSummoningState_ = active;
+    }
+
+    bool summoningStateSeen_ = false;
+    bool lastSummoningState_ = false;
+    uint32_t summoningStartTxOk_ = 0;
+    uint32_t summoningStartTxFail_ = 0;
+    uint32_t summoningStartBlocked_ = 0;
 };
  
 
