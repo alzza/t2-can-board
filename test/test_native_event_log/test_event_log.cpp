@@ -22,6 +22,8 @@ void test_event_channel_and_severity_are_explicit()
     TEST_ASSERT_EQUAL_STRING("WARN", eventSeverityName(eventSeverity(EV_A_TX_FAILURE, 0)));
     TEST_ASSERT_EQUAL_UINT8(EV_CH_A, eventChannel(EV_SUMMONING_STATE));
     TEST_ASSERT_EQUAL_UINT8(EV_CH_B, eventChannel(EV_NAG_INJECTION_SESSION));
+    TEST_ASSERT_EQUAL_UINT8(EV_CH_A, eventChannel(EV_SUMMON_UNLOCK_ACTIVITY));
+    TEST_ASSERT_EQUAL_UINT8(EV_CH_B, eventChannel(EV_NAG_GATE_STATE));
 }
 
 void test_auto_session_details_preserve_start_end_context()
@@ -39,6 +41,24 @@ void test_auto_session_details_preserve_start_end_context()
     TEST_ASSERT_EQUAL_UINT8(2, (nag >> 1) & 0x03U);
     TEST_ASSERT_TRUE((nag & (1U << 3)) != 0);
     TEST_ASSERT_EQUAL_UINT16(1234, (nag >> 16) & 0xFFFFU);
+
+    const uint32_t unlock = eventSummonUnlockActivityDetail(
+        false, true, false, false, 2, 10, 8, 2);
+    TEST_ASSERT_FALSE((unlock & 1U) != 0);
+    TEST_ASSERT_TRUE((unlock & (1U << 1)) != 0);
+    TEST_ASSERT_EQUAL_UINT8(2, (unlock >> 4) & 0x07U);
+    TEST_ASSERT_EQUAL_UINT8(10, (unlock >> 8) & 0xFFU);
+    TEST_ASSERT_EQUAL_UINT8(8, (unlock >> 16) & 0xFFU);
+    TEST_ASSERT_EQUAL_UINT8(2, (unlock >> 24) & 0xFFU);
+
+    const uint32_t gate = eventNagGateStateDetail(
+        kNagDecisionHandsOn, 2, true, 3, 2, 923, 2);
+    TEST_ASSERT_EQUAL_UINT8(kNagDecisionHandsOn, gate & 0x0FU);
+    TEST_ASSERT_EQUAL_UINT8(2, (gate >> 4) & 0x03U);
+    TEST_ASSERT_TRUE((gate & (1U << 6)) != 0);
+    TEST_ASSERT_EQUAL_UINT8(3, (gate >> 7) & 0x03U);
+    TEST_ASSERT_EQUAL_UINT16(923, (gate >> 13) & 0x07FFU);
+    TEST_ASSERT_EQUAL_UINT8(2, (gate >> 24) & 0xFFU);
 }
 
 void test_a_tx_failure_detail_preserves_source_phase_buffer_and_controller_bits()
@@ -94,6 +114,26 @@ void test_rx_overrun_aggregation_keeps_largest_loop_gap()
     TEST_ASSERT_EQUAL_HEX8(0x80, evtBuf[0].detail & 0xFFU);
 }
 
+void test_nag_gate_chatter_is_coalesced_and_keeps_latest_state()
+{
+    const uint32_t handsOn = eventNagGateStateDetail(
+        kNagDecisionHandsOn, 2, false, 1, 1, 923, 2);
+    const uint32_t apBlocked = eventNagGateStateDetail(
+        kNagDecisionApBlocked, 2, false, 0, 1, 923, 2);
+
+    eventLogPushAt(1000, EV_NAG_GATE_STATE, 0, 0, handsOn);
+    eventLogPushAt(1200, EV_NAG_GATE_STATE, 0, 0, apBlocked);
+    eventLogPushAt(1400, EV_NAG_GATE_STATE, 0, 0, handsOn);
+
+    TEST_ASSERT_EQUAL_UINT32(1, evtCount);
+    TEST_ASSERT_EQUAL_UINT32(3, evtOccurrenceTotal);
+    TEST_ASSERT_EQUAL_UINT32(2, evtCoalescedTotal);
+    TEST_ASSERT_EQUAL_UINT32(1000, evtBuf[0].t_ms);
+    TEST_ASSERT_EQUAL_UINT32(1400, evtBuf[0].last_ms);
+    TEST_ASSERT_EQUAL_UINT32(3, evtBuf[0].occurrences);
+    TEST_ASSERT_EQUAL_UINT32(handsOn, evtBuf[0].detail);
+}
+
 void test_non_noisy_events_preserve_each_occurrence_and_track_overwrite()
 {
     for (uint32_t i = 0; i < EVT_CAP + 3; ++i) {
@@ -114,6 +154,7 @@ int main()
     RUN_TEST(test_noisy_event_is_coalesced_with_first_last_time_and_count);
     RUN_TEST(test_aggregate_window_or_detail_change_creates_new_record);
     RUN_TEST(test_rx_overrun_aggregation_keeps_largest_loop_gap);
+    RUN_TEST(test_nag_gate_chatter_is_coalesced_and_keeps_latest_state);
     RUN_TEST(test_non_noisy_events_preserve_each_occurrence_and_track_overwrite);
     return UNITY_END();
 }

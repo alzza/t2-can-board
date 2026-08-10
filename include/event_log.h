@@ -43,6 +43,8 @@ enum CanEventType : uint8_t {
     EV_A_TX_FAILURE = 27, // A채널 MCP2515 TXERR 기능/버퍼/결과 세부 기록
     EV_SUMMONING_STATE = 28, // 검증 INO 게이트의 실제 Summoning 상태 전이
     EV_NAG_INJECTION_SESSION = 29, // 실제 Nag 주입 세션 시작/종료
+    EV_SUMMON_UNLOCK_ACTIVITY = 30, // bit19/46 주입 활동 시작/종료(실제 Summoning과 분리)
+    EV_NAG_GATE_STATE = 31, // Nag 허용/차단 사유 밀리초 전이
     EV_TYPE_COUNT
 };
 
@@ -91,6 +93,8 @@ inline const char* eventTypeName(uint8_t type) {
     case EV_A_TX_FAILURE: return "A_TX_FAILURE";
     case EV_SUMMONING_STATE: return "SUMMONING_STATE";
     case EV_NAG_INJECTION_SESSION: return "NAG_INJECTION_SESSION";
+    case EV_SUMMON_UNLOCK_ACTIVITY: return "SUMMON_UNLOCK_ACTIVITY";
+    case EV_NAG_GATE_STATE: return "NAG_GATE_STATE";
     default: return "UNKNOWN";
     }
 }
@@ -106,6 +110,7 @@ inline uint8_t eventChannel(uint8_t type) {
     case EV_A_SPI_TARGET:
     case EV_A_TX_FAILURE:
     case EV_SUMMONING_STATE:
+    case EV_SUMMON_UNLOCK_ACTIVITY:
         return EV_CH_A;
     case EV_BUSOFF:
     case EV_RECOVERY_OK:
@@ -119,6 +124,7 @@ inline uint8_t eventChannel(uint8_t type) {
     case EV_TX_BACKOFF:
     case EV_NAG_MODE:
     case EV_NAG_INJECTION_SESSION:
+    case EV_NAG_GATE_STATE:
         return EV_CH_B;
     case EV_USER_MARK:
     case EV_FEATURE_ACTIVITY:
@@ -175,6 +181,10 @@ inline bool eventTypeIsAggregated(uint8_t type) {
     case EV_A_EFLG_CLEAR:
     case EV_A_RX_OVERRUN:
     case EV_A_TX_FAILURE:
+    // Hands-on/AP 차단은 수백 ms 단위로 왕복할 수 있다. 개별 전이를 모두
+    // 보관하면 256행 이벤트 링이 먼저 소진되므로 30초 구간으로 묶는다.
+    // 실제 Nag 주입 세션의 START/END는 별도 이벤트라 묶지 않는다.
+    case EV_NAG_GATE_STATE:
         return true;
     default:
         return false;
@@ -184,7 +194,11 @@ inline bool eventTypeIsAggregated(uint8_t type) {
 inline uint32_t eventAggregateKey(uint8_t type, uint32_t detail) {
     // A RX 오버런 detail 상위 24비트에는 관측 당시 A 폴링 공백(us)이 들어간다.
     // EFLG 비트가 같으면 같은 30초 구간으로 묶고 최대 공백은 별도로 보존한다.
-    return type == EV_A_RX_OVERRUN ? (detail & 0xFFU) : detail;
+    if (type == EV_A_RX_OVERRUN) return detail & 0xFFU;
+    // 게이트 상태가 HANDS_ON <-> AP_BLOCK처럼 반복 전이해도 같은 구간으로
+    // 합산한다. 최신 detail은 eventLogPushAt에서 보존한다.
+    if (type == EV_NAG_GATE_STATE) return type;
+    return detail;
 }
 
 inline uint32_t eventFeatureStateDetail() {
@@ -262,6 +276,39 @@ inline uint32_t eventNagInjectionSessionDetail(bool active, uint8_t mode, bool a
            ((uint32_t)(phase & 0x0FU) << 4) |
            ((uint32_t)decision << 8) |
            (injections16 << 16);
+}
+
+// Summon Unlock 주입 활동 구간. queued/completed/arbitrationLost는 세션 범위에서
+// 255로 포화한다. 실제 차량 Summoning은 EV_SUMMONING_STATE로 별도 기록한다.
+inline uint32_t eventSummonUnlockActivityDetail(bool active, bool parked, bool apActive,
+                                                bool summoning, uint8_t gateReason,
+                                                uint32_t queued, uint32_t completed,
+                                                uint32_t arbitrationLost)
+{
+    const uint32_t queued8 = queued > 255U ? 255U : queued;
+    const uint32_t completed8 = completed > 255U ? 255U : completed;
+    const uint32_t lost8 = arbitrationLost > 255U ? 255U : arbitrationLost;
+    return (active ? 1U : 0U) |
+           (parked ? (1U << 1) : 0U) |
+           (apActive ? (1U << 2) : 0U) |
+           (summoning ? (1U << 3) : 0U) |
+           ((uint32_t)(gateReason & 0x07U) << 4) |
+           (queued8 << 8) |
+           (completed8 << 16) |
+           (lost8 << 24);
+}
+
+inline uint32_t eventNagGateStateDetail(uint8_t decision, uint8_t mode, bool apActive,
+                                        uint8_t handsOn, uint8_t dasState,
+                                        uint16_t dasSource, uint8_t phase)
+{
+    return (uint32_t)(decision & 0x0FU) |
+           ((uint32_t)(mode & 0x03U) << 4) |
+           (apActive ? (1U << 6) : 0U) |
+           ((uint32_t)(handsOn & 0x03U) << 7) |
+           ((uint32_t)(dasState & 0x0FU) << 9) |
+           ((uint32_t)(dasSource & 0x07FFU) << 13) |
+           ((uint32_t)phase << 24);
 }
 
 #ifndef NATIVE_BUILD
@@ -387,6 +434,28 @@ inline const char* eventDetailText(uint8_t type, uint32_t detail, char* out, siz
                  nagDecisionName((uint8_t)((detail >> 8) & 0xFFU)),
                  (unsigned)((detail >> 16) & 0xFFFFU));
         break;
+    case EV_SUMMON_UNLOCK_ACTIVITY: {
+        const uint8_t reason = (uint8_t)((detail >> 4) & 0x07U);
+        snprintf(out, outLen,
+                 "state=%s gate=%s parked=%u ap_active=%u summoning=%u queued=%u completed=%u arbitration_lost=%u",
+                 (detail & 1U) ? "START" : "END", summonGateReasonNameFromCode(reason),
+                 (unsigned)((detail >> 1) & 1U), (unsigned)((detail >> 2) & 1U),
+                 (unsigned)((detail >> 3) & 1U), (unsigned)((detail >> 8) & 0xFFU),
+                 (unsigned)((detail >> 16) & 0xFFU),
+                 (unsigned)((detail >> 24) & 0xFFU));
+        break;
+    }
+    case EV_NAG_GATE_STATE: {
+        const uint8_t decision = (uint8_t)(detail & 0x0FU);
+        snprintf(out, outLen,
+                 "gate=%s decision=%s mode=%u ap_active=%u hands_on=%u das=%u source=%u phase=%u",
+                 nagGateClassName(nagDecisionGateClass(decision)), nagDecisionName(decision),
+                 (unsigned)((detail >> 4) & 0x03U), (unsigned)((detail >> 6) & 1U),
+                 (unsigned)((detail >> 7) & 0x03U), (unsigned)((detail >> 9) & 0x0FU),
+                 (unsigned)((detail >> 13) & 0x07FFU),
+                 (unsigned)((detail >> 24) & 0xFFU));
+        break;
+    }
     case EV_A_SPI_TARGET:
         snprintf(out, outLen, "spi_target_mhz=%u reboot_required=1", (unsigned)detail);
         break;
@@ -443,6 +512,9 @@ inline void eventLogPushAt(uint32_t now, uint8_t type, uint16_t tec, uint16_t re
                     (detail >> 8) > (previous.detail >> 8)) {
                     previous.detail = detail;
                 }
+                // 묶음의 마지막 게이트 상태가 CSV의 마지막 시각과 일치하도록
+                // 최신 detail을 남긴다. occurrences가 구간 내 전이 횟수다.
+                if (type == EV_NAG_GATE_STATE) previous.detail = detail;
                 previous.occurrences++;
                 evtCoalescedTotal++;
 #ifndef NATIVE_BUILD

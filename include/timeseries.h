@@ -132,6 +132,14 @@ struct TsSample {
     uint32_t summonBlocked;
     uint32_t tsllcTxOk;
     uint32_t tsllcTxFail;
+    uint32_t summonTxCompleted;
+    uint32_t summonTxArbitrationLost;
+    uint32_t summonTxAborted;
+    uint32_t summonTxError;
+    uint32_t tsllcTxCompleted;
+    uint32_t tsllcTxArbitrationLost;
+    uint32_t tsllcTxAborted;
+    uint32_t tsllcTxError;
     uint16_t dSummonTxOk;
     uint16_t dSummonTxFail;
     uint16_t dSummonBlocked;
@@ -211,9 +219,6 @@ inline volatile uint32_t tsPrevTsllcTxOk = 0;
 inline volatile uint32_t tsPrevTsllcTxFail = 0;
 inline volatile bool tsFeatureActivitySeen = false;
 inline volatile uint32_t tsFeatureActivityLast = 0;
-inline volatile bool tsNagInjectionSessionActive = false;
-inline volatile uint32_t tsNagInjectionSessionBase = 0;
-inline volatile uint8_t tsNagInjectionSessionMode = 0;
 
 inline uint32_t tsDelta(uint32_t current, uint32_t base) {
     return current - base;
@@ -339,6 +344,16 @@ static void timeseriesTaskFn(void*) {
         s.summonBlocked = tsDelta(curSummonBlocked, (uint32_t)tsBaseSummonBlocked);
         s.tsllcTxOk = tsDelta(curTsllcTxOk, (uint32_t)tsBaseTsllcTxOk);
         s.tsllcTxFail = tsDelta(curTsllcTxFail, (uint32_t)tsBaseTsllcTxFail);
+        s.summonTxCompleted = (uint32_t)aChannelDiag.aTxCompletedSummon;
+        s.summonTxArbitrationLost =
+            (uint32_t)aChannelDiag.aTxArbitrationLostSummon;
+        s.summonTxAborted = (uint32_t)aChannelDiag.aTxAbortedSummon;
+        s.summonTxError = (uint32_t)aChannelDiag.aTxFailSummon;
+        s.tsllcTxCompleted = (uint32_t)aChannelDiag.aTxCompletedTsllc;
+        s.tsllcTxArbitrationLost =
+            (uint32_t)aChannelDiag.aTxArbitrationLostTsllc;
+        s.tsllcTxAborted = (uint32_t)aChannelDiag.aTxAbortedTsllc;
+        s.tsllcTxError = (uint32_t)aChannelDiag.aTxFailTsllc;
         s.dSummonTxOk = tsDelta16(curSummonTxOk, (uint32_t)tsPrevSummonTxOk);
         s.dSummonTxFail = tsDelta16(curSummonTxFail, (uint32_t)tsPrevSummonTxFail);
         s.dSummonBlocked = tsDelta16(curSummonBlocked, (uint32_t)tsPrevSummonBlocked);
@@ -412,8 +427,6 @@ static void timeseriesTaskFn(void*) {
             s.dSummonTxOk > 0, s.dTsllcTxOk > 0, s.dModeBInject > 0,
             s.summonGateOpen != 0, s.aGuardActive != 0, s.nagApActive != 0);
         bool emitFeatureActivity = false;
-        uint32_t nagSessionDetail = 0;
-        bool emitNagSession = false;
         portENTER_CRITICAL(&tsMux);
         tsBuf[tsHead] = s;
         tsPrevEcho = curEcho;
@@ -445,24 +458,6 @@ static void timeseriesTaskFn(void*) {
             tsFeatureActivityLast = featureActivity;
             emitFeatureActivity = true;
         }
-        if (s.dModeBInject > 0) {
-            if (!tsNagInjectionSessionActive) {
-                tsNagInjectionSessionActive = true;
-                tsNagInjectionSessionBase = curModeBInject - s.dModeBInject;
-                tsNagInjectionSessionMode = s.nagMode;
-                nagSessionDetail = eventNagInjectionSessionDetail(
-                    true, s.nagMode, s.nagApActive != 0, s.modeBPhase,
-                    s.lastDecision, 0);
-                emitNagSession = true;
-            }
-        } else if (tsNagInjectionSessionActive) {
-            const uint32_t injections = curModeBInject - tsNagInjectionSessionBase;
-            nagSessionDetail = eventNagInjectionSessionDetail(
-                false, tsNagInjectionSessionMode, s.nagApActive != 0, s.modeBPhase,
-                s.lastDecision, injections);
-            tsNagInjectionSessionActive = false;
-            emitNagSession = true;
-        }
         tsHead = (tsHead + 1) % TS_CAP;
         if (tsCount < TS_CAP) ++tsCount;
         portEXIT_CRITICAL(&tsMux);
@@ -471,12 +466,6 @@ static void timeseriesTaskFn(void*) {
                          (uint16_t)bChannelDiag.twaiTxErrNow,
                          (uint16_t)bChannelDiag.twaiRxErrNow,
                          featureActivity);
-        }
-        if (emitNagSession) {
-            eventLogPush(EV_NAG_INJECTION_SESSION,
-                         (uint16_t)bChannelDiag.twaiTxErrNow,
-                         (uint16_t)bChannelDiag.twaiRxErrNow,
-                         nagSessionDetail);
         }
     }
 }
@@ -548,9 +537,6 @@ inline void timeseriesReset(bool beginManualRecording = false) {
     tsPrevTsllcTxFail = (uint32_t)aChannelDiag.tsllcTxFail;
     tsFeatureActivitySeen = false;
     tsFeatureActivityLast = 0;
-    tsNagInjectionSessionActive = false;
-    tsNagInjectionSessionBase = 0;
-    tsNagInjectionSessionMode = 0;
     portEXIT_CRITICAL(&tsMux);
     // USER_MARK는 부팅 세션 전체의 분석 기준점이다. 로그 초기화나 새 기록
     // 시작으로 지우지 않으며 RAM 상태이므로 보드 재부팅 때만 초기화된다.
@@ -609,7 +595,9 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
         "a_summon_ap_stable_ms,a_summon_gate_reason,"
         "a_summon_inject_ready,a_summon_tx_ok,a_summon_tx_fail,a_summon_blocked,"
         "a_d_summon_tx_ok,a_d_summon_tx_fail,a_d_summon_blocked,a_tsllc_inject_ready,a_tsllc_tx_ok,a_tsllc_tx_fail,"
-        "a_d_tsllc_tx_ok,a_d_tsllc_tx_fail,b_nag_ap_only,b_nag_ap_active,b_nag_injecting,b_nag_tx_ok,b_d_nag_tx_ok\r\n";
+        "a_d_tsllc_tx_ok,a_d_tsllc_tx_fail,b_nag_ap_only,b_nag_ap_active,b_nag_injecting,b_nag_tx_ok,b_d_nag_tx_ok,"
+        "a_summon_tx_completed,a_summon_tx_arbitration_lost,a_summon_tx_aborted,a_summon_tx_error,"
+        "a_tsllc_tx_completed,a_tsllc_tx_arbitration_lost,a_tsllc_tx_aborted,a_tsllc_tx_error\r\n";
     httpd_resp_sendstr_chunk(req, hdr);
     char line[1792];
     char wallTime[40];
@@ -656,7 +644,8 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
             "%u,%u,%u,%u,%u,%u,%u,%u,"
             "%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,"
             "%u,%u,%u,%u,%u,%u,%u,%s,"
-            "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+            "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+            "%u,%u,%u,%u,%u,%u,%u,%u\r\n",
             (unsigned)s.aFrames, (double)s.aFrameHz,
             (unsigned)s.aEflg, aMcpEflgStateName(s.aEflg), (unsigned)s.aEflgPeak,
             (unsigned)s.aTec, (unsigned)s.aRec, (unsigned)s.aTecPeak, (unsigned)s.aRecPeak,
@@ -697,7 +686,13 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
             (unsigned)s.tsllcTxFail, (unsigned)s.dTsllcTxOk,
             (unsigned)s.dTsllcTxFail, (unsigned)s.nagApOnly,
             (unsigned)s.nagApActive, (unsigned)s.nagInjecting,
-            (unsigned)s.modeBInject, (unsigned)s.dModeBInject);
+            (unsigned)s.modeBInject, (unsigned)s.dModeBInject,
+            (unsigned)s.summonTxCompleted,
+            (unsigned)s.summonTxArbitrationLost,
+            (unsigned)s.summonTxAborted, (unsigned)s.summonTxError,
+            (unsigned)s.tsllcTxCompleted,
+            (unsigned)s.tsllcTxArbitrationLost,
+            (unsigned)s.tsllcTxAborted, (unsigned)s.tsllcTxError);
         if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) return ESP_FAIL;
     }
     httpd_resp_sendstr_chunk(req, NULL);

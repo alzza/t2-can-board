@@ -6,6 +6,29 @@
 
 ## [Unreleased]
 
+## [1.3.12] - 2026-08-10
+
+### Nag 게이트 기록 보존
+
+- 실차 로그에서 Hands-on과 AP 차단 상태가 짧게 반복될 때 `NAG_GATE_STATE`가 256행 이벤트 링을 소진하던 문제를 수정했다.
+- 첫 게이트 전이는 즉시 기록하고, 같은 30초 구간의 반복 전이는 `occurrences`로 합산한다. 해당 행의 `detail_text`는 마지막 게이트 상태를 표시한다.
+- 실제 `NAG_INJECTION_SESSION` 시작·종료, Summon 상태·Unlock 활동, BUS-OFF와 실제 TX 오류 이벤트는 기존처럼 각각 즉시 기록한다. CAN ID·비트·주기·토크·One-shot과 TX Guard 기준은 변경하지 않았다.
+
+## [1.3.11] - 2026-08-09
+
+### A채널 송신 결과 분류
+
+- MCP2515가 TX 요청 직후 `MLOA/ABTF`와 `TXREQ`를 동시에 반환하면 즉시 하드 오류로 확정하지 않고 진행 중인 TX 버퍼로 등록한 뒤 완료 폴링에서 최종 결과를 판정한다.
+- 최종 결과를 `완료 / 중재 손실(MLOA) / 중단(ABTF) / 실제 TX 오류(TXERR)`로 분리하고 Summon·TSLLC별 누적값을 상태 API, 시계열 CSV와 통합 로그에 추가했다.
+- A TX Guard의 `TX_FAIL` 입력에는 최종 `TXERR` 또는 컨트롤러 오류만 포함한다. 정상적인 CAN 우선순위 경쟁인 `MLOA`와 One-shot 중단 `ABTF`는 Guard를 시작하지 않는다. EFLG·TEC 보호, 15초 보호 시간과 1초 2회 임계값은 유지한다.
+
+### 자동 구간 기록
+
+- 주차 또는 AP 안정 상태에서 bit19/46을 주입하는 `SUMMON_UNLOCK_ACTIVITY`와 `ACA + SPR`로 확인하는 실제 `SUMMONING_STATE`를 서로 다른 이벤트로 기록한다.
+- Nag 주입 세션은 5초 시계열 추정 대신 첫 실제 송신에서 시작하고 AP 차단·Hands-on·기능 OFF 전이에 맞춰 밀리초 단위로 종료한다. Mode 2 내부 휴지는 같은 세션으로 유지한다.
+- `NAG_GATE_STATE` 이벤트에 허용·차단 상태, 판정 사유, 모드, AP, 실제 Hands-on, DAS 상태·소스와 주입 페이즈를 기록한다.
+- CAN ID·HW3 bit19/46·TSLLC bit38/39·Nag 토크값·주입 주기·One-shot 설정은 변경하지 않았다.
+
 ## [1.3.10] - 2026-08-09
 
 ### 자동 기능 구간 기록

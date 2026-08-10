@@ -81,6 +81,7 @@ struct HW3Handler : public CarManagerBase
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
         const uint32_t nowMs = millis();
+        maintainSummonUnlockActivity(nowMs);
         aChannelDiag.framesReceivedTotal++;
         aChannelDiag.lastFrameIdReceived = frame.id;
 
@@ -134,8 +135,8 @@ struct HW3Handler : public CarManagerBase
                 } else if (txResult == CanTxResult::Busy) {
                     aChannelDiag.aTxBusy++;
                     aChannelDiag.tsllcTxBusy++;
-                } else {
-                    aChannelDiag.aTxFail++;
+                } else if (txResult == CanTxResult::ControllerError ||
+                           txResult == CanTxResult::InvalidFrame) {
                     aChannelDiag.tsllcTxFail++;
                 }
                 canTxPermitEnd();
@@ -179,6 +180,7 @@ struct HW3Handler : public CarManagerBase
                     aChannelDiag.lastTxMs = sentAtMs;
                     summonGateDiag.txOk = (uint32_t)summonGateDiag.txOk + 1;
                     summonGateDiag.lastTxMs = sentAtMs;
+                    noteSummonUnlockActivity(sentAtMs);
                     if ((bool)aChannelDiag.wakeAwaitingSummonTx) {
                         const uint32_t wakeMs = (uint32_t)aChannelDiag.lastWakeRxMs;
                         const uint32_t wakeDelayMs = wakeMs > 0 ? sentAtMs - wakeMs : 0;
@@ -192,8 +194,8 @@ struct HW3Handler : public CarManagerBase
                 } else if (txResult == CanTxResult::Busy) {
                     aChannelDiag.aTxBusy++;
                     summonGateDiag.txBusy = (uint32_t)summonGateDiag.txBusy + 1;
-                } else {
-                    aChannelDiag.aTxFail++;
+                } else if (txResult == CanTxResult::ControllerError ||
+                           txResult == CanTxResult::InvalidFrame) {
                     summonGateDiag.txFail = (uint32_t)summonGateDiag.txFail + 1;
                 }
                 canTxPermitEnd();
@@ -209,6 +211,52 @@ struct HW3Handler : public CarManagerBase
     }
 
 private:
+    static constexpr uint32_t kSummonUnlockActivityIdleMs = 1500;
+
+    void noteSummonUnlockActivity(uint32_t nowMs)
+    {
+        if (!summonUnlockActivityActive_) {
+            summonUnlockActivityActive_ = true;
+            const uint32_t queued = (uint32_t)summonGateDiag.txOk;
+            summonUnlockStartQueued_ = queued > 0 ? queued - 1U : 0U;
+            summonUnlockStartCompleted_ =
+                (uint32_t)aChannelDiag.aTxCompletedSummon;
+            summonUnlockStartArbitrationLost_ =
+                (uint32_t)aChannelDiag.aTxArbitrationLostSummon;
+            eventLogPush(EV_SUMMON_UNLOCK_ACTIVITY,
+                         (uint16_t)(uint8_t)aChannelDiag.aTec,
+                         (uint16_t)(uint8_t)aChannelDiag.aRec,
+                         eventSummonUnlockActivityDetail(
+                             true, (bool)summonGateDiag.parked,
+                             (bool)summonGateDiag.apActive,
+                             (bool)summonGateDiag.summoning,
+                             summonGateReasonCode(nowMs), 0, 0, 0));
+        }
+        summonUnlockActivityLastQueuedMs_ = nowMs;
+    }
+
+    void maintainSummonUnlockActivity(uint32_t nowMs)
+    {
+        if (!summonUnlockActivityActive_ ||
+            nowMs - summonUnlockActivityLastQueuedMs_ <= kSummonUnlockActivityIdleMs)
+            return;
+
+        summonUnlockActivityActive_ = false;
+        eventLogPush(EV_SUMMON_UNLOCK_ACTIVITY,
+                     (uint16_t)(uint8_t)aChannelDiag.aTec,
+                     (uint16_t)(uint8_t)aChannelDiag.aRec,
+                     eventSummonUnlockActivityDetail(
+                         false, (bool)summonGateDiag.parked,
+                         (bool)summonGateDiag.apActive,
+                         (bool)summonGateDiag.summoning,
+                         summonGateReasonCode(nowMs),
+                         (uint32_t)summonGateDiag.txOk - summonUnlockStartQueued_,
+                         (uint32_t)aChannelDiag.aTxCompletedSummon -
+                             summonUnlockStartCompleted_,
+                         (uint32_t)aChannelDiag.aTxArbitrationLostSummon -
+                             summonUnlockStartArbitrationLost_));
+    }
+
     void trackSummoningState(uint32_t nowMs)
     {
         const bool active = (bool)summonGateDiag.summoning;
@@ -246,6 +294,11 @@ private:
     uint32_t summoningStartTxOk_ = 0;
     uint32_t summoningStartTxFail_ = 0;
     uint32_t summoningStartBlocked_ = 0;
+    bool summonUnlockActivityActive_ = false;
+    uint32_t summonUnlockActivityLastQueuedMs_ = 0;
+    uint32_t summonUnlockStartQueued_ = 0;
+    uint32_t summonUnlockStartCompleted_ = 0;
+    uint32_t summonUnlockStartArbitrationLost_ = 0;
 };
  
 
@@ -325,14 +378,14 @@ struct NagHandler : public CarManagerBase
         if (!transmissionAllowed || !nagKillerActive || !nagKillerRuntime)
         {
             bChannelDiag.skipRuntimeOrInactive++;
-            bChannelDiag.nagLastDecision = kNagDecisionRuntimeOff;
+            setNagDecision(kNagDecisionRuntimeOff, now);
             return;
         }
 
         if (!(bool)bChannelDiag.nagReady)
         {
             bChannelDiag.skipWarmup++;
-            bChannelDiag.nagLastDecision = kNagDecisionWarmup;
+            setNagDecision(kNagDecisionWarmup, now);
             return;
         }
 
@@ -340,7 +393,7 @@ struct NagHandler : public CarManagerBase
         if (handsOn != 0)
         {
             bChannelDiag.skipHandsOn++;
-            bChannelDiag.nagLastDecision = kNagDecisionHandsOn;
+            setNagDecision(kNagDecisionHandsOn, now);
             return;
         }
 
@@ -351,13 +404,13 @@ struct NagHandler : public CarManagerBase
             if (!dasStateSeen_ || now - lastDasStateMs_ > kContextFreshMs)
             {
                 bChannelDiag.skipApState++;
-                bChannelDiag.nagLastDecision = kNagDecisionNo921;
+                setNagDecision(kNagDecisionNo921, now);
                 return;
             }
             if (!nagApStateAllowsInjection(apState_))
             {
                 bChannelDiag.skipApState++;
-                bChannelDiag.nagLastDecision = kNagDecisionApBlocked;
+                setNagDecision(kNagDecisionApBlocked, now);
                 return;
             }
         }
@@ -405,6 +458,10 @@ private:
     bool canStarted_ = false;
     uint32_t canStartedMs_ = 0;
     uint32_t targetFramesSeen_ = 0;
+    uint8_t lastNagGateClass_ = 0xFF;
+    bool nagInjectionSessionActive_ = false;
+    uint32_t nagInjectionSessionBase_ = 0;
+    uint8_t nagInjectionSessionMode_ = 0;
 
     static uint32_t packFrameWord(const CanFrame &frame, uint8_t offset)
     {
@@ -481,8 +538,64 @@ private:
         return value > 65535UL ? 65535U : static_cast<uint16_t>(value);
     }
 
+    void endNagInjectionSession(uint32_t now, uint8_t decision)
+    {
+        (void)now;
+        if (!nagInjectionSessionActive_) return;
+        nagInjectionSessionActive_ = false;
+        const uint32_t injections =
+            (uint32_t)bChannelDiag.modeBInjectCount - nagInjectionSessionBase_;
+        eventLogPush(EV_NAG_INJECTION_SESSION,
+                     clampU16((uint32_t)bChannelDiag.twaiTxErrNow),
+                     clampU16((uint32_t)bChannelDiag.twaiRxErrNow),
+                     eventNagInjectionSessionDetail(
+                         false, nagInjectionSessionMode_,
+                         nagApStateAllowsInjection(apState_),
+                         (uint8_t)bChannelDiag.modeBPhase, decision, injections));
+    }
+
+    void setNagDecision(uint8_t decision, uint32_t now)
+    {
+        bChannelDiag.nagLastDecision = decision;
+        const uint8_t gateClass = nagDecisionGateClass(decision);
+        if (gateClass != lastNagGateClass_) {
+            lastNagGateClass_ = gateClass;
+            eventLogPush(EV_NAG_GATE_STATE,
+                         clampU16((uint32_t)bChannelDiag.twaiTxErrNow),
+                         clampU16((uint32_t)bChannelDiag.twaiRxErrNow),
+                         eventNagGateStateDetail(
+                             decision, (uint8_t)bChannelDiag.nagMode,
+                             nagApStateAllowsInjection(apState_),
+                             (uint8_t)bChannelDiag.realHo,
+                             (uint8_t)bChannelDiag.dasHandsOnStateRx,
+                             (uint16_t)(uint32_t)bChannelDiag.dasStatusSourceId,
+                             (uint8_t)bChannelDiag.modeBPhase));
+        }
+        if (gateClass != kNagGateReady)
+            endNagInjectionSession(now, decision);
+    }
+
+    void noteNagInjectionSession(uint32_t now)
+    {
+        (void)now;
+        if (nagInjectionSessionActive_) return;
+        nagInjectionSessionActive_ = true;
+        const uint32_t count = (uint32_t)bChannelDiag.modeBInjectCount;
+        nagInjectionSessionBase_ = count > 0 ? count - 1U : 0U;
+        nagInjectionSessionMode_ = (uint8_t)bChannelDiag.nagMode;
+        eventLogPush(EV_NAG_INJECTION_SESSION,
+                     clampU16((uint32_t)bChannelDiag.twaiTxErrNow),
+                     clampU16((uint32_t)bChannelDiag.twaiRxErrNow),
+                     eventNagInjectionSessionDetail(
+                         true, nagInjectionSessionMode_,
+                         nagApStateAllowsInjection(apState_),
+                         (uint8_t)bChannelDiag.modeBPhase,
+                         kNagDecisionEcho, 0));
+    }
+
     void resetModeState(uint8_t mode, uint32_t now)
     {
+        setNagDecision(kNagDecisionRuntimeOff, now);
         activeMode_ = mode;
         mode2TorqueIndex_ = 0;
         modeEnteredMs_ = now;
@@ -568,7 +681,7 @@ private:
             if ((now - modeEnteredMs_) % kCycleMs >= kMode2BurstMs)
             {
                 setPhase(0, now);
-                bChannelDiag.nagLastDecision = kNagDecisionModePause;
+                setNagDecision(kNagDecisionModePause, now);
                 return false;
             }
             if (now - mode2LastStepMs_ >= kMode2TorqueStepMs)
@@ -582,7 +695,7 @@ private:
             return true;
         }
 
-        bChannelDiag.nagLastDecision = kNagDecisionRuntimeOff;
+        setNagDecision(kNagDecisionRuntimeOff, now);
         return false;
     }
 
@@ -607,13 +720,13 @@ private:
         if (elapsedUs > kNagEchoDeadlineUs)
         {
             bChannelDiag.echoDroppedLate++;
-            bChannelDiag.nagLastDecision = kNagDecisionLateDrop;
+            setNagDecision(kNagDecisionLateDrop, now);
             return false;
         }
 
         if (!canTxPermitBegin())
         {
-            bChannelDiag.nagLastDecision = kNagDecisionRuntimeOff;
+            setNagDecision(kNagDecisionRuntimeOff, now);
             return false;
         }
 
@@ -622,7 +735,7 @@ private:
         canTxPermitEnd();
         if (!sent)
         {
-            bChannelDiag.nagLastDecision = kNagDecisionNoEcho;
+            setNagDecision(kNagDecisionNoEcho, now);
             return false;
         }
 
@@ -641,7 +754,8 @@ private:
             static_cast<uint8_t>((echo.data[4] >> 6) & 0x03);
         if (!dasStateSeen_)
             bChannelDiag.nagFiredNoDas++;
-        bChannelDiag.nagLastDecision = kNagDecisionEcho;
+        setNagDecision(kNagDecisionEcho, now);
+        noteNagInjectionSession(now);
         return true;
     }
 };

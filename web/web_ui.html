@@ -885,7 +885,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   <div class="row">
     <div class="labelWrap">
       <span class="label">A TX Guard</span>
-      <span class="meta" id="metaATxGuard">TEC/EFLG 즉시 보호 · 1초 TX_FAIL 2회 이상 시 1021 주입 일시 보류</span>
+      <span class="meta" id="metaATxGuard">TEC/EFLG 즉시 보호 · 1초 실제 TX 오류(TXERR/컨트롤러) 2회 이상 시 1021 주입 일시 보류</span>
     </div>
     <label class="sw"><input type="checkbox" id="tATxGuard" onchange="togSwitch('/api/a-tx-guard',this)"><span class="sl"></span></label>
   </div>

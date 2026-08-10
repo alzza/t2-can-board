@@ -1,16 +1,16 @@
 #pragma once
 
-#define FIRMWARE_VERSION "1.3.10"
+#define FIRMWARE_VERSION "1.3.12"
 #define FIRMWARE_VERSION_MAJOR 1
 #define FIRMWARE_VERSION_MINOR 3
-#define FIRMWARE_VERSION_PATCH 10
+#define FIRMWARE_VERSION_PATCH 12
 
 // OTA/실차 테스트용 보관 bin 파일명에 사용할 당일 핵심 변경 요약.
-// 예: 1.3.10_26-08-09_auto-session-log.bin
-#define FIRMWARE_ARTIFACT_NOTE "auto-session-log"
+// 예: 1.3.12_26-08-10_nag-gate-coalesce.bin
+#define FIRMWARE_ARTIFACT_NOTE "nag-gate-coalesce"
 
 #ifndef FIRMWARE_BUILD_ID
-#define FIRMWARE_BUILD_ID "FW1310-auto-session-log"
+#define FIRMWARE_BUILD_ID "FW1312-nag-gate-coalesce"
 #endif
 
 #ifndef FIRMWARE_BUILD_AT

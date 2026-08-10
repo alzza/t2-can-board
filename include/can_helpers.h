@@ -309,9 +309,9 @@ inline constexpr uint8_t kATxGuardReasonEflg = 2;
 inline constexpr uint8_t kATxGuardReasonTxFail = 3;
 inline constexpr uint32_t kATxGuardDurationMs = 15000;
 inline constexpr uint8_t kATxGuardTecThreshold = 24;
-// One-shot에서는 TEC/MERRF 없이 단발 TXERR가 남을 수 있다. 실차 로그에서
-// 수십 초 간격의 단발 8건이 15초 Guard를 반복 시작했으므로, TX_FAIL 사유만은
-// 1초 창에서 2건 이상일 때 보호한다. EFLG·TEC 보호는 즉시 유지한다.
+// aTxFail은 최종 TXERR 또는 컨트롤러 오류만 포함한다. MLOA/ABTF는 각각
+// 중재 손실/중단 카운터로 분리하며 Guard 입력으로 사용하지 않는다.
+// 실제 TX 오류가 1초 창에서 2건 이상이면 보호하고 EFLG·TEC 보호는 즉시 유지한다.
 inline constexpr uint8_t kATxGuardTxFailBurstThreshold = 2;
 inline constexpr uint32_t kAChannelWakeGapMs = 2000;
 inline constexpr uint32_t kAMcpBusOffRecoverIntervalMs = 1000;
@@ -400,6 +400,46 @@ inline const char* nagDecisionName(uint8_t code) {
     case kNagDecisionWarmup: return "WARMUP";
     case kNagDecisionModePause: return "MODE_PAUSE";
     default: return "NONE";
+    }
+}
+
+// 고빈도 ECHO/MODE_PAUSE 전환은 같은 "주입 허용" 상태로 묶고,
+// 실제 차단 사유가 바뀔 때만 밀리초 이벤트를 남긴다.
+inline constexpr uint8_t kNagGateUnknown = 0;
+inline constexpr uint8_t kNagGateReady = 1;
+inline constexpr uint8_t kNagGateOff = 2;
+inline constexpr uint8_t kNagGateWarmup = 3;
+inline constexpr uint8_t kNagGateHandsOn = 4;
+inline constexpr uint8_t kNagGateApBlocked = 5;
+inline constexpr uint8_t kNagGateDasBlocked = 6;
+
+inline uint8_t nagDecisionGateClass(uint8_t decision) {
+    switch (decision) {
+    case kNagDecisionEcho:
+    case kNagDecisionModePause:
+    case kNagDecisionLateDrop:
+    case kNagDecisionNoEcho:
+        return kNagGateReady;
+    case kNagDecisionRuntimeOff: return kNagGateOff;
+    case kNagDecisionWarmup: return kNagGateWarmup;
+    case kNagDecisionHandsOn: return kNagGateHandsOn;
+    case kNagDecisionNo921:
+    case kNagDecisionApBlocked:
+        return kNagGateApBlocked;
+    case kNagDecisionDasIdle: return kNagGateDasBlocked;
+    default: return kNagGateUnknown;
+    }
+}
+
+inline const char* nagGateClassName(uint8_t gateClass) {
+    switch (gateClass) {
+    case kNagGateReady: return "READY";
+    case kNagGateOff: return "OFF";
+    case kNagGateWarmup: return "WARMUP";
+    case kNagGateHandsOn: return "HANDS_ON";
+    case kNagGateApBlocked: return "AP_BLOCK";
+    case kNagGateDasBlocked: return "DAS_BLOCK";
+    default: return "UNKNOWN";
     }
 }
 
@@ -629,14 +669,23 @@ struct AChannelDiagnostics {
     Shared<uint32_t> aTxOk{0};
     Shared<uint32_t> aTxBusy{0};
     Shared<uint32_t> aTxFail{0};
-    // MCP2515 TXERR을 요청 기능별로 분리한 카운터. sendDetailed() 즉시 거절과
-    // 이후 TX 버퍼 완료 폴링에서 확인된 TXERR를 모두 포함한다.
+    // MCP2515 최종 TX 결과를 기능별로 분리한다. aTxOk는 큐 등록 수이며,
+    // 실제 버스 완료 여부는 Completed/ArbitrationLost/Aborted/Fail로 판단한다.
     Shared<uint32_t> aTxFailSummon{0};
     Shared<uint32_t> aTxFailTsllc{0};
     Shared<uint32_t> aTxFailOther{0};
     Shared<uint32_t> aTxCompleted{0};
     Shared<uint32_t> aTxArbitrationLost{0};
     Shared<uint32_t> aTxAborted{0};
+    Shared<uint32_t> aTxCompletedSummon{0};
+    Shared<uint32_t> aTxCompletedTsllc{0};
+    Shared<uint32_t> aTxCompletedOther{0};
+    Shared<uint32_t> aTxArbitrationLostSummon{0};
+    Shared<uint32_t> aTxArbitrationLostTsllc{0};
+    Shared<uint32_t> aTxArbitrationLostOther{0};
+    Shared<uint32_t> aTxAbortedSummon{0};
+    Shared<uint32_t> aTxAbortedTsllc{0};
+    Shared<uint32_t> aTxAbortedOther{0};
     Shared<uint8_t>  aTxFailWindowDelta{0};     // 최근 1초 TX Fail 증가량
     Shared<uint8_t>  aTxFailWindowPeak{0};      // 세션 내 1초 TX Fail 증가량 최대값
     Shared<uint8_t>  aTec{0};

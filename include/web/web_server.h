@@ -1432,6 +1432,14 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddNumberToObject(ach, "tx_completed", (uint32_t)aChannelDiag.aTxCompleted);
     cJSON_AddNumberToObject(ach, "tx_arbitration_lost", (uint32_t)aChannelDiag.aTxArbitrationLost);
     cJSON_AddNumberToObject(ach, "tx_aborted", (uint32_t)aChannelDiag.aTxAborted);
+    cJSON_AddNumberToObject(ach, "summon_tx_completed", (uint32_t)aChannelDiag.aTxCompletedSummon);
+    cJSON_AddNumberToObject(ach, "summon_tx_arbitration_lost", (uint32_t)aChannelDiag.aTxArbitrationLostSummon);
+    cJSON_AddNumberToObject(ach, "summon_tx_aborted", (uint32_t)aChannelDiag.aTxAbortedSummon);
+    cJSON_AddNumberToObject(ach, "summon_tx_error", (uint32_t)aChannelDiag.aTxFailSummon);
+    cJSON_AddNumberToObject(ach, "tsllc_tx_completed", (uint32_t)aChannelDiag.aTxCompletedTsllc);
+    cJSON_AddNumberToObject(ach, "tsllc_tx_arbitration_lost", (uint32_t)aChannelDiag.aTxArbitrationLostTsllc);
+    cJSON_AddNumberToObject(ach, "tsllc_tx_aborted", (uint32_t)aChannelDiag.aTxAbortedTsllc);
+    cJSON_AddNumberToObject(ach, "tsllc_tx_error", (uint32_t)aChannelDiag.aTxFailTsllc);
     cJSON_AddNumberToObject(ach, "tx_fail_window",
                             (uint32_t)(uint8_t)aChannelDiag.aTxFailWindowDelta);
     cJSON_AddNumberToObject(ach, "tx_fail_window_peak",
@@ -2509,6 +2517,17 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
             ? aNow - (uint32_t)bChannelDiag.lastEchoTxMs : 0U));
     httpd_resp_sendstr_chunk(req, line);
     snprintf(line, sizeof(line),
+        "A기능결과: Summon Done/Arb/Abort/Error=%u/%u/%u/%u | TSLLC Done/Arb/Abort/Error=%u/%u/%u/%u\r\n",
+        (unsigned)aChannelDiag.aTxCompletedSummon,
+        (unsigned)aChannelDiag.aTxArbitrationLostSummon,
+        (unsigned)aChannelDiag.aTxAbortedSummon,
+        (unsigned)aChannelDiag.aTxFailSummon,
+        (unsigned)aChannelDiag.aTxCompletedTsllc,
+        (unsigned)aChannelDiag.aTxArbitrationLostTsllc,
+        (unsigned)aChannelDiag.aTxAbortedTsllc,
+        (unsigned)aChannelDiag.aTxFailTsllc);
+    httpd_resp_sendstr_chunk(req, line);
+    snprintf(line, sizeof(line),
         "B채널: RX=%u Filt=%u Try/OK/Ack=%u/%u/%u TxFail=%u TEC=%u REC=%u TECpeak=%u 880=%u 921=%u 923=%u DAS=%u(%s/L%u/warn=%u)@%u Mode=%s Ready=%s(%u/%u) TWAI=%s InitErr=%d/%d\r\n",
         (unsigned)bChannelDiag.framesReceivedTotal,
         (unsigned)bChannelDiag.framesFilteredInTotal,
@@ -2685,7 +2704,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         tsSnapRecording ? "ON" : "OFF", (unsigned)tsN);
     httpd_resp_sendstr_chunk(req, line);
     httpd_resp_sendstr_chunk(req,
-        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,dasStateName,dasStateGroup,dasWarnLevel,dasWarning,nagMode,nagModeDefault,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,apState,nagPhase,realTorqueNm,nagInject,nagLastNm,age880Ms,ageDasMs,ageEchoMs,dNagInject,aFrames,aFrameHz,aEflg,aEflgState,aEflgPeak,aTec,aRec,aTecPeak,aRecPeak,aTxQueued,aTxBusy,aTxHardError,aTxCompleted,aTxArbitrationLost,aTxAborted,aMerrf,aRxOvr,aRx0Ovr,aRx1Ovr,aRxB0Frames,aRxB1Frames,aRxDrainFrames,aRxDrainCalls,aRxQueueHighWater,aRxQueueDrops,aEflgEvents,aFrameAgeMs,aLoopAgeMs,aGuardActive,aGuardReason,aGuardRemainingMs,aWakeCount,aWakeToSummonTxMs,aWakeAwaitingTx,dAFrames,dATxOk,dATxFail,dAMerrf,dARxOvr,dAEflgEvents,aDriverOk,aTxEnabled,summonEnabled,tsllcEnabled,aOneShotEnabled,aTxGuardEnabled,aSpiMhz,aSpiTargetMhz,bDriverState,nagEnabled,aLoopGapLastUs,aLoopGapPeakUs,aLoopGapOver250us,aLoopGapOver500us,aLoopGapOver1ms,aLoopGapOver2ms,dALoopGapOver2ms,aLastOverrunPhase,summonGateOpen,summonConditionLimit,summonApState,summonApActive,summonParked,summoning,summonApStableMs,summonGateReason,summonInjectReady,summonTxOk,summonTxFail,summonBlocked,dSummonTxOk,dSummonTxFail,dSummonBlocked,tsllcInjectReady,tsllcTxOk,tsllcTxFail,dTsllcTxOk,dTsllcTxFail,nagApOnly,nagApActive,nagInjecting,nagTxOk,dNagTxOk\r\n");
+        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,dasStateName,dasStateGroup,dasWarnLevel,dasWarning,nagMode,nagModeDefault,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,apState,nagPhase,realTorqueNm,nagInject,nagLastNm,age880Ms,ageDasMs,ageEchoMs,dNagInject,aFrames,aFrameHz,aEflg,aEflgState,aEflgPeak,aTec,aRec,aTecPeak,aRecPeak,aTxQueued,aTxBusy,aTxHardError,aTxCompleted,aTxArbitrationLost,aTxAborted,aMerrf,aRxOvr,aRx0Ovr,aRx1Ovr,aRxB0Frames,aRxB1Frames,aRxDrainFrames,aRxDrainCalls,aRxQueueHighWater,aRxQueueDrops,aEflgEvents,aFrameAgeMs,aLoopAgeMs,aGuardActive,aGuardReason,aGuardRemainingMs,aWakeCount,aWakeToSummonTxMs,aWakeAwaitingTx,dAFrames,dATxOk,dATxFail,dAMerrf,dARxOvr,dAEflgEvents,aDriverOk,aTxEnabled,summonEnabled,tsllcEnabled,aOneShotEnabled,aTxGuardEnabled,aSpiMhz,aSpiTargetMhz,bDriverState,nagEnabled,aLoopGapLastUs,aLoopGapPeakUs,aLoopGapOver250us,aLoopGapOver500us,aLoopGapOver1ms,aLoopGapOver2ms,dALoopGapOver2ms,aLastOverrunPhase,summonGateOpen,summonConditionLimit,summonApState,summonApActive,summonParked,summoning,summonApStableMs,summonGateReason,summonInjectReady,summonTxOk,summonTxFail,summonBlocked,dSummonTxOk,dSummonTxFail,dSummonBlocked,tsllcInjectReady,tsllcTxOk,tsllcTxFail,dTsllcTxOk,dTsllcTxFail,nagApOnly,nagApActive,nagInjecting,nagTxOk,dNagTxOk,aSummonTxCompleted,aSummonTxArbitrationLost,aSummonTxAborted,aSummonTxError,aTsllcTxCompleted,aTsllcTxArbitrationLost,aTsllcTxAborted,aTsllcTxError\r\n");
     {
         if (tsN == 0) {
             httpd_resp_sendstr_chunk(req, "(시계열 없음)\r\n");
@@ -2738,7 +2757,8 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                     "%u,%u,%u,%u,%u,%u,%u,%u,"
                     "%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,"
                     "%u,%u,%u,%u,%u,%u,%u,%s,"
-                    "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+                    "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+                    "%u,%u,%u,%u,%u,%u,%u,%u\r\n",
                     (unsigned)s.aFrames, (double)s.aFrameHz,
                     (unsigned)s.aEflg, aMcpEflgStateName(s.aEflg), (unsigned)s.aEflgPeak,
                     (unsigned)s.aTec, (unsigned)s.aRec, (unsigned)s.aTecPeak, (unsigned)s.aRecPeak,
@@ -2779,7 +2799,13 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                     (unsigned)s.tsllcTxFail, (unsigned)s.dTsllcTxOk,
                     (unsigned)s.dTsllcTxFail, (unsigned)s.nagApOnly,
                     (unsigned)s.nagApActive, (unsigned)s.nagInjecting,
-                    (unsigned)s.modeBInject, (unsigned)s.dModeBInject);
+                    (unsigned)s.modeBInject, (unsigned)s.dModeBInject,
+                    (unsigned)s.summonTxCompleted,
+                    (unsigned)s.summonTxArbitrationLost,
+                    (unsigned)s.summonTxAborted, (unsigned)s.summonTxError,
+                    (unsigned)s.tsllcTxCompleted,
+                    (unsigned)s.tsllcTxArbitrationLost,
+                    (unsigned)s.tsllcTxAborted, (unsigned)s.tsllcTxError);
                 if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) {
                     logsBundleSerialTrace("fail section4", handlerStartMs);
                     if (wdtDetached) esp_task_wdt_add(NULL);

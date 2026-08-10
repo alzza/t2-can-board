@@ -172,11 +172,17 @@ public:
                 return CanTxResult::Queued;
             }
             if (result == MCP2515::ERROR_ALLTXBUSY) return CanTxResult::Busy;
-            // sendMessage(TXBn)는 TXREQ 설정 직후 TXBnCTRL을 확인해 ERROR_FAILTX를
-            // 돌려준다. 같은 버퍼를 즉시 다시 읽어 TXERR/MLOA/ABTF를 보존한다.
+            // autowp sendMessage(TXBn)는 TXREQ 설정 직후 결과 비트를 읽는다.
+            // 실차에서 MLOA/ABTF와 TXREQ가 동시에 관측됐으므로 이 순간값을
+            // 하드 오류로 확정하지 않고, 진행 중이면 정상 pending으로 회수한다.
             const uint8_t resultCtrl = readRegisterUnlocked(kTxCtrlRegisters[i]);
-            recordTxFailureUnlocked(source, false, i, resultCtrl, (uint8_t)result);
-            return CanTxResult::ControllerError;
+            if ((resultCtrl & kTxReqMask) != 0) {
+                txPending_[i] = true;
+                txPendingSource_[i] = source;
+                return CanTxResult::Queued;
+            }
+            return classifyFinishedTxUnlocked(source, false, i, resultCtrl,
+                                              (uint8_t)result);
         }
         return CanTxResult::Busy;
     }
@@ -297,20 +303,55 @@ private:
             if ((ctrl & kTxReqMask) != 0) continue;
 
             txPending_[i] = false;
-            if ((ctrl & kTxErrorMask) != 0) {
-                aChannelDiag.aTxFail = (uint32_t)aChannelDiag.aTxFail + 1;
-                recordTxFailureUnlocked(txPendingSource_[i], true, i, ctrl, 0);
-            } else if ((ctrl & kTxArbitrationLostMask) != 0) {
-                aChannelDiag.aTxArbitrationLost =
-                    (uint32_t)aChannelDiag.aTxArbitrationLost + 1;
-            } else if ((ctrl & kTxAbortedMask) != 0) {
-                aChannelDiag.aTxAborted = (uint32_t)aChannelDiag.aTxAborted + 1;
-            } else {
-                aChannelDiag.aTxCompleted = (uint32_t)aChannelDiag.aTxCompleted + 1;
-            }
+            (void)classifyFinishedTxUnlocked(txPendingSource_[i], true, i, ctrl, 0);
             txPendingSource_[i] = CanTxSource::Unknown;
             bitModifyUnlocked(kTxCtrlRegisters[i], kTxResultMask, 0);
         }
+    }
+
+    void incrementSourceOutcomeUnlocked(CanTxSource source, CanTxResult result)
+    {
+        Shared<uint32_t> *counter = nullptr;
+        if (result == CanTxResult::Queued) {
+            if (source == CanTxSource::Summon) counter = &aChannelDiag.aTxCompletedSummon;
+            else if (source == CanTxSource::Tsllc) counter = &aChannelDiag.aTxCompletedTsllc;
+            else counter = &aChannelDiag.aTxCompletedOther;
+        } else if (result == CanTxResult::ArbitrationLost) {
+            if (source == CanTxSource::Summon) counter = &aChannelDiag.aTxArbitrationLostSummon;
+            else if (source == CanTxSource::Tsllc) counter = &aChannelDiag.aTxArbitrationLostTsllc;
+            else counter = &aChannelDiag.aTxArbitrationLostOther;
+        } else if (result == CanTxResult::Aborted) {
+            if (source == CanTxSource::Summon) counter = &aChannelDiag.aTxAbortedSummon;
+            else if (source == CanTxSource::Tsllc) counter = &aChannelDiag.aTxAbortedTsllc;
+            else counter = &aChannelDiag.aTxAbortedOther;
+        }
+        if (counter) *counter = (uint32_t)(*counter) + 1U;
+    }
+
+    CanTxResult classifyFinishedTxUnlocked(CanTxSource source, bool polledResult,
+                                           uint8_t buffer, uint8_t ctrl,
+                                           uint8_t driverCode)
+    {
+        if ((ctrl & kTxErrorMask) != 0 ||
+            ((ctrl & kTxResultMask) == 0 && driverCode != 0)) {
+            aChannelDiag.aTxFail = (uint32_t)aChannelDiag.aTxFail + 1U;
+            recordTxFailureUnlocked(source, polledResult, buffer, ctrl, driverCode);
+            return CanTxResult::ControllerError;
+        }
+        if ((ctrl & kTxArbitrationLostMask) != 0) {
+            aChannelDiag.aTxArbitrationLost =
+                (uint32_t)aChannelDiag.aTxArbitrationLost + 1U;
+            incrementSourceOutcomeUnlocked(source, CanTxResult::ArbitrationLost);
+            return CanTxResult::ArbitrationLost;
+        }
+        if ((ctrl & kTxAbortedMask) != 0) {
+            aChannelDiag.aTxAborted = (uint32_t)aChannelDiag.aTxAborted + 1U;
+            incrementSourceOutcomeUnlocked(source, CanTxResult::Aborted);
+            return CanTxResult::Aborted;
+        }
+        aChannelDiag.aTxCompleted = (uint32_t)aChannelDiag.aTxCompleted + 1U;
+        incrementSourceOutcomeUnlocked(source, CanTxResult::Queued);
+        return CanTxResult::Queued;
     }
 
     void recordTxFailureUnlocked(CanTxSource source, bool polledResult, uint8_t buffer,
