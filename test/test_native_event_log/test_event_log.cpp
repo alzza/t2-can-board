@@ -24,6 +24,33 @@ void test_event_channel_and_severity_are_explicit()
     TEST_ASSERT_EQUAL_UINT8(EV_CH_B, eventChannel(EV_NAG_INJECTION_SESSION));
     TEST_ASSERT_EQUAL_UINT8(EV_CH_A, eventChannel(EV_SUMMON_UNLOCK_ACTIVITY));
     TEST_ASSERT_EQUAL_UINT8(EV_CH_B, eventChannel(EV_NAG_GATE_STATE));
+    TEST_ASSERT_EQUAL_UINT8(EV_CH_A, eventChannel(EV_A_TX_QUALITY));
+    TEST_ASSERT_EQUAL_STRING("WARN", eventSeverityName(eventSeverity(EV_A_TX_QUALITY, 0)));
+    TEST_ASSERT_EQUAL_UINT8(EV_CH_B, eventChannel(EV_B_BUS_ERR_SNAPSHOT));
+}
+
+void test_quality_and_bus_error_snapshot_details_preserve_context()
+{
+    const uint32_t quality = eventATxQualityDetail(2, 11, 14, 1);
+    TEST_ASSERT_EQUAL_UINT8(2, quality & 0x03U);
+    TEST_ASSERT_EQUAL_UINT8(11, (quality >> 2) & 0xFFU);
+    TEST_ASSERT_EQUAL_UINT8(14, (quality >> 10) & 0xFFU);
+    TEST_ASSERT_EQUAL_UINT8(1, (quality >> 18) & 0xFFU);
+    TEST_ASSERT_EQUAL_UINT8(53, eventATxQualityMloaPercent(11, 14, 1));
+    TEST_ASSERT_TRUE(eventATxQualityIsWarning(11, 14, 1));
+    TEST_ASSERT_FALSE(eventATxQualityIsWarning(3, 4, 0)); // 표본 수가 10 미만
+
+    const uint32_t snapshot = eventBBusErrSnapshotDetail(1, 2, 3, 2, true,
+                                                           true, 1, 9, 4);
+    TEST_ASSERT_EQUAL_UINT8(1, snapshot & 0x03U);
+    TEST_ASSERT_EQUAL_UINT8(2, (snapshot >> 2) & 0xFFU);
+    TEST_ASSERT_EQUAL_UINT8(3, (snapshot >> 10) & 0xFFU);
+    TEST_ASSERT_EQUAL_UINT8(2, (snapshot >> 18) & 0x03U);
+    TEST_ASSERT_TRUE((snapshot & (1U << 20)) != 0);
+    TEST_ASSERT_TRUE((snapshot & (1U << 21)) != 0);
+    TEST_ASSERT_EQUAL_UINT8(1, (snapshot >> 22) & 0x03U);
+    TEST_ASSERT_EQUAL_UINT8(9, (snapshot >> 24) & 0x0FU);
+    TEST_ASSERT_EQUAL_UINT8(4, (snapshot >> 28) & 0x0FU);
 }
 
 void test_auto_session_details_preserve_start_end_context()
@@ -134,6 +161,24 @@ void test_nag_gate_chatter_is_coalesced_and_keeps_latest_state()
     TEST_ASSERT_EQUAL_UINT32(handsOn, evtBuf[0].detail);
 }
 
+void test_quality_warning_is_coalesced_per_feature_and_keeps_latest_window()
+{
+    const uint32_t summonFirst = eventATxQualityDetail(1, 10, 12, 0);
+    const uint32_t summonLast = eventATxQualityDetail(1, 8, 14, 0);
+    const uint32_t tsllc = eventATxQualityDetail(2, 10, 11, 0);
+
+    eventLogPushAt(1000, EV_A_TX_QUALITY, 0, 0, summonFirst);
+    eventLogPushAt(6000, EV_A_TX_QUALITY, 0, 0, summonLast);
+    eventLogPushAt(7000, EV_A_TX_QUALITY, 0, 0, tsllc);
+
+    TEST_ASSERT_EQUAL_UINT32(2, evtCount);
+    TEST_ASSERT_EQUAL_UINT32(3, evtOccurrenceTotal);
+    TEST_ASSERT_EQUAL_UINT32(1, evtCoalescedTotal);
+    TEST_ASSERT_EQUAL_UINT32(summonLast, evtBuf[0].detail);
+    TEST_ASSERT_EQUAL_UINT32(2, evtBuf[0].occurrences);
+    TEST_ASSERT_EQUAL_UINT32(tsllc, evtBuf[1].detail);
+}
+
 void test_non_noisy_events_preserve_each_occurrence_and_track_overwrite()
 {
     for (uint32_t i = 0; i < EVT_CAP + 3; ++i) {
@@ -149,12 +194,14 @@ int main()
 {
     UNITY_BEGIN();
     RUN_TEST(test_event_channel_and_severity_are_explicit);
+    RUN_TEST(test_quality_and_bus_error_snapshot_details_preserve_context);
     RUN_TEST(test_a_tx_failure_detail_preserves_source_phase_buffer_and_controller_bits);
     RUN_TEST(test_auto_session_details_preserve_start_end_context);
     RUN_TEST(test_noisy_event_is_coalesced_with_first_last_time_and_count);
     RUN_TEST(test_aggregate_window_or_detail_change_creates_new_record);
     RUN_TEST(test_rx_overrun_aggregation_keeps_largest_loop_gap);
     RUN_TEST(test_nag_gate_chatter_is_coalesced_and_keeps_latest_state);
+    RUN_TEST(test_quality_warning_is_coalesced_per_feature_and_keeps_latest_window);
     RUN_TEST(test_non_noisy_events_preserve_each_occurrence_and_track_overwrite);
     return UNITY_END();
 }

@@ -45,6 +45,12 @@ enum CanEventType : uint8_t {
     EV_NAG_INJECTION_SESSION = 29, // 실제 Nag 주입 세션 시작/종료
     EV_SUMMON_UNLOCK_ACTIVITY = 30, // bit19/46 주입 활동 시작/종료(실제 Summoning과 분리)
     EV_NAG_GATE_STATE = 31, // Nag 허용/차단 사유 밀리초 전이
+    // 5초 구간에 기능별 A채널 MLOA가 과도할 때만 남기는 품질 경고.
+    // CAN 송신 조건을 바꾸지 않는 관측 전용 이벤트다.
+    EV_A_TX_QUALITY = 32,
+    // B채널 BUS_ERR 경보가 들어온 정확한 순간의 Nag/AP 문맥 스냅샷.
+    // 원본 BUS_ERR 행의 TWAI alert flag와 분리해 읽는다.
+    EV_B_BUS_ERR_SNAPSHOT = 33,
     EV_TYPE_COUNT
 };
 
@@ -95,6 +101,8 @@ inline const char* eventTypeName(uint8_t type) {
     case EV_NAG_INJECTION_SESSION: return "NAG_INJECTION_SESSION";
     case EV_SUMMON_UNLOCK_ACTIVITY: return "SUMMON_UNLOCK_ACTIVITY";
     case EV_NAG_GATE_STATE: return "NAG_GATE_STATE";
+    case EV_A_TX_QUALITY: return "A_TX_QUALITY";
+    case EV_B_BUS_ERR_SNAPSHOT: return "B_BUS_ERR_SNAPSHOT";
     default: return "UNKNOWN";
     }
 }
@@ -109,6 +117,7 @@ inline uint8_t eventChannel(uint8_t type) {
     case EV_A_TX_GUARD_CLEAR:
     case EV_A_SPI_TARGET:
     case EV_A_TX_FAILURE:
+    case EV_A_TX_QUALITY:
     case EV_SUMMONING_STATE:
     case EV_SUMMON_UNLOCK_ACTIVITY:
         return EV_CH_A;
@@ -125,6 +134,7 @@ inline uint8_t eventChannel(uint8_t type) {
     case EV_NAG_MODE:
     case EV_NAG_INJECTION_SESSION:
     case EV_NAG_GATE_STATE:
+    case EV_B_BUS_ERR_SNAPSHOT:
         return EV_CH_B;
     case EV_USER_MARK:
     case EV_FEATURE_ACTIVITY:
@@ -157,6 +167,7 @@ inline uint8_t eventSeverity(uint8_t type, uint32_t detail) {
     case EV_A_RX_OVERRUN:
     case EV_A_TX_GUARD_SET:
     case EV_A_TX_FAILURE:
+    case EV_A_TX_QUALITY:
         return EV_SEV_WARN;
     default:
         return EV_SEV_INFO;
@@ -181,6 +192,8 @@ inline bool eventTypeIsAggregated(uint8_t type) {
     case EV_A_EFLG_CLEAR:
     case EV_A_RX_OVERRUN:
     case EV_A_TX_FAILURE:
+    case EV_A_TX_QUALITY:
+    case EV_B_BUS_ERR_SNAPSHOT:
     // Hands-on/AP 차단은 수백 ms 단위로 왕복할 수 있다. 개별 전이를 모두
     // 보관하면 256행 이벤트 링이 먼저 소진되므로 30초 구간으로 묶는다.
     // 실제 Nag 주입 세션의 START/END는 별도 이벤트라 묶지 않는다.
@@ -197,7 +210,9 @@ inline uint32_t eventAggregateKey(uint8_t type, uint32_t detail) {
     if (type == EV_A_RX_OVERRUN) return detail & 0xFFU;
     // 게이트 상태가 HANDS_ON <-> AP_BLOCK처럼 반복 전이해도 같은 구간으로
     // 합산한다. 최신 detail은 eventLogPushAt에서 보존한다.
-    if (type == EV_NAG_GATE_STATE) return type;
+    if (type == EV_NAG_GATE_STATE || type == EV_B_BUS_ERR_SNAPSHOT) return type;
+    // 기능별 품질 경고는 출처별로 30초간 합산하고 최신 5초 결과를 보존한다.
+    if (type == EV_A_TX_QUALITY) return detail & 0x03U;
     return detail;
 }
 
@@ -241,6 +256,51 @@ inline uint32_t eventATxFailureDetail(uint8_t source, bool polledResult, uint8_t
            ((uint32_t)(buffer & 0x03U) << 3) |
            ((uint32_t)ctrl << 8) |
            ((uint32_t)driverCode << 16);
+}
+
+// 5초 시계열 구간의 기능별 A채널 송신 결과. 모든 값은 255에서 포화한다.
+// source: 1=SUMMON, 2=TSLLC. 중재 손실 비율은 completed+MLOA+ABTF 대비 MLOA다.
+inline uint32_t eventATxQualityDetail(uint8_t source, uint32_t completed,
+                                      uint32_t arbitrationLost, uint32_t aborted)
+{
+    const uint32_t completed8 = completed > 255U ? 255U : completed;
+    const uint32_t lost8 = arbitrationLost > 255U ? 255U : arbitrationLost;
+    const uint32_t aborted8 = aborted > 255U ? 255U : aborted;
+    return (uint32_t)(source & 0x03U) |
+           (completed8 << 2) |
+           (lost8 << 10) |
+           (aborted8 << 18);
+}
+
+inline uint8_t eventATxQualityMloaPercent(uint32_t completed, uint32_t arbitrationLost,
+                                          uint32_t aborted)
+{
+    const uint32_t attempts = completed + arbitrationLost + aborted;
+    if (attempts == 0U) return 0;
+    return (uint8_t)((arbitrationLost * 100U) / attempts);
+}
+
+inline bool eventATxQualityIsWarning(uint32_t completed, uint32_t arbitrationLost,
+                                     uint32_t aborted)
+{
+    const uint32_t attempts = completed + arbitrationLost + aborted;
+    return attempts >= 10U && eventATxQualityMloaPercent(completed, arbitrationLost, aborted) >= 50U;
+}
+
+// BUS_ERR 직전/직후에 추정하지 않고 alert 폴링 순간의 상태를 압축해 보관한다.
+inline uint32_t eventBBusErrSnapshotDetail(uint8_t twaiState, uint16_t tec, uint16_t rec,
+                                           uint8_t nagMode, bool nagEnabled, bool apActive,
+                                           uint8_t handsOn, uint8_t decision, uint8_t dasState)
+{
+    return (uint32_t)(twaiState & 0x03U) |
+           ((uint32_t)(tec & 0xFFU) << 2) |
+           ((uint32_t)(rec & 0xFFU) << 10) |
+           ((uint32_t)(nagMode & 0x03U) << 18) |
+           (nagEnabled ? (1U << 20) : 0U) |
+           (apActive ? (1U << 21) : 0U) |
+           ((uint32_t)(handsOn & 0x03U) << 22) |
+           ((uint32_t)(decision & 0x0FU) << 24) |
+           ((uint32_t)(dasState & 0x0FU) << 28);
 }
 
 // Summoning 상태와 해당 세션의 A채널 결과를 작은 이벤트 detail에 함께 보관한다.
@@ -411,6 +471,33 @@ inline const char* eventDetailText(uint8_t type, uint32_t detail, char* out, siz
                  (unsigned)((ctrl >> 6) & 1U), (unsigned)driverCode);
         break;
     }
+    case EV_A_TX_QUALITY: {
+        const uint8_t source = (uint8_t)(detail & 0x03U);
+        const uint8_t completed = (uint8_t)((detail >> 2) & 0xFFU);
+        const uint8_t lost = (uint8_t)((detail >> 10) & 0xFFU);
+        const uint8_t aborted = (uint8_t)((detail >> 18) & 0xFFU);
+        snprintf(out, outLen,
+                 "source=%s window=5s completed=%u arbitration_lost=%u aborted=%u mloa_pct=%u threshold=attempts>=10,mloa>=50%%",
+                 aTxSourceName(source), (unsigned)completed, (unsigned)lost,
+                 (unsigned)aborted,
+                 (unsigned)eventATxQualityMloaPercent(completed, lost, aborted));
+        break;
+    }
+    case EV_B_BUS_ERR_SNAPSHOT: {
+        const uint8_t twaiState = (uint8_t)(detail & 0x03U);
+        const uint8_t tec = (uint8_t)((detail >> 2) & 0xFFU);
+        const uint8_t rec = (uint8_t)((detail >> 10) & 0xFFU);
+        const uint8_t mode = (uint8_t)((detail >> 18) & 0x03U);
+        const uint8_t handsOn = (uint8_t)((detail >> 22) & 0x03U);
+        const uint8_t decision = (uint8_t)((detail >> 24) & 0x0FU);
+        const uint8_t dasState = (uint8_t)((detail >> 28) & 0x0FU);
+        snprintf(out, outLen,
+                 "twai_state=%u tec=%u rec=%u nag_mode=%u nag_enabled=%u ap_active=%u hands_on=%u decision=%s das=%u",
+                 (unsigned)twaiState, (unsigned)tec, (unsigned)rec, (unsigned)mode,
+                 (unsigned)((detail >> 20) & 1U), (unsigned)((detail >> 21) & 1U),
+                 (unsigned)handsOn, nagDecisionName(decision), (unsigned)dasState);
+        break;
+    }
     case EV_SUMMONING_STATE: {
         const bool active = (detail & 1U) != 0;
         const bool parked = (detail & (1U << 1)) != 0;
@@ -514,7 +601,8 @@ inline void eventLogPushAt(uint32_t now, uint8_t type, uint16_t tec, uint16_t re
                 }
                 // 묶음의 마지막 게이트 상태가 CSV의 마지막 시각과 일치하도록
                 // 최신 detail을 남긴다. occurrences가 구간 내 전이 횟수다.
-                if (type == EV_NAG_GATE_STATE) previous.detail = detail;
+                if (type == EV_NAG_GATE_STATE || type == EV_A_TX_QUALITY ||
+                    type == EV_B_BUS_ERR_SNAPSHOT) previous.detail = detail;
                 previous.occurrences++;
                 evtCoalescedTotal++;
 #ifndef NATIVE_BUILD

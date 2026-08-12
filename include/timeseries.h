@@ -217,6 +217,12 @@ inline volatile uint32_t tsPrevSummonTxFail = 0;
 inline volatile uint32_t tsPrevSummonBlocked = 0;
 inline volatile uint32_t tsPrevTsllcTxOk = 0;
 inline volatile uint32_t tsPrevTsllcTxFail = 0;
+inline volatile uint32_t tsPrevSummonTxCompleted = 0;
+inline volatile uint32_t tsPrevSummonTxArbitrationLost = 0;
+inline volatile uint32_t tsPrevSummonTxAborted = 0;
+inline volatile uint32_t tsPrevTsllcTxCompleted = 0;
+inline volatile uint32_t tsPrevTsllcTxArbitrationLost = 0;
+inline volatile uint32_t tsPrevTsllcTxAborted = 0;
 inline volatile bool tsFeatureActivitySeen = false;
 inline volatile uint32_t tsFeatureActivityLast = 0;
 
@@ -354,6 +360,18 @@ static void timeseriesTaskFn(void*) {
             (uint32_t)aChannelDiag.aTxArbitrationLostTsllc;
         s.tsllcTxAborted = (uint32_t)aChannelDiag.aTxAbortedTsllc;
         s.tsllcTxError = (uint32_t)aChannelDiag.aTxFailTsllc;
+        const uint16_t dSummonTxCompleted = tsDelta16(
+            s.summonTxCompleted, (uint32_t)tsPrevSummonTxCompleted);
+        const uint16_t dSummonTxArbitrationLost = tsDelta16(
+            s.summonTxArbitrationLost, (uint32_t)tsPrevSummonTxArbitrationLost);
+        const uint16_t dSummonTxAborted = tsDelta16(
+            s.summonTxAborted, (uint32_t)tsPrevSummonTxAborted);
+        const uint16_t dTsllcTxCompleted = tsDelta16(
+            s.tsllcTxCompleted, (uint32_t)tsPrevTsllcTxCompleted);
+        const uint16_t dTsllcTxArbitrationLost = tsDelta16(
+            s.tsllcTxArbitrationLost, (uint32_t)tsPrevTsllcTxArbitrationLost);
+        const uint16_t dTsllcTxAborted = tsDelta16(
+            s.tsllcTxAborted, (uint32_t)tsPrevTsllcTxAborted);
         s.dSummonTxOk = tsDelta16(curSummonTxOk, (uint32_t)tsPrevSummonTxOk);
         s.dSummonTxFail = tsDelta16(curSummonTxFail, (uint32_t)tsPrevSummonTxFail);
         s.dSummonBlocked = tsDelta16(curSummonBlocked, (uint32_t)tsPrevSummonBlocked);
@@ -426,6 +444,16 @@ static void timeseriesTaskFn(void*) {
         const uint32_t featureActivity = eventFeatureActivityDetail(
             s.dSummonTxOk > 0, s.dTsllcTxOk > 0, s.dModeBInject > 0,
             s.summonGateOpen != 0, s.aGuardActive != 0, s.nagApActive != 0);
+        const bool emitSummonQuality = eventATxQualityIsWarning(
+            dSummonTxCompleted, dSummonTxArbitrationLost, dSummonTxAborted);
+        const bool emitTsllcQuality = eventATxQualityIsWarning(
+            dTsllcTxCompleted, dTsllcTxArbitrationLost, dTsllcTxAborted);
+        const uint32_t summonQualityDetail = eventATxQualityDetail(
+            (uint8_t)CanTxSource::Summon, dSummonTxCompleted,
+            dSummonTxArbitrationLost, dSummonTxAborted);
+        const uint32_t tsllcQualityDetail = eventATxQualityDetail(
+            (uint8_t)CanTxSource::Tsllc, dTsllcTxCompleted,
+            dTsllcTxArbitrationLost, dTsllcTxAborted);
         bool emitFeatureActivity = false;
         portENTER_CRITICAL(&tsMux);
         tsBuf[tsHead] = s;
@@ -453,6 +481,12 @@ static void timeseriesTaskFn(void*) {
         tsPrevSummonBlocked = curSummonBlocked;
         tsPrevTsllcTxOk = curTsllcTxOk;
         tsPrevTsllcTxFail = curTsllcTxFail;
+        tsPrevSummonTxCompleted = s.summonTxCompleted;
+        tsPrevSummonTxArbitrationLost = s.summonTxArbitrationLost;
+        tsPrevSummonTxAborted = s.summonTxAborted;
+        tsPrevTsllcTxCompleted = s.tsllcTxCompleted;
+        tsPrevTsllcTxArbitrationLost = s.tsllcTxArbitrationLost;
+        tsPrevTsllcTxAborted = s.tsllcTxAborted;
         if (!tsFeatureActivitySeen || tsFeatureActivityLast != featureActivity) {
             tsFeatureActivitySeen = true;
             tsFeatureActivityLast = featureActivity;
@@ -466,6 +500,16 @@ static void timeseriesTaskFn(void*) {
                          (uint16_t)bChannelDiag.twaiTxErrNow,
                          (uint16_t)bChannelDiag.twaiRxErrNow,
                          featureActivity);
+        }
+        if (emitSummonQuality) {
+            eventLogPush(EV_A_TX_QUALITY,
+                         (uint16_t)aChannelDiag.aTec, (uint16_t)aChannelDiag.aRec,
+                         summonQualityDetail);
+        }
+        if (emitTsllcQuality) {
+            eventLogPush(EV_A_TX_QUALITY,
+                         (uint16_t)aChannelDiag.aTec, (uint16_t)aChannelDiag.aRec,
+                         tsllcQualityDetail);
         }
     }
 }
@@ -535,6 +579,12 @@ inline void timeseriesReset(bool beginManualRecording = false) {
     tsPrevSummonBlocked = (uint32_t)summonGateDiag.blocked;
     tsPrevTsllcTxOk = (uint32_t)aChannelDiag.tsllcTxOk;
     tsPrevTsllcTxFail = (uint32_t)aChannelDiag.tsllcTxFail;
+    tsPrevSummonTxCompleted = (uint32_t)aChannelDiag.aTxCompletedSummon;
+    tsPrevSummonTxArbitrationLost = (uint32_t)aChannelDiag.aTxArbitrationLostSummon;
+    tsPrevSummonTxAborted = (uint32_t)aChannelDiag.aTxAbortedSummon;
+    tsPrevTsllcTxCompleted = (uint32_t)aChannelDiag.aTxCompletedTsllc;
+    tsPrevTsllcTxArbitrationLost = (uint32_t)aChannelDiag.aTxArbitrationLostTsllc;
+    tsPrevTsllcTxAborted = (uint32_t)aChannelDiag.aTxAbortedTsllc;
     tsFeatureActivitySeen = false;
     tsFeatureActivityLast = 0;
     portEXIT_CRITICAL(&tsMux);

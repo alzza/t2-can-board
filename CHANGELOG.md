@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+## [1.3.13] - 2026-08-12
+
+### 실차 CAN 진단 문맥 보강
+
+- A채널은 5초 구간별로 Summon과 TSLLC의 `완료 / MLOA(중재 손실) / ABTF(중단)`을 따로 비교한다. 시도 10건 이상에서 MLOA 비율이 50% 이상일 때만 `A_TX_QUALITY` 경고를 남기며, 같은 기능의 반복 경고는 30초 동안 합산한다.
+- B채널 `BUS_ERR`가 발생하면 기존 원시 TWAI alert 행과 함께 같은 폴링 시점의 TWAI 상태·TEC/REC·Nag 모드/활성·AP·Hands-on·마지막 Nag 판정·DAS 상태를 `B_BUS_ERR_SNAPSHOT`으로 기록한다.
+- CAN ID·HW3 bit19/46·TSLLC bit38/39·Nag 토크·주기·MCP2515 One-shot·TX Guard와 OTA 전송 차단 순서는 변경하지 않았다.
+
 ## [1.3.12] - 2026-08-10
 
 ### Nag 게이트 기록 보존

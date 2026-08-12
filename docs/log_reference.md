@@ -556,10 +556,14 @@ CSV 앞에 열 수가 다른 `#` 메타행을 두지 않는다. 첫 행부터 �
 | 29 | `NAG_INJECTION_SESSION` | B | 실제 Nag 송신 세션 시작·종료, 모드·AP 상태·마지막 판정·세션 주입 수 |
 | 30 | `SUMMON_UNLOCK_ACTIVITY` | A | 주차·AP 안정·실제 Summoning 조건에서 HW3 bit19/46 주입 활동 시작·종료. 실제 차량 호출 상태와 구분 |
 | 31 | `NAG_GATE_STATE` | B | Nag 허용·기능 OFF·준비·AP 차단·Hands-on·DAS 차단 사유의 밀리초 전이. 같은 30초 구간의 반복 전이는 한 행으로 합산 |
+| 32 | `A_TX_QUALITY` | A | 5초 구간에서 기능별 Summon/TSLLC의 MLOA 비율이 시도 10건 이상·50% 이상일 때만 기록하는 품질 경고. 송신 조건은 바꾸지 않음 |
+| 33 | `B_BUS_ERR_SNAPSHOT` | B | `BUS_ERR` 원시 경보와 같은 폴링 시점의 TWAI 상태·TEC/REC·Nag/AP/Hands-on/DAS 문맥 |
 
 `ARB_LOST`는 다른 프레임에 우선권을 양보했다는 뜻이다. TEC/REC, BUS_ERR, TX_FAIL, BUS-OFF가 모두 0이면 이것만으로 물리 통신 오류로 판단하지 않는다.
 
 `A_TX_FAILURE`는 최종 `TXERR` 또는 컨트롤러 오류만 기록한다. TXREQ가 남아 있는 즉시 결과는 진행 중으로 등록하고 완료 폴링에서 다시 확인한다. `MLOA`는 중재 손실, `ABTF`는 중단으로 별도 누적되며 `a_summon_tx_*`와 `a_tsllc_tx_*` 열에서 기능별 완료 결과를 비교할 수 있다. `a_tx_queued`와 기존 `a_summon_tx_ok`·`a_tsllc_tx_ok`는 하드웨어 큐 등록 결과이므로 실제 완료값과 구분해야 한다.
+
+`A_TX_QUALITY`는 5초마다 기능별로 계산하지만, 경고 조건(시도 10건 이상이며 MLOA 50% 이상)을 만족할 때만 남긴다. 같은 출처의 반복 경고는 30초 동안 `occurrences`로 합산하며 `detail_text`는 마지막 5초 구간 값이다. 이는 A채널 주입의 경쟁 상태를 관찰하기 위한 기록이며 CAN 주기·비트·송신 조건을 변경하지 않는다.
 
 `SUMMONING_STATE`는 단순히 주차 상태에서 Unlock bit를 주입한 것을 Summon 실행으로 단정하지 않는다. 검증된 게이트와 같은 `ACA + SPR` 조합이 실제로 켜지고 꺼질 때만 `START`/`END`를 기록한다. 주차나 AP 안정 상태의 제한 해제 주입은 `SUMMON_UNLOCK_ACTIVITY`로 따로 기록한다.
 
@@ -568,6 +572,8 @@ CSV 앞에 열 수가 다른 `#` 메타행을 두지 않는다. 첫 행부터 �
 `NAG_GATE_STATE`는 Hands-on과 AP 차단이 짧게 왕복해도 이벤트 버퍼를 소진하지 않도록 30초 단위로 합산한다. `wall_time_first`는 첫 전이, `wall_time_last`와 `detail_text`는 마지막 전이, `occurrences`는 그 구간의 전이 횟수다. 실제 주입 시작·종료는 `NAG_INJECTION_SESSION`에서 독립적으로 확인한다.
 
 `BUS_ERR`는 CAN 프로토콜 오류 누적값이며 `BUS-OFF` 진입 횟수가 아니다. `BUS_ERR`만 증가하고 TWAI가 RUNNING이며 TEC/REC가 정상으로 복귀했다면 BUS-OFF 전용 이력이 비어 있을 수 있다. 전용 이력은 실제 BUS-OFF 진입 뒤 복구 성공 또는 실패가 확정될 때 한 행씩 기록된다.
+
+`B_BUS_ERR_SNAPSHOT`은 바로 앞의 `BUS_ERR` 행에 대한 보조 문맥이다. 당시 Nag가 켜져 있었는지, AP/Hands-on 판정이 무엇이었는지와 TEC/REC를 함께 보므로 단일 BUS_ERR를 Nag 주입 문제나 BUS-OFF로 성급하게 단정하지 않게 한다.
 
 `RecoveryQuiet`는 BUS-OFF 복구 성공 직후 B채널 수신은 유지하면서 Nag TX만 3초간 정지하는 안정화 구간이다. `RecoveryQuiet=잔여ms Skip=누적횟수`가 표시되며, 잔여시간이 0이 되면 정상 주입 조건으로 복귀한다.
 
