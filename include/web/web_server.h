@@ -1131,6 +1131,18 @@ static esp_err_t statusHandler(httpd_req_t *req)
         cJSON_AddBoolToObject(summon, "summon", (bool)summonGateDiag.summoning);
         cJSON_AddBoolToObject(summon, "aca", (bool)summonGateDiag.acaActive);
         cJSON_AddBoolToObject(summon, "spr", (bool)summonGateDiag.sprSeen);
+        cJSON_AddBoolToObject(summon, "session_allowed",
+                              (bool)summonGateDiag.sessionAllowed);
+        cJSON_AddStringToObject(summon, "session_reason",
+                                summonSessionReasonName(
+                                    (uint8_t)summonGateDiag.sessionReason));
+        cJSON_AddNumberToObject(summon, "di_gear", (uint8_t)summonGateDiag.diGear);
+        cJSON_AddNumberToObject(summon, "secondary_gear",
+                                (uint8_t)summonGateDiag.secondaryGear);
+        cJSON_AddNumberToObject(summon, "self_park_request",
+                                (uint8_t)summonGateDiag.selfParkRequest);
+        cJSON_AddNumberToObject(summon, "vehicle_speed_raw",
+                                (uint16_t)summonGateDiag.vehicleSpeedRaw);
         cJSON_AddStringToObject(summon, "block_reason",
                                 !summonEnabled ? "DISABLED" :
                                 !aChannelTx ? "A_TX_OFF" :
@@ -1140,8 +1152,21 @@ static esp_err_t statusHandler(httpd_req_t *req)
         cJSON_AddNumberToObject(summon, "parked_timeout_ms", kSummonParkedTimeoutMs);
         cJSON_AddNumberToObject(summon, "rx280", (uint32_t)summonGateDiag.frames280);
         cJSON_AddNumberToObject(summon, "rx390", (uint32_t)summonGateDiag.frames390);
+        cJSON_AddNumberToObject(summon, "rx599", (uint32_t)summonGateDiag.frames599);
         cJSON_AddNumberToObject(summon, "rx921", (uint32_t)summonGateDiag.frames921);
         cJSON_AddNumberToObject(summon, "rx1016", (uint32_t)summonGateDiag.frames1016);
+        cJSON_AddNumberToObject(summon, "age390_ms",
+                                webSafeAgeMs(handlerStartMs,
+                                             (uint32_t)summonGateDiag.last390Ms));
+        cJSON_AddNumberToObject(summon, "age599_ms",
+                                webSafeAgeMs(handlerStartMs,
+                                             (uint32_t)summonGateDiag.last599Ms));
+        cJSON_AddNumberToObject(summon, "age921_ms",
+                                webSafeAgeMs(handlerStartMs,
+                                             (uint32_t)summonGateDiag.last921Ms));
+        cJSON_AddNumberToObject(summon, "age1016_ms",
+                                webSafeAgeMs(handlerStartMs,
+                                             (uint32_t)summonGateDiag.last1016Ms));
         cJSON_AddNumberToObject(summon, "rxMux1", (uint32_t)summonGateDiag.mux1Received);
         cJSON_AddNumberToObject(summon, "txOk", (uint32_t)summonGateDiag.txOk);
         cJSON_AddNumberToObject(summon, "txBusy", (uint32_t)summonGateDiag.txBusy);
@@ -1155,6 +1180,25 @@ static esp_err_t statusHandler(httpd_req_t *req)
         cJSON_AddBoolToObject(summon, "wake_waiting_tx", (bool)aChannelDiag.wakeAwaitingSummonTx);
         cJSON_AddNumberToObject(summon, "wake_to_tx_ms", (uint32_t)aChannelDiag.wakeToSummonTxMs);
         cJSON_AddNumberToObject(summon, "last_wake_rx_ms", (uint32_t)aChannelDiag.lastWakeRxMs);
+        cJSON_AddBoolToObject(summon, "retry_pending", (bool)aChannelDiag.aSummonRetryPending);
+        cJSON_AddNumberToObject(summon, "retry_scheduled", (uint32_t)aChannelDiag.aSummonRetryScheduled);
+        cJSON_AddNumberToObject(summon, "retry_queued", (uint32_t)aChannelDiag.aSummonRetryQueued);
+        cJSON_AddNumberToObject(summon, "retry_completed", (uint32_t)aChannelDiag.aSummonRetryCompleted);
+        cJSON_AddNumberToObject(summon, "retry_arbitration_lost", (uint32_t)aChannelDiag.aSummonRetryArbitrationLost);
+        cJSON_AddNumberToObject(summon, "retry_failed", (uint32_t)aChannelDiag.aSummonRetryFailed);
+        cJSON_AddNumberToObject(summon, "retry_expired", (uint32_t)aChannelDiag.aSummonRetryExpired);
+        cJSON_AddNumberToObject(summon, "retry_canceled", (uint32_t)aChannelDiag.aSummonRetryCanceled);
+        cJSON_AddStringToObject(summon, "retry_last_cancel_reason",
+                                summonRetryCancelReasonName(
+                                    (uint8_t)aChannelDiag.aSummonRetryLastCancelReason));
+        cJSON_AddNumberToObject(summon, "session_mloa_streak",
+                                (uint32_t)aChannelDiag.aSummonSessionMloaStreak);
+        cJSON_AddNumberToObject(summon, "session_mloa_streak_max",
+                                (uint32_t)aChannelDiag.aSummonSessionMloaStreakMax);
+        cJSON_AddNumberToObject(summon, "session_success_gap_ms",
+                                (uint32_t)aChannelDiag.aSummonSessionSuccessGapLastMs);
+        cJSON_AddNumberToObject(summon, "session_success_gap_max_ms",
+                                (uint32_t)aChannelDiag.aSummonSessionSuccessGapMaxMs);
         const uint8_t summonCanState = ((uint8_t)aChannelDiag.mcpEflg & 0x20U) ? 2U : 1U;
         cJSON_AddNumberToObject(summon, "canState", summonCanState);
         cJSON_AddNumberToObject(summon, "uptimeS", handlerStartMs / 1000U);
@@ -1167,10 +1211,20 @@ static esp_err_t statusHandler(httpd_req_t *req)
         cJSON_AddBoolToObject(tsllc, "enabled", tsllcEnabled);
         cJSON_AddBoolToObject(tsllc, "tx_master", aChannelTx);
         cJSON_AddBoolToObject(tsllc, "guard", aGuardActiveNow);
+        cJSON_AddBoolToObject(tsllc, "summoning_hold",
+                              (bool)summonGateDiag.summoning);
         cJSON_AddBoolToObject(tsllc, "inject_ready",
-                              tsllcEnabled && aChannelTx && !aGuardActiveNow);
+                              tsllcEnabled && aChannelTx && !aGuardActiveNow &&
+                              !(bool)summonGateDiag.summoning);
+        cJSON_AddStringToObject(tsllc, "block_reason",
+                                !tsllcEnabled ? "DISABLED" :
+                                !aChannelTx ? "A_TX_OFF" :
+                                aGuardActiveNow ? "TX_GUARD" :
+                                (bool)summonGateDiag.summoning ? "SUMMONING" : "NONE");
         cJSON_AddNumberToObject(tsllc, "txOk", (uint32_t)aChannelDiag.tsllcTxOk);
         cJSON_AddNumberToObject(tsllc, "txFail", (uint32_t)aChannelDiag.tsllcTxFail);
+        cJSON_AddNumberToObject(tsllc, "summoning_hold_count",
+                                (uint32_t)aChannelDiag.tsllcSuppressedSummoningCount);
         cJSON_AddNumberToObject(tsllc, "last_tx_age_ms",
                                 webSafeAgeMs(handlerStartMs,
                                              (uint32_t)aChannelDiag.lastTsllcTxMs));
@@ -2487,13 +2541,47 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         ((bool)summonUnlockRuntime && (bool)aChannelTxRuntime &&
          summonGateOpen() && !aGuardActive) ? "YES" : "NO",
         (bool)tsllcRuntime ? "ON" : "OFF",
-        ((bool)tsllcRuntime && (bool)aChannelTxRuntime && !aGuardActive)
+        ((bool)tsllcRuntime && (bool)aChannelTxRuntime && !aGuardActive &&
+         !(bool)summonGateDiag.summoning)
             ? "YES" : "NO",
         (bool)nagKillerRuntime ? "ON" : "OFF",
         nagModeName((uint8_t)bChannelDiag.nagMode),
         (bool)nagApOnlyRuntime ? "AP_ONLY" : "ORIGINAL",
         (unsigned)(uint8_t)bChannelDiag.dasAutopilotStateRx,
         (bool)bChannelDiag.nagReady ? "YES" : "NO");
+    httpd_resp_sendstr_chunk(req, line);
+    snprintf(line, sizeof(line),
+        "Summon검증: %s(%s) ACA/SPR=%u/%u Gear=%u/%u SPR=%u SpeedRaw=%u | Age 280/390/599/921/1016=%u/%u/%u/%u/%ums\r\n",
+        (bool)summonGateDiag.sessionAllowed ? "ALLOW" : "BLOCK",
+        summonSessionReasonName((uint8_t)summonGateDiag.sessionReason),
+        (unsigned)(bool)summonGateDiag.acaActive,
+        (unsigned)(bool)summonGateDiag.sprSeen,
+        (unsigned)(uint8_t)summonGateDiag.diGear,
+        (unsigned)(uint8_t)summonGateDiag.secondaryGear,
+        (unsigned)(uint8_t)summonGateDiag.selfParkRequest,
+        (unsigned)(uint16_t)summonGateDiag.vehicleSpeedRaw,
+        (unsigned)webSafeAgeMs(aNow, (uint32_t)summonGateDiag.last280Ms),
+        (unsigned)webSafeAgeMs(aNow, (uint32_t)summonGateDiag.last390Ms),
+        (unsigned)webSafeAgeMs(aNow, (uint32_t)summonGateDiag.last599Ms),
+        (unsigned)webSafeAgeMs(aNow, (uint32_t)summonGateDiag.last921Ms),
+        (unsigned)webSafeAgeMs(aNow, (uint32_t)summonGateDiag.last1016Ms));
+    httpd_resp_sendstr_chunk(req, line);
+    snprintf(line, sizeof(line),
+        "Summon재시도: Pending=%s Scheduled/Queue/Done/MLOA/Fail/Expire/Cancel=%u/%u/%u/%u/%u/%u/%u LastCancel=%s | Session MLOA연속=%u/peak=%u SuccessGap=%u/peak=%ums | TSLLC Summoning보류=%u\r\n",
+        (bool)aChannelDiag.aSummonRetryPending ? "YES" : "NO",
+        (unsigned)aChannelDiag.aSummonRetryScheduled,
+        (unsigned)aChannelDiag.aSummonRetryQueued,
+        (unsigned)aChannelDiag.aSummonRetryCompleted,
+        (unsigned)aChannelDiag.aSummonRetryArbitrationLost,
+        (unsigned)aChannelDiag.aSummonRetryFailed,
+        (unsigned)aChannelDiag.aSummonRetryExpired,
+        (unsigned)aChannelDiag.aSummonRetryCanceled,
+        summonRetryCancelReasonName((uint8_t)aChannelDiag.aSummonRetryLastCancelReason),
+        (unsigned)aChannelDiag.aSummonSessionMloaStreak,
+        (unsigned)aChannelDiag.aSummonSessionMloaStreakMax,
+        (unsigned)aChannelDiag.aSummonSessionSuccessGapLastMs,
+        (unsigned)aChannelDiag.aSummonSessionSuccessGapMaxMs,
+        (unsigned)aChannelDiag.tsllcSuppressedSummoningCount);
     httpd_resp_sendstr_chunk(req, line);
     snprintf(line, sizeof(line),
         "기능활동: Summon Q/B/H=%u/%u/%u Blocked=%u Last=%ums | TSLLC Q/B/H=%u/%u/%u Modified=%u Last=%ums | A Done/Arb/Abort=%u/%u/%u | Nag TX=%u Last=%ums\r\n",
@@ -2528,7 +2616,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         (unsigned)aChannelDiag.aTxFailTsllc);
     httpd_resp_sendstr_chunk(req, line);
     snprintf(line, sizeof(line),
-        "B채널: RX=%u Filt=%u Try/OK/Ack=%u/%u/%u TxFail=%u TEC=%u REC=%u TECpeak=%u 880=%u 921=%u 923=%u DAS=%u(%s/L%u/warn=%u)@%u Mode=%s Ready=%s(%u/%u) TWAI=%s InitErr=%d/%d\r\n",
+        "B채널: RX=%u Filt=%u Try/Queue/SelfRx=%u/%u/%u TxFail=%u TEC=%u REC=%u TECpeak=%u 880=%u 921=%u 923=%u DAS=%u(%s/L%u/warn=%u)@%u Mode=%s Ready=%s(%u/%u) TWAI=%s InitErr=%d/%d\r\n",
         (unsigned)bChannelDiag.framesReceivedTotal,
         (unsigned)bChannelDiag.framesFilteredInTotal,
         (unsigned)bChannelDiag.txAttemptCount,
@@ -2704,7 +2792,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         tsSnapRecording ? "ON" : "OFF", (unsigned)tsN);
     httpd_resp_sendstr_chunk(req, line);
     httpd_resp_sendstr_chunk(req,
-        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,dasStateName,dasStateGroup,dasWarnLevel,dasWarning,nagMode,nagModeDefault,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,apState,nagPhase,realTorqueNm,nagInject,nagLastNm,age880Ms,ageDasMs,ageEchoMs,dNagInject,aFrames,aFrameHz,aEflg,aEflgState,aEflgPeak,aTec,aRec,aTecPeak,aRecPeak,aTxQueued,aTxBusy,aTxHardError,aTxCompleted,aTxArbitrationLost,aTxAborted,aMerrf,aRxOvr,aRx0Ovr,aRx1Ovr,aRxB0Frames,aRxB1Frames,aRxDrainFrames,aRxDrainCalls,aRxQueueHighWater,aRxQueueDrops,aEflgEvents,aFrameAgeMs,aLoopAgeMs,aGuardActive,aGuardReason,aGuardRemainingMs,aWakeCount,aWakeToSummonTxMs,aWakeAwaitingTx,dAFrames,dATxOk,dATxFail,dAMerrf,dARxOvr,dAEflgEvents,aDriverOk,aTxEnabled,summonEnabled,tsllcEnabled,aOneShotEnabled,aTxGuardEnabled,aSpiMhz,aSpiTargetMhz,bDriverState,nagEnabled,aLoopGapLastUs,aLoopGapPeakUs,aLoopGapOver250us,aLoopGapOver500us,aLoopGapOver1ms,aLoopGapOver2ms,dALoopGapOver2ms,aLastOverrunPhase,summonGateOpen,summonConditionLimit,summonApState,summonApActive,summonParked,summoning,summonApStableMs,summonGateReason,summonInjectReady,summonTxOk,summonTxFail,summonBlocked,dSummonTxOk,dSummonTxFail,dSummonBlocked,tsllcInjectReady,tsllcTxOk,tsllcTxFail,dTsllcTxOk,dTsllcTxFail,nagApOnly,nagApActive,nagInjecting,nagTxOk,dNagTxOk,aSummonTxCompleted,aSummonTxArbitrationLost,aSummonTxAborted,aSummonTxError,aTsllcTxCompleted,aTsllcTxArbitrationLost,aTsllcTxAborted,aTsllcTxError\r\n");
+        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,dasStateName,dasStateGroup,dasWarnLevel,dasWarning,nagMode,nagModeDefault,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,apState,nagPhase,realTorqueNm,nagInject,nagLastNm,age880Ms,ageDasMs,ageEchoMs,dNagInject,aFrames,aFrameHz,aEflg,aEflgState,aEflgPeak,aTec,aRec,aTecPeak,aRecPeak,aTxQueued,aTxBusy,aTxHardError,aTxCompleted,aTxArbitrationLost,aTxAborted,aMerrf,aRxOvr,aRx0Ovr,aRx1Ovr,aRxB0Frames,aRxB1Frames,aRxDrainFrames,aRxDrainCalls,aRxQueueHighWater,aRxQueueDrops,aEflgEvents,aFrameAgeMs,aLoopAgeMs,aGuardActive,aGuardReason,aGuardRemainingMs,aWakeCount,aWakeToSummonTxMs,aWakeAwaitingTx,dAFrames,dATxOk,dATxFail,dAMerrf,dARxOvr,dAEflgEvents,aDriverOk,aTxEnabled,summonEnabled,tsllcEnabled,aOneShotEnabled,aTxGuardEnabled,aSpiMhz,aSpiTargetMhz,bDriverState,nagEnabled,aLoopGapLastUs,aLoopGapPeakUs,aLoopGapOver250us,aLoopGapOver500us,aLoopGapOver1ms,aLoopGapOver2ms,dALoopGapOver2ms,aLastOverrunPhase,summonGateOpen,summonConditionLimit,summonApState,summonApActive,summonParked,summoning,summonApStableMs,summonGateReason,summonInjectReady,summonTxOk,summonTxFail,summonBlocked,dSummonTxOk,dSummonTxFail,dSummonBlocked,tsllcInjectReady,tsllcTxOk,tsllcTxFail,dTsllcTxOk,dTsllcTxFail,nagApOnly,nagApActive,nagInjecting,nagTxOk,dNagTxOk,aSummonTxCompleted,aSummonTxArbitrationLost,aSummonTxAborted,aSummonTxError,aTsllcTxCompleted,aTsllcTxArbitrationLost,aTsllcTxAborted,aTsllcTxError,aSummonRetryScheduled,aSummonRetryQueued,aSummonRetryCompleted,aSummonRetryArbitrationLost,aSummonRetryFailed,aSummonRetryExpired,aSummonRetryCanceled,aSummonRetryPending,aSummonRetryLastCancelReason,aSummonSessionMloaStreak,aSummonSessionMloaStreakMax,aSummonSessionSuccessGapLastMs,aSummonSessionSuccessGapMaxMs,aTsllcSummoningHold,summonSessionAllowed,summonSessionReason,summonDiGear,summonSecondaryGear,summonSelfParkRequest,summonVehicleSpeedRaw,summonAge280Ms,summonAge390Ms,summonAge599Ms,summonAge921Ms,summonAge1016Ms\r\n");
     {
         if (tsN == 0) {
             httpd_resp_sendstr_chunk(req, "(시계열 없음)\r\n");
@@ -2758,7 +2846,9 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                     "%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,"
                     "%u,%u,%u,%u,%u,%u,%u,%s,"
                     "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
-                    "%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+                    "%u,%u,%u,%u,%u,%u,%u,%u,"
+                    "%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u,%u,"
+                    "%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
                     (unsigned)s.aFrames, (double)s.aFrameHz,
                     (unsigned)s.aEflg, aMcpEflgStateName(s.aEflg), (unsigned)s.aEflgPeak,
                     (unsigned)s.aTec, (unsigned)s.aRec, (unsigned)s.aTecPeak, (unsigned)s.aRecPeak,
@@ -2805,7 +2895,32 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                     (unsigned)s.summonTxAborted, (unsigned)s.summonTxError,
                     (unsigned)s.tsllcTxCompleted,
                     (unsigned)s.tsllcTxArbitrationLost,
-                    (unsigned)s.tsllcTxAborted, (unsigned)s.tsllcTxError);
+                    (unsigned)s.tsllcTxAborted, (unsigned)s.tsllcTxError,
+                    (unsigned)s.summonRetryScheduled,
+                    (unsigned)s.summonRetryQueued,
+                    (unsigned)s.summonRetryCompleted,
+                    (unsigned)s.summonRetryArbitrationLost,
+                    (unsigned)s.summonRetryFailed,
+                    (unsigned)s.summonRetryExpired,
+                    (unsigned)s.summonRetryCanceled,
+                    (unsigned)s.summonRetryPending,
+                    summonRetryCancelReasonName(s.summonRetryLastCancelReason),
+                    (unsigned)s.summonSessionMloaStreak,
+                    (unsigned)s.summonSessionMloaStreakMax,
+                    (unsigned)s.summonSessionSuccessGapLastMs,
+                    (unsigned)s.summonSessionSuccessGapMaxMs,
+                    (unsigned)s.tsllcSuppressedSummoning,
+                    (unsigned)s.summonSessionAllowed,
+                    summonSessionReasonName(s.summonSessionReason),
+                    (unsigned)s.summonDiGear,
+                    (unsigned)s.summonSecondaryGear,
+                    (unsigned)s.summonSelfParkRequest,
+                    (unsigned)s.summonVehicleSpeedRaw,
+                    (unsigned)s.summonAge280Ms,
+                    (unsigned)s.summonAge390Ms,
+                    (unsigned)s.summonAge599Ms,
+                    (unsigned)s.summonAge921Ms,
+                    (unsigned)s.summonAge1016Ms);
                 if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) {
                     logsBundleSerialTrace("fail section4", handlerStartMs);
                     if (wdtDetached) esp_task_wdt_add(NULL);

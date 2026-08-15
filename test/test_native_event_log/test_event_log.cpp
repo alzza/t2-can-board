@@ -25,8 +25,45 @@ void test_event_channel_and_severity_are_explicit()
     TEST_ASSERT_EQUAL_UINT8(EV_CH_A, eventChannel(EV_SUMMON_UNLOCK_ACTIVITY));
     TEST_ASSERT_EQUAL_UINT8(EV_CH_B, eventChannel(EV_NAG_GATE_STATE));
     TEST_ASSERT_EQUAL_UINT8(EV_CH_A, eventChannel(EV_A_TX_QUALITY));
+    TEST_ASSERT_EQUAL_UINT8(EV_CH_A, eventChannel(EV_SUMMON_TX_SESSION));
+    TEST_ASSERT_EQUAL_UINT8(EV_CH_A, eventChannel(EV_SUMMON_RETRY_SESSION));
+    TEST_ASSERT_EQUAL_UINT8(EV_CH_A, eventChannel(EV_SUMMON_TX_TIMING));
+    TEST_ASSERT_EQUAL_UINT8(EV_CH_A, eventChannel(EV_SUMMON_POLICY_STATE));
     TEST_ASSERT_EQUAL_STRING("WARN", eventSeverityName(eventSeverity(EV_A_TX_QUALITY, 0)));
     TEST_ASSERT_EQUAL_UINT8(EV_CH_B, eventChannel(EV_B_BUS_ERR_SNAPSHOT));
+}
+
+void test_summon_policy_detail_preserves_reason_and_vehicle_context()
+{
+    const uint32_t detail = eventSummonPolicyStateDetail(
+        SUMMON_SESSION_GEAR_CONFLICT, false, true, true, 4, 2, 734);
+    TEST_ASSERT_EQUAL_UINT8(SUMMON_SESSION_GEAR_CONFLICT, detail & 0x0FU);
+    TEST_ASSERT_FALSE((detail & (1U << 4)) != 0);
+    TEST_ASSERT_TRUE((detail & (1U << 5)) != 0);
+    TEST_ASSERT_TRUE((detail & (1U << 6)) != 0);
+    TEST_ASSERT_EQUAL_UINT8(4, (detail >> 7) & 0x07U);
+    TEST_ASSERT_EQUAL_UINT8(2, (detail >> 10) & 0x07U);
+    TEST_ASSERT_EQUAL_UINT16(734, (detail >> 13) & 0x0FFFU);
+}
+
+void test_summon_retry_session_details_preserve_results_and_timing()
+{
+    const uint32_t tx = eventSummonTxSessionDetail(101, 22, 3, 4);
+    TEST_ASSERT_EQUAL_UINT8(101, tx & 0xFFU);
+    TEST_ASSERT_EQUAL_UINT8(22, (tx >> 8) & 0xFFU);
+    TEST_ASSERT_EQUAL_UINT8(3, (tx >> 16) & 0xFFU);
+    TEST_ASSERT_EQUAL_UINT8(4, (tx >> 24) & 0xFFU);
+
+    const uint32_t retry = eventSummonRetrySessionDetail(22, 18, 2, 2);
+    TEST_ASSERT_EQUAL_UINT8(22, retry & 0xFFU);
+    TEST_ASSERT_EQUAL_UINT8(18, (retry >> 8) & 0xFFU);
+    TEST_ASSERT_EQUAL_UINT8(2, (retry >> 16) & 0xFFU);
+    TEST_ASSERT_EQUAL_UINT8(2, (retry >> 24) & 0xFFU);
+
+    const uint32_t timing = eventSummonTxTimingDetail(7, 1234, 9);
+    TEST_ASSERT_EQUAL_UINT8(7, timing & 0xFFU);
+    TEST_ASSERT_EQUAL_UINT16(1234, (timing >> 8) & 0xFFFFU);
+    TEST_ASSERT_EQUAL_UINT8(9, (timing >> 24) & 0xFFU);
 }
 
 void test_quality_and_bus_error_snapshot_details_preserve_context()
@@ -39,6 +76,11 @@ void test_quality_and_bus_error_snapshot_details_preserve_context()
     TEST_ASSERT_EQUAL_UINT8(53, eventATxQualityMloaPercent(11, 14, 1));
     TEST_ASSERT_TRUE(eventATxQualityIsWarning(11, 14, 1));
     TEST_ASSERT_FALSE(eventATxQualityIsWarning(3, 4, 0)); // 표본 수가 10 미만
+    TEST_ASSERT_EQUAL_STRING("WARN", eventSeverityName(eventSeverity(EV_A_TX_QUALITY, quality)));
+    const uint32_t normalContention = eventATxQualityDetail(2, 11, 14, 0);
+    const uint32_t noCompletion = eventATxQualityDetail(2, 0, 10, 0);
+    TEST_ASSERT_EQUAL_STRING("INFO", eventSeverityName(eventSeverity(EV_A_TX_QUALITY, normalContention)));
+    TEST_ASSERT_EQUAL_STRING("WARN", eventSeverityName(eventSeverity(EV_A_TX_QUALITY, noCompletion)));
 
     const uint32_t snapshot = eventBBusErrSnapshotDetail(1, 2, 3, 2, true,
                                                            true, 1, 9, 4);
@@ -179,6 +221,21 @@ void test_quality_warning_is_coalesced_per_feature_and_keeps_latest_window()
     TEST_ASSERT_EQUAL_UINT32(tsllc, evtBuf[1].detail);
 }
 
+void test_quality_info_does_not_hide_warning_for_same_feature()
+{
+    const uint32_t info = eventATxQualityDetail(2, 5, 6, 0);
+    const uint32_t warning = eventATxQualityDetail(2, 0, 10, 0);
+
+    eventLogPushAt(1000, EV_A_TX_QUALITY, 0, 0, info);
+    eventLogPushAt(2000, EV_A_TX_QUALITY, 0, 0, warning);
+
+    TEST_ASSERT_EQUAL_UINT32(2, evtCount);
+    TEST_ASSERT_EQUAL_STRING("INFO",
+        eventSeverityName(eventSeverity(evtBuf[0].type, evtBuf[0].detail)));
+    TEST_ASSERT_EQUAL_STRING("WARN",
+        eventSeverityName(eventSeverity(evtBuf[1].type, evtBuf[1].detail)));
+}
+
 void test_non_noisy_events_preserve_each_occurrence_and_track_overwrite()
 {
     for (uint32_t i = 0; i < EVT_CAP + 3; ++i) {
@@ -195,6 +252,8 @@ int main()
     UNITY_BEGIN();
     RUN_TEST(test_event_channel_and_severity_are_explicit);
     RUN_TEST(test_quality_and_bus_error_snapshot_details_preserve_context);
+    RUN_TEST(test_summon_retry_session_details_preserve_results_and_timing);
+    RUN_TEST(test_summon_policy_detail_preserves_reason_and_vehicle_context);
     RUN_TEST(test_a_tx_failure_detail_preserves_source_phase_buffer_and_controller_bits);
     RUN_TEST(test_auto_session_details_preserve_start_end_context);
     RUN_TEST(test_noisy_event_is_coalesced_with_first_last_time_and_count);
@@ -202,6 +261,7 @@ int main()
     RUN_TEST(test_rx_overrun_aggregation_keeps_largest_loop_gap);
     RUN_TEST(test_nag_gate_chatter_is_coalesced_and_keeps_latest_state);
     RUN_TEST(test_quality_warning_is_coalesced_per_feature_and_keeps_latest_window);
+    RUN_TEST(test_quality_info_does_not_hide_warning_for_same_feature);
     RUN_TEST(test_non_noisy_events_preserve_each_occurrence_and_track_overwrite);
     return UNITY_END();
 }

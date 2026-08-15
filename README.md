@@ -157,16 +157,21 @@ OTA 업로드 후 보드가 재부팅되어 다시 응답하면 Web UI가 자동
 
 `TX Guard`가 활성화되었거나 A TX 마스터가 OFF이면 Summon과 TSLLC 모두 수정 송신을 건너뜁니다. Summon 토글은 ON인데 게이트가 닫혀 있으면 `Blocked`만 증가하고 송신하지 않습니다.
 
+MCP2515 One-shot은 중재 손실(MLOA) 뒤 하드웨어가 자동으로 재전송하지 않습니다. 이 펌웨어는 `ACA + SPR`로 확인된 **실제 Summoning 중에만** MLOA로 끝난 최신 mux 1을 3ms 뒤 한 번 재시도합니다. 원본 수신 후 20ms가 지나거나 새 mux 1, Summoning 종료, 기능/A TX OFF, TX Guard, OTA 전송 차단이 들어오면 대기 프레임을 폐기합니다. 주차·AP 안정 상태의 제한 해제와 TSLLC에는 이 재시도를 적용하지 않습니다.
+
 ### 게이트 판정 방식
 
 | 상태 | CAN 근거 | 판정 |
 |---|---|---|
 | Parked | ID 280의 `DI_gear` | 기어값 P일 때 열림. R/N/D이면 닫힘 |
 | Parked 보조 | ID 390의 `DIF_gear` | ID 280이 처음부터 없거나 5초 이상 없을 때만 보조 적용 |
-| Summoning | ID 280 ACA + ID 1016 SPR | `DI_autonomyControlActive`와 `UI_selfParkRequest` 관측이 모두 있을 때 열림 |
+| Summoning 후보 | ID 280 ACA + ID 1016 SPR | 확인된 SelfParkRequest와 ACA가 현재 autonomy 세션에서 함께 있을 때 검증 시작 |
+| Summoning 확정 | ID 280/390/599/921/1016 | 500ms 이내 기어·속도·AP·요청이 유효하고, 기어 모순·P 상태 이동·AP 활성이 없을 때만 열림 |
 | AP 상태 | ID 921 | 상태 3~6이 연속 1초 이상 유지되면 ON 조건 게이트를 엶 |
 
 INO 기준과 동일하게 ID 280이 5초 이상 수신되지 않으면 보드는 Parked로 간주합니다. 따라서 센트리·절전 등으로 프레임이 끊긴 상태에서는 UI의 수신 카운터와 마지막 280 프레임 경과 시간을 함께 확인하십시오.
+
+다중 검증은 `ACA + SPR`가 잡힌 실제 Summon 후보에만 적용됩니다. 일반 AP 주행에서는 SPR 후보가 없으므로 기존 AP 안정 경로로 bit19 ECE R79 해제가 계속 동작합니다. Web UI의 `Summon 검증`과 이벤트 `SUMMON_POLICY_STATE`에서 `DI_STALE`, `SPEED_STALE`, `GEAR_CONFLICT`, `AP_ACTIVE` 같은 차단 원인을 확인할 수 있습니다.
 
 **송신 허용 조건 OFF**는 Tesla 펌웨어별 동작 차이를 비교하기 위한 실험값입니다. OFF여도 기능 마스터, A TX 마스터, TX Guard 조건은 그대로 적용됩니다. 정상 동작 조합을 확인하기 전까지는 ON을 권장합니다.
 
@@ -199,7 +204,7 @@ HW4 INO 경로는 bit 47을 사용하지만, 이 저장소의 기본 빌드는 H
 
 실차에서 관찰된 `EFLG=0x80/0xC0`은 TEC/REC·MERRF 증가가 없는 RX 버퍼 오버런이었습니다. 현재 펌웨어는 ID 1021을 MCP2515 RXB0/RXB1 양쪽에 배치해 필터 부하를 분산하고, 프레임 해석 전에 하드웨어 수신 버퍼를 32프레임 RAM 큐로 먼저 회수합니다. B채널 프레임 하나마다 A채널을 다시 처리하며, CAN 태스크는 고정 1ms 대기 대신 50~100us 짧은 대기와 20ms 주기 RTOS 양보를 사용합니다. 5초 상태 문자열 생성은 별도 Core 0 태스크에서 처리합니다. TEC/REC 또는 MERRF가 함께 증가하지 않는 한 배선·종단 오류로 단정하지 마십시오.
 
-시계열 CSV 스키마 4에서는 `a_rx_buffer0_frames`/`a_rx_buffer1_frames`로 두 하드웨어 버퍼의 수신 편중을, `a_rx_queue_high_water`/`a_rx_queue_drops`로 RAM 큐 여유를, `a_loop_gap_over_250us`/`500us`/`1ms`/`2ms`로 처리 공백 분포를 확인합니다. `a_last_overrun_phase`는 마지막 오버런을 발견한 처리 단계를 나타냅니다. `a_rx_drain_calls`는 빈 폴링을 제외하고 실제 프레임을 회수한 배치 수입니다.
+시계열 CSV 스키마 6에서는 `a_rx_buffer0_frames`/`a_rx_buffer1_frames`로 두 하드웨어 버퍼의 수신 편중을, `a_rx_queue_high_water`/`a_rx_queue_drops`로 RAM 큐 여유를, `a_loop_gap_over_250us`/`500us`/`1ms`/`2ms`로 처리 공백 분포를 확인합니다. `a_last_overrun_phase`는 마지막 오버런을 발견한 처리 단계를 나타냅니다. `a_rx_drain_calls`는 빈 폴링을 제외하고 실제 프레임을 회수한 배치 수입니다. `a_summon_retry_*`, `a_summon_session_mloa_streak_max`, `a_summon_session_success_gap_max_ms`, `a_tsllc_summoning_hold`는 실제 Summoning의 단발 재시도 효과와 끊김 후보를 확인하고, `a_summon_session_*`와 신호별 경과시간은 다중 검증 차단 원인을 남깁니다.
 
 MCP2515 one-shot과 TX Guard는 계속 켜는 것을 권장합니다. One-shot에서는 단발 TX 결과가 TEC/MERRF 증가 없이 기록될 수 있으므로, 큐 등록이나 과거 누적값만으로 현재 통신 장애를 판정하지 않습니다. `Busy`는 MCP2515의 TX 버퍼 3개가 사용 중이라는 뜻이며 하드 오류나 Guard 트리거로 집계하지 않습니다. `Hard`가 최근 1초에 **2회 이상** 발생하면 Guard를 시작하고, BUS-OFF/EFLG 또는 TEC 임계값 이상도 즉시 Guard를 시작합니다.
 
@@ -221,7 +226,7 @@ Serial은 115200 baud에서 부팅·OTA·초기화 실패·BUS-OFF/복구·TEC/R
 
 ## TSLLC 사용 조건
 
-TSLLC는 Summon 게이트와 별도입니다. Web UI에서 TSLLC를 ON으로 설정하고 A TX 마스터가 ON이며 TX Guard가 비활성일 때, ID `0x3FD` mux 0에서 bit 38과 bit 39를 수정합니다. Summon 토글이나 `Parked || Summoning` 상태는 TSLLC 전송 조건이 아닙니다.
+TSLLC는 주행 중 사용하는 기능입니다. Web UI에서 TSLLC를 ON으로 설정하고 A TX 마스터가 ON이며 TX Guard가 비활성일 때, ID `0x3FD` mux 0에서 bit 38과 bit 39를 수정합니다. 단, `ACA + SPR`로 실제 Summoning이 확인된 동안에는 같은 ID의 mux 1 송신을 우선하기 위해 TSLLC를 완전히 보류하고, Summoning 종료 후 기존 조건으로 자동 복귀합니다. 주차 또는 AP 안정 상태에서 Summon Unlock 비트만 주입 중인 것은 실제 Summoning이 아니므로 TSLLC 보류 조건이 아닙니다.
 
 ## HW3 Nag Killer 사용 조건
 

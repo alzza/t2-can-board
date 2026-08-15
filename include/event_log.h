@@ -51,6 +51,14 @@ enum CanEventType : uint8_t {
     // B채널 BUS_ERR 경보가 들어온 정확한 순간의 Nag/AP 문맥 스냅샷.
     // 원본 BUS_ERR 행의 TWAI alert flag와 분리해 읽는다.
     EV_B_BUS_ERR_SNAPSHOT = 33,
+    // 실제 Summoning 종료 때 해당 세션의 원본+재시도 최종 TX 결과를 기록한다.
+    EV_SUMMON_TX_SESSION = 34,
+    // 실제 Summoning 구간의 MLOA 단발 재시도 결과를 기록한다.
+    EV_SUMMON_RETRY_SESSION = 35,
+    // 실제 Summoning 구간의 연속 MLOA, 성공 공백, TSLLC 보류를 기록한다.
+    EV_SUMMON_TX_TIMING = 36,
+    // 실제 Summon 다중 검증의 허용/차단 사유 전이.
+    EV_SUMMON_POLICY_STATE = 37,
     EV_TYPE_COUNT
 };
 
@@ -103,6 +111,10 @@ inline const char* eventTypeName(uint8_t type) {
     case EV_NAG_GATE_STATE: return "NAG_GATE_STATE";
     case EV_A_TX_QUALITY: return "A_TX_QUALITY";
     case EV_B_BUS_ERR_SNAPSHOT: return "B_BUS_ERR_SNAPSHOT";
+    case EV_SUMMON_TX_SESSION: return "SUMMON_TX_SESSION";
+    case EV_SUMMON_RETRY_SESSION: return "SUMMON_RETRY_SESSION";
+    case EV_SUMMON_TX_TIMING: return "SUMMON_TX_TIMING";
+    case EV_SUMMON_POLICY_STATE: return "SUMMON_POLICY_STATE";
     default: return "UNKNOWN";
     }
 }
@@ -120,6 +132,10 @@ inline uint8_t eventChannel(uint8_t type) {
     case EV_A_TX_QUALITY:
     case EV_SUMMONING_STATE:
     case EV_SUMMON_UNLOCK_ACTIVITY:
+    case EV_SUMMON_TX_SESSION:
+    case EV_SUMMON_RETRY_SESSION:
+    case EV_SUMMON_TX_TIMING:
+    case EV_SUMMON_POLICY_STATE:
         return EV_CH_A;
     case EV_BUSOFF:
     case EV_RECOVERY_OK:
@@ -167,8 +183,18 @@ inline uint8_t eventSeverity(uint8_t type, uint32_t detail) {
     case EV_A_RX_OVERRUN:
     case EV_A_TX_GUARD_SET:
     case EV_A_TX_FAILURE:
-    case EV_A_TX_QUALITY:
         return EV_SEV_WARN;
+    case EV_SUMMON_POLICY_STATE:
+        return ((detail & 0x0FU) == SUMMON_SESSION_IDLE ||
+                (detail & 0x0FU) == SUMMON_SESSION_ALLOWED)
+                   ? EV_SEV_INFO : EV_SEV_WARN;
+    case EV_A_TX_QUALITY: {
+        // MLOA만 높고 완료 프레임이 존재하면 같은 ID의 정상 중재 경쟁이다.
+        // 완료가 전혀 없거나 ABTF가 함께 있을 때만 운용 경고로 올린다.
+        const uint32_t completed = (detail >> 2) & 0xFFU;
+        const uint32_t aborted = (detail >> 18) & 0xFFU;
+        return (completed == 0U || aborted > 0U) ? EV_SEV_WARN : EV_SEV_INFO;
+    }
     default:
         return EV_SEV_INFO;
     }
@@ -211,8 +237,10 @@ inline uint32_t eventAggregateKey(uint8_t type, uint32_t detail) {
     // 게이트 상태가 HANDS_ON <-> AP_BLOCK처럼 반복 전이해도 같은 구간으로
     // 합산한다. 최신 detail은 eventLogPushAt에서 보존한다.
     if (type == EV_NAG_GATE_STATE || type == EV_B_BUS_ERR_SNAPSHOT) return type;
-    // 기능별 품질 경고는 출처별로 30초간 합산하고 최신 5초 결과를 보존한다.
-    if (type == EV_A_TX_QUALITY) return detail & 0x03U;
+    // 기능별 품질 관측은 출처와 심각도별로 30초간 합산한다. INFO 중재 경쟁이
+    // 완료 0건/ABTF 동반 WARN을 덮지 않도록 심각도도 집계 키에 포함한다.
+    if (type == EV_A_TX_QUALITY)
+        return (detail & 0x03U) | ((uint32_t)eventSeverity(type, detail) << 2);
     return detail;
 }
 
@@ -322,6 +350,58 @@ inline uint32_t eventSummoningStateDetail(bool active, bool parked, bool aca, bo
            (txOk8 << 8) |
            (txFail8 << 16) |
            (blocked8 << 24);
+}
+
+// 실제 Summoning 세션의 최종 MCP2515 결과. 각 값은 255에서 포화한다.
+inline uint32_t eventSummonTxSessionDetail(uint32_t completed,
+                                           uint32_t arbitrationLost,
+                                           uint32_t aborted,
+                                           uint32_t error)
+{
+    const uint32_t completed8 = completed > 255U ? 255U : completed;
+    const uint32_t lost8 = arbitrationLost > 255U ? 255U : arbitrationLost;
+    const uint32_t aborted8 = aborted > 255U ? 255U : aborted;
+    const uint32_t error8 = error > 255U ? 255U : error;
+    return completed8 | (lost8 << 8) | (aborted8 << 16) | (error8 << 24);
+}
+
+// actual Summoning에서만 허용한 One-shot MLOA 단발 재시도 세션 결과.
+// discarded는 만료·새 프레임·게이트·Guard·OTA 취소와 재시도 하드 실패 합계다.
+inline uint32_t eventSummonRetrySessionDetail(uint32_t scheduled,
+                                              uint32_t completed,
+                                              uint32_t arbitrationLost,
+                                              uint32_t discarded)
+{
+    const uint32_t scheduled8 = scheduled > 255U ? 255U : scheduled;
+    const uint32_t completed8 = completed > 255U ? 255U : completed;
+    const uint32_t lost8 = arbitrationLost > 255U ? 255U : arbitrationLost;
+    const uint32_t discarded8 = discarded > 255U ? 255U : discarded;
+    return scheduled8 | (completed8 << 8) | (lost8 << 16) | (discarded8 << 24);
+}
+
+// maxGapMs는 16비트(65.535초)에서 포화하고 나머지는 8비트에서 포화한다.
+inline uint32_t eventSummonTxTimingDetail(uint32_t maxMloaStreak,
+                                         uint32_t maxGapMs,
+                                         uint32_t tsllcSuppressed)
+{
+    const uint32_t streak8 = maxMloaStreak > 255U ? 255U : maxMloaStreak;
+    const uint32_t gap16 = maxGapMs > 65535U ? 65535U : maxGapMs;
+    const uint32_t held8 = tsllcSuppressed > 255U ? 255U : tsllcSuppressed;
+    return streak8 | (gap16 << 8) | (held8 << 24);
+}
+
+inline uint32_t eventSummonPolicyStateDetail(uint8_t reason, bool allowed,
+                                             bool aca, bool spr, uint8_t diGear,
+                                             uint8_t secondaryGear,
+                                             uint16_t vehicleSpeedRaw)
+{
+    return (uint32_t)(reason & 0x0FU) |
+           (allowed ? (1U << 4) : 0U) |
+           (aca ? (1U << 5) : 0U) |
+           (spr ? (1U << 6) : 0U) |
+           ((uint32_t)(diGear & 0x07U) << 7) |
+           ((uint32_t)(secondaryGear & 0x07U) << 10) |
+           ((uint32_t)(vehicleSpeedRaw & 0x0FFFU) << 13);
 }
 
 // Nag 실제 주입 세션. active=1은 START, 0은 END, injections는 세션 누적값이다.
@@ -513,6 +593,39 @@ inline const char* eventDetailText(uint8_t type, uint32_t detail, char* out, siz
                  (unsigned)((detail >> 24) & 0xFFU));
         break;
     }
+    case EV_SUMMON_TX_SESSION:
+        snprintf(out, outLen,
+                 "completed=%u arbitration_lost=%u aborted=%u error=%u",
+                 (unsigned)(detail & 0xFFU), (unsigned)((detail >> 8) & 0xFFU),
+                 (unsigned)((detail >> 16) & 0xFFU),
+                 (unsigned)((detail >> 24) & 0xFFU));
+        break;
+    case EV_SUMMON_RETRY_SESSION:
+        snprintf(out, outLen,
+                 "scheduled=%u completed=%u arbitration_lost=%u discarded=%u delay_ms=%u expiry_ms=%u",
+                 (unsigned)(detail & 0xFFU), (unsigned)((detail >> 8) & 0xFFU),
+                 (unsigned)((detail >> 16) & 0xFFU),
+                 (unsigned)((detail >> 24) & 0xFFU),
+                 (unsigned)kSummonRetryDelayMs, (unsigned)kSummonRetryExpiryMs);
+        break;
+    case EV_SUMMON_TX_TIMING:
+        snprintf(out, outLen,
+                 "max_consecutive_mloa=%u max_success_gap_ms=%u tsllc_held=%u",
+                 (unsigned)(detail & 0xFFU),
+                 (unsigned)((detail >> 8) & 0xFFFFU),
+                 (unsigned)((detail >> 24) & 0xFFU));
+        break;
+    case EV_SUMMON_POLICY_STATE:
+        snprintf(out, outLen,
+                 "reason=%s allowed=%u aca=%u spr=%u di_gear=%u secondary_gear=%u speed_raw=%u",
+                 summonSessionReasonName((uint8_t)(detail & 0x0FU)),
+                 (unsigned)((detail >> 4) & 1U),
+                 (unsigned)((detail >> 5) & 1U),
+                 (unsigned)((detail >> 6) & 1U),
+                 (unsigned)((detail >> 7) & 0x07U),
+                 (unsigned)((detail >> 10) & 0x07U),
+                 (unsigned)((detail >> 13) & 0x0FFFU));
+        break;
     case EV_NAG_INJECTION_SESSION:
         snprintf(out, outLen,
                  "state=%s mode=%u ap_active=%u phase=%u decision=%s injections=%u",

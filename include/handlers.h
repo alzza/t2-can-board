@@ -71,12 +71,12 @@ struct HW3Handler : public CarManagerBase
 
     const uint32_t *filterIds() const override
     {
-        // RXF0~1 → RXB0, RXF2~5 → RXB1. RXF5는 드라이버가 ids[0]
-        // (1021)로 채워 두 버퍼에서 1021을 받을 수 있게 한다.
-        static constexpr uint32_t ids[] = {1021, 280, 921, 1016, 390};
+        // RXF0~1 → RXB0, RXF2~5 → RXB1. 여섯 번째 필터는 Summon 세션
+        // 속도 유효성 검증용 DI_speed(0x257)를 수신한다.
+        static constexpr uint32_t ids[] = {1021, 280, 921, 1016, 390, 599};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 5; }
+    uint8_t filterIdCount() const override { return 6; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
@@ -88,37 +88,71 @@ struct HW3Handler : public CarManagerBase
         if (frame.id == 280) {
             aChannelDiag.frames280++;
             summonHandle280(frame, nowMs);
-            trackSummoningState(nowMs);
+            trackSummoningState(nowMs, driver);
+            trackSummonPolicyState(nowMs);
             return;
         }
 
         if (frame.id == 390) {
             aChannelDiag.frames390++;
             summonHandle390(frame, nowMs);
-            trackSummoningState(nowMs);
+            trackSummoningState(nowMs, driver);
+            trackSummonPolicyState(nowMs);
+            return;
+        }
+
+        if (frame.id == 599) {
+            summonHandle599(frame, nowMs);
+            trackSummoningState(nowMs, driver);
+            trackSummonPolicyState(nowMs);
             return;
         }
 
         if (frame.id == 921) {
             aChannelDiag.frames921++;
             summonHandle921(frame, nowMs);
+            summonRecompute(nowMs);
+            trackSummoningState(nowMs, driver);
+            trackSummonPolicyState(nowMs);
             return;
         }
 
         if (frame.id == 1016) {
             aChannelDiag.frames1016++;
-            summonHandle1016(frame);
-            trackSummoningState(nowMs);
+            summonHandle1016(frame, nowMs);
+            trackSummoningState(nowMs, driver);
+            trackSummonPolicyState(nowMs);
             return;
         }
 
         if (frame.id != 1021) return;
+        // 1021만 계속 들어오는 구간에서도 500ms 신선도 만료를 즉시 반영해
+        // 오래된 Summon 후보의 대기 TX가 남지 않게 한다.
+        summonGateMaintain(nowMs);
+        trackSummoningState(nowMs, driver);
+        trackSummonPolicyState(nowMs);
         aChannelDiag.frames1021++;
         if (frame.dlc < 8) return;
 
         if (readMuxID(frame) == 0) {
 #if defined(SUMMON_UNLOCK)
             if (tsllcRuntime) {
+                // TSLLC는 주행 중 기능이다. 실제 Summoning(ACA+SPR) 중에는 같은
+                // ID 1021의 mux 0 송신을 완전히 보류해 mux 1 Summon 재송신과
+                // MCP2515 TX 버퍼를 경쟁하지 않게 한다.
+                if ((bool)summonGateDiag.summoning) {
+                    aChannelDiag.tsllcSuppressedSummoningCount =
+                        (uint32_t)aChannelDiag.tsllcSuppressedSummoningCount + 1U;
+                    if ((uint32_t)aChannelDiag.aSummonSessionStartMs != 0U)
+                        aChannelDiag.aSummonSessionTsllcSuppressed =
+                            (uint32_t)aChannelDiag.aSummonSessionTsllcSuppressed + 1U;
+                    static unsigned long lastTsllcSummonHoldLog = 0;
+                    if (nowMs - lastTsllcSummonHoldLog > 5000U) {
+                        logRing.push("[A-CH] TSLLC 주입 보류: 실제 Summoning 우선", nowMs);
+                        lastTsllcSummonHoldLog = nowMs;
+                    }
+                    return;
+                }
                 if (shouldSkipATx("TSLLC")) return;
                 if (!canTxPermitBegin()) return;
                 setBit(frame, 38, true);  // UI_fsdStopsControlEnabled: 스톱사인/신호등 자동 정지 제어 활성화 (TSLLC 검증)
@@ -257,7 +291,7 @@ private:
                              summonUnlockStartArbitrationLost_));
     }
 
-    void trackSummoningState(uint32_t nowMs)
+    void trackSummoningState(uint32_t nowMs, CanDriver &driver)
     {
         const bool active = (bool)summonGateDiag.summoning;
         if (!summoningStateSeen_) {
@@ -266,6 +300,14 @@ private:
             if (!active) return;
         } else if (active == lastSummoningState_) {
             return;
+        }
+
+        if (active) {
+            resetSummonTxSessionDiagnostics(nowMs);
+        } else {
+            // END 이벤트 직전에 이미 끝난 MCP2515 TX 결과를 한 번 더 회수해
+            // 세션 완료/MLOA 값이 가능한 한 마지막 mux 1까지 포함되게 한다.
+            driver.pollTransmitResults();
         }
 
         const uint32_t txOk = (uint32_t)summonGateDiag.txOk;
@@ -285,8 +327,59 @@ private:
             summoningStartTxOk_ = txOk;
             summoningStartTxFail_ = txFail;
             summoningStartBlocked_ = blocked;
+        } else {
+            // 실제 Summon 다중 검증이 닫히는 순간, 오래된 mux 1이 뒤늦게
+            // 전송되지 않도록 하드웨어 대기 TX와 단발 재시도를 함께 폐기한다.
+            driver.cancelPendingTransmit(CanTxSource::Summon);
+            eventLogPush(EV_SUMMON_TX_SESSION,
+                         (uint16_t)(uint8_t)aChannelDiag.aTec,
+                         (uint16_t)(uint8_t)aChannelDiag.aRec,
+                         eventSummonTxSessionDetail(
+                             (uint32_t)aChannelDiag.aSummonSessionTxCompleted,
+                             (uint32_t)aChannelDiag.aSummonSessionTxArbitrationLost,
+                             (uint32_t)aChannelDiag.aSummonSessionTxAborted,
+                             (uint32_t)aChannelDiag.aSummonSessionTxError));
+            eventLogPush(EV_SUMMON_RETRY_SESSION,
+                         (uint16_t)(uint8_t)aChannelDiag.aTec,
+                         (uint16_t)(uint8_t)aChannelDiag.aRec,
+                         eventSummonRetrySessionDetail(
+                             (uint32_t)aChannelDiag.aSummonSessionRetryScheduled,
+                             (uint32_t)aChannelDiag.aSummonSessionRetryCompleted,
+                             (uint32_t)aChannelDiag.aSummonSessionRetryArbitrationLost,
+                             (uint32_t)aChannelDiag.aSummonSessionRetryDiscarded));
+            eventLogPush(EV_SUMMON_TX_TIMING,
+                         (uint16_t)(uint8_t)aChannelDiag.aTec,
+                         (uint16_t)(uint8_t)aChannelDiag.aRec,
+                         eventSummonTxTimingDetail(
+                             (uint32_t)aChannelDiag.aSummonSessionMloaStreakMax,
+                             (uint32_t)aChannelDiag.aSummonSessionSuccessGapMaxMs,
+                             (uint32_t)aChannelDiag.aSummonSessionTsllcSuppressed));
+            aChannelDiag.aSummonSessionStartMs = 0;
         }
         lastSummoningState_ = active;
+    }
+
+    void trackSummonPolicyState(uint32_t nowMs)
+    {
+        const uint8_t reason = (uint8_t)summonGateDiag.sessionReason;
+        if (!summonPolicyReasonSeen_) {
+            summonPolicyReasonSeen_ = true;
+            lastSummonPolicyReason_ = reason;
+            return;
+        }
+        if (reason == lastSummonPolicyReason_) return;
+        eventLogPush(EV_SUMMON_POLICY_STATE,
+                     (uint16_t)(uint8_t)aChannelDiag.aTec,
+                     (uint16_t)(uint8_t)aChannelDiag.aRec,
+                     eventSummonPolicyStateDetail(
+                         reason, (bool)summonGateDiag.sessionAllowed,
+                         (bool)summonGateDiag.acaActive,
+                         (bool)summonGateDiag.sprSeen,
+                         (uint8_t)summonGateDiag.diGear,
+                         (uint8_t)summonGateDiag.secondaryGear,
+                         (uint16_t)summonGateDiag.vehicleSpeedRaw));
+        lastSummonPolicyReason_ = reason;
+        (void)nowMs;
     }
 
     bool summoningStateSeen_ = false;
@@ -299,6 +392,8 @@ private:
     uint32_t summonUnlockStartQueued_ = 0;
     uint32_t summonUnlockStartCompleted_ = 0;
     uint32_t summonUnlockStartArbitrationLost_ = 0;
+    bool summonPolicyReasonSeen_ = false;
+    uint8_t lastSummonPolicyReason_ = SUMMON_SESSION_IDLE;
 };
  
 

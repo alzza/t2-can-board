@@ -51,7 +51,7 @@ def direct_csv_counts(text: str) -> tuple[int, int]:
     )
     header = joined_literals(header_block)
     formats = joined_literals(first_format_block) + joined_literals(second_format_block)
-    # schema_version은 포맷 인자가 아니라 문자열의 고정값 "4"로 출력한다.
+    # schema_version은 포맷 인자가 아니라 문자열의 고정값으로 출력한다.
     return column_count(header), 1 + count_printf_args(formats)
 
 

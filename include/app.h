@@ -165,7 +165,11 @@ static uint16_t appLoop()
         appHandler->frameCount++;
         _aHzFrames++;
         ++processedFrames;
-#if defined(DRIVER_TWAI) && !defined(NATIVE_BUILD)
+#if !defined(NATIVE_BUILD)
+        // A채널은 T-2CAN 빌드에서 MCP2515를 사용한다. DRIVER_TWAI로 제한하면
+        // 실제 수신 중에도 lastFrameRxMs가 0으로 남아 NO_FRAMES/65.535초 포화값과
+        // 약 49일 전 수신처럼 잘못 표시된다. 드라이버 종류와 무관하게 실제로
+        // 회수한 A 프레임에서 수신 시각과 wake 구간을 갱신한다.
         const uint32_t frameNowMs = millis();
         const uint32_t previousFrameMs = (uint32_t)aChannelDiag.lastFrameRxMs;
         if (previousFrameMs > 0 && frameNowMs - previousFrameMs > kAChannelWakeGapMs) {

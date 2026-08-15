@@ -153,6 +153,30 @@ inline bool canTxQuiesceIdle() { return (uint32_t)canTxInFlight == 0; }
 // Validated SummonUnlock gate state (HW3).
 inline constexpr uint32_t kSummonParkedTimeoutMs = 5000;
 inline constexpr uint32_t kSummonApStableRequiredMs = 1000;
+inline constexpr uint32_t kSummonSessionFreshnessMs = 500;
+inline constexpr uint32_t kSummonRequestLeadMs = 2000;
+inline constexpr uint16_t kSummonSpeedStationaryRaw = 500;
+inline constexpr uint16_t kSummonSpeedMaxValidRaw = 4062;
+inline constexpr uint16_t kSummonSpeedSnaRaw = 4095;
+
+enum SummonSessionReason : uint8_t {
+    SUMMON_SESSION_IDLE = 0,
+    SUMMON_SESSION_ALLOWED = 1,
+    SUMMON_SESSION_DI_MISSING = 2,
+    SUMMON_SESSION_DI_STALE = 3,
+    SUMMON_SESSION_SPEED_MISSING = 4,
+    SUMMON_SESSION_SPEED_STALE = 5,
+    SUMMON_SESSION_AP_MISSING = 6,
+    SUMMON_SESSION_AP_STALE = 7,
+    SUMMON_SESSION_UI_MISSING = 8,
+    SUMMON_SESSION_UI_STALE = 9,
+    SUMMON_SESSION_GEAR_INVALID = 10,
+    SUMMON_SESSION_GEAR_CONFLICT = 11,
+    SUMMON_SESSION_SPEED_INVALID = 12,
+    SUMMON_SESSION_PARK_MOVING = 13,
+    SUMMON_SESSION_AP_ACTIVE = 14,
+    SUMMON_SESSION_SPR_UNCONFIRMED = 15,
+};
 
 struct SummonGateDiagnostics {
     Shared<bool> apActive{false};
@@ -163,9 +187,20 @@ struct SummonGateDiagnostics {
     Shared<bool> summoning{false};
     Shared<bool> acaActive{false};
     Shared<bool> sprSeen{false};
+    Shared<bool> sessionAllowed{false};
+    Shared<uint8_t> sessionReason{SUMMON_SESSION_IDLE};
+    Shared<uint8_t> diGear{0};
+    Shared<uint8_t> secondaryGear{0};
+    Shared<uint8_t> selfParkRequest{0};
+    Shared<uint16_t> vehicleSpeedRaw{kSummonSpeedSnaRaw};
     Shared<uint32_t> last280Ms{0};
+    Shared<uint32_t> last390Ms{0};
+    Shared<uint32_t> last599Ms{0};
+    Shared<uint32_t> last1016Ms{0};
+    Shared<uint32_t> sprConfirmedMs{0};
     Shared<uint32_t> frames280{0};
     Shared<uint32_t> frames390{0};
+    Shared<uint32_t> frames599{0};
     Shared<uint32_t> frames921{0};
     Shared<uint32_t> frames1016{0};
     Shared<uint32_t> mux1Received{0};
@@ -178,6 +213,81 @@ struct SummonGateDiagnostics {
 };
 
 inline SummonGateDiagnostics summonGateDiag;
+
+inline const char *summonSessionReasonName(uint8_t reason) {
+    switch (reason) {
+    case SUMMON_SESSION_IDLE: return "IDLE";
+    case SUMMON_SESSION_ALLOWED: return "ALLOWED";
+    case SUMMON_SESSION_DI_MISSING: return "DI_MISSING";
+    case SUMMON_SESSION_DI_STALE: return "DI_STALE";
+    case SUMMON_SESSION_SPEED_MISSING: return "SPEED_MISSING";
+    case SUMMON_SESSION_SPEED_STALE: return "SPEED_STALE";
+    case SUMMON_SESSION_AP_MISSING: return "AP_MISSING";
+    case SUMMON_SESSION_AP_STALE: return "AP_STALE";
+    case SUMMON_SESSION_UI_MISSING: return "UI_MISSING";
+    case SUMMON_SESSION_UI_STALE: return "UI_STALE";
+    case SUMMON_SESSION_GEAR_INVALID: return "GEAR_INVALID";
+    case SUMMON_SESSION_GEAR_CONFLICT: return "GEAR_CONFLICT";
+    case SUMMON_SESSION_SPEED_INVALID: return "SPEED_INVALID";
+    case SUMMON_SESSION_PARK_MOVING: return "PARK_MOVING";
+    case SUMMON_SESSION_AP_ACTIVE: return "AP_ACTIVE";
+    case SUMMON_SESSION_SPR_UNCONFIRMED: return "SPR_UNCONFIRMED";
+    default: return "UNKNOWN";
+    }
+}
+
+inline bool summonSessionFresh(uint32_t timestampMs, uint32_t nowMs) {
+    return nowMs - timestampMs <= kSummonSessionFreshnessMs;
+}
+
+inline bool summonRequestConfirmsSession(uint8_t request) {
+    switch (request) {
+    case 1: case 2: case 4: case 5: case 6:
+    case 7: case 8: case 10: case 11: case 12:
+        return true;
+    default:
+        return false;
+    }
+}
+
+inline bool summonRequestCancelsSession(uint8_t request) {
+    return request == 3 || request == 9;
+}
+
+inline uint8_t summonEvaluateSession(uint32_t nowMs) {
+    if (!(bool)summonGateDiag.acaActive || !(bool)summonGateDiag.sprSeen)
+        return SUMMON_SESSION_IDLE;
+    if ((uint32_t)summonGateDiag.frames280 == 0) return SUMMON_SESSION_DI_MISSING;
+    if (!summonSessionFresh((uint32_t)summonGateDiag.last280Ms, nowMs))
+        return SUMMON_SESSION_DI_STALE;
+    if ((uint32_t)summonGateDiag.frames599 == 0) return SUMMON_SESSION_SPEED_MISSING;
+    if (!summonSessionFresh((uint32_t)summonGateDiag.last599Ms, nowMs))
+        return SUMMON_SESSION_SPEED_STALE;
+    if ((uint32_t)summonGateDiag.frames921 == 0) return SUMMON_SESSION_AP_MISSING;
+    if (!summonSessionFresh((uint32_t)summonGateDiag.last921Ms, nowMs))
+        return SUMMON_SESSION_AP_STALE;
+    if ((uint32_t)summonGateDiag.frames1016 == 0) return SUMMON_SESSION_UI_MISSING;
+    if (!summonSessionFresh((uint32_t)summonGateDiag.last1016Ms, nowMs))
+        return SUMMON_SESSION_UI_STALE;
+
+    const uint8_t gear = (uint8_t)summonGateDiag.diGear;
+    if (gear < 1 || gear > 4) return SUMMON_SESSION_GEAR_INVALID;
+    const uint16_t speed = (uint16_t)summonGateDiag.vehicleSpeedRaw;
+    if (speed > kSummonSpeedMaxValidRaw) return SUMMON_SESSION_SPEED_INVALID;
+    if ((bool)summonGateDiag.apActive) return SUMMON_SESSION_AP_ACTIVE;
+    if (gear == 1 && speed != kSummonSpeedStationaryRaw)
+        return SUMMON_SESSION_PARK_MOVING;
+    if (gear == 3) return SUMMON_SESSION_GEAR_CONFLICT;
+    const uint32_t last390Ms = (uint32_t)summonGateDiag.last390Ms;
+    if (last390Ms != 0 && summonSessionFresh(last390Ms, nowMs)) {
+        const uint8_t secondary = (uint8_t)summonGateDiag.secondaryGear;
+        if (secondary < 1 || secondary > 4 || secondary != gear)
+            return SUMMON_SESSION_GEAR_CONFLICT;
+    }
+    if (!summonRequestConfirmsSession((uint8_t)summonGateDiag.selfParkRequest))
+        return SUMMON_SESSION_SPR_UNCONFIRMED;
+    return SUMMON_SESSION_ALLOWED;
+}
 
 inline int8_t summonGearState(uint8_t gear) {
     if (gear == 1) return 1;
@@ -198,18 +308,25 @@ inline bool summonApStable(uint32_t nowMs) {
 
 inline bool summonGateOpen(uint32_t nowMs = 0) {
     if (!(bool)summonConditionLimitRuntime) return true;
-    if ((bool)summonGateDiag.parked || (bool)summonGateDiag.summoning) return true;
     if (nowMs == 0) {
 #ifndef NATIVE_BUILD
         nowMs = millis();
 #endif
     }
+    // ACA+SPR 후보가 잡힌 동안은 실제 Summon 다중 검증 결과를 우선한다.
+    // 후보가 없을 때만 기존 AP 안정 경로로 ECE R79 주입을 허용한다.
+    if ((bool)summonGateDiag.acaActive && (bool)summonGateDiag.sprSeen)
+        return (bool)summonGateDiag.summoning;
+    if ((bool)summonGateDiag.parked) return true;
+    if ((bool)summonGateDiag.summoning) return true;
     return summonApStable(nowMs);
 }
 
 inline const char *summonGateReasonName(uint32_t nowMs) {
     if (!(bool)summonConditionLimitRuntime) return "UNRESTRICTED";
     if ((bool)summonGateDiag.summoning) return "SUMMONING";
+    if ((bool)summonGateDiag.acaActive && (bool)summonGateDiag.sprSeen)
+        return "SUMMON_BLOCKED";
     if ((bool)summonGateDiag.parked) return "PARKED";
     if (!(bool)summonGateDiag.apActive) return "AP_INACTIVE";
     return summonApStable(nowMs) ? "AP_STABLE" : "AP_STABILIZING";
@@ -218,6 +335,7 @@ inline const char *summonGateReasonName(uint32_t nowMs) {
 inline uint8_t summonGateReasonCode(uint32_t nowMs) {
     if (!(bool)summonConditionLimitRuntime) return 0; // UNRESTRICTED
     if ((bool)summonGateDiag.summoning) return 1;
+    if ((bool)summonGateDiag.acaActive && (bool)summonGateDiag.sprSeen) return 6;
     if ((bool)summonGateDiag.parked) return 2;
     if (!(bool)summonGateDiag.apActive) return 3;
     return summonApStable(nowMs) ? 4 : 5;
@@ -230,12 +348,16 @@ inline const char *summonGateReasonNameFromCode(uint8_t code) {
     case 2: return "PARKED";
     case 4: return "AP_STABLE";
     case 5: return "AP_STABILIZING";
+    case 6: return "SUMMON_BLOCKED";
     default: return "AP_INACTIVE";
     }
 }
 
-inline void summonRecompute() {
-    summonGateDiag.summoning = (bool)summonGateDiag.acaActive && (bool)summonGateDiag.sprSeen;
+inline void summonRecompute(uint32_t nowMs) {
+    const uint8_t reason = summonEvaluateSession(nowMs);
+    summonGateDiag.sessionReason = reason;
+    summonGateDiag.sessionAllowed = reason == SUMMON_SESSION_ALLOWED;
+    summonGateDiag.summoning = reason == SUMMON_SESSION_ALLOWED;
 }
 
 inline void summonClearOnParkIfAcaInactive(uint8_t gear) {
@@ -250,21 +372,29 @@ inline void summonHandle280(const CanFrame &frame, uint32_t nowMs) {
     summonGateDiag.frames280 = (uint32_t)summonGateDiag.frames280 + 1;
     summonGateDiag.last280Ms = nowMs;
     const uint8_t gear = (frame.data[2] >> 5) & 0x07;
+    summonGateDiag.diGear = gear;
     const int8_t gearState = summonGearState(gear);
     if (gearState == 1) summonGateDiag.parked = true;
     if (gearState == 0) summonGateDiag.parked = false;
 
     const bool aca = (frame.data[6] & 0x04U) != 0;
+    if (!(bool)summonGateDiag.acaActive && aca) {
+        const uint32_t confirmedMs = (uint32_t)summonGateDiag.sprConfirmedMs;
+        if (confirmedMs == 0 || nowMs - confirmedMs > kSummonRequestLeadMs)
+            summonGateDiag.sprSeen = false;
+    }
     if ((bool)summonGateDiag.acaActive && !aca) summonGateDiag.sprSeen = false;
     summonGateDiag.acaActive = aca;
-    summonRecompute();
+    summonRecompute(nowMs);
     summonClearOnParkIfAcaInactive(gear);
 }
 
 inline void summonHandle390(const CanFrame &frame, uint32_t nowMs) {
     if (frame.dlc < 8) return;
     summonGateDiag.frames390 = (uint32_t)summonGateDiag.frames390 + 1;
-    const uint8_t gear = (frame.data[2] >> 5) & 0x07;
+    summonGateDiag.last390Ms = nowMs;
+    const uint8_t gear = (frame.data[7] >> 3) & 0x07;
+    summonGateDiag.secondaryGear = gear;
     const int8_t gearState = summonGearState(gear);
     if (gearState < 0) return;
     const uint32_t last280Ms = (uint32_t)summonGateDiag.last280Ms;
@@ -272,6 +402,16 @@ inline void summonHandle390(const CanFrame &frame, uint32_t nowMs) {
         summonGateDiag.parked = (gearState == 1);
         summonClearOnParkIfAcaInactive(gear);
     }
+    summonRecompute(nowMs);
+}
+
+inline void summonHandle599(const CanFrame &frame, uint32_t nowMs) {
+    if (frame.dlc < 3) return;
+    summonGateDiag.frames599 = (uint32_t)summonGateDiag.frames599 + 1;
+    summonGateDiag.last599Ms = nowMs;
+    summonGateDiag.vehicleSpeedRaw =
+        (uint16_t)((frame.data[1] >> 4) | ((uint16_t)frame.data[2] << 4));
+    summonRecompute(nowMs);
 }
 
 inline void summonHandle921(const CanFrame &frame, uint32_t nowMs) {
@@ -288,12 +428,19 @@ inline void summonHandle921(const CanFrame &frame, uint32_t nowMs) {
     summonGateDiag.apActive = active;
 }
 
-inline void summonHandle1016(const CanFrame &frame) {
+inline void summonHandle1016(const CanFrame &frame, uint32_t nowMs) {
     if (frame.dlc < 4) return;
     summonGateDiag.frames1016 = (uint32_t)summonGateDiag.frames1016 + 1;
+    summonGateDiag.last1016Ms = nowMs;
     const uint8_t spr = (frame.data[3] >> 4) & 0x0F;
-    if (spr != 0) summonGateDiag.sprSeen = true;
-    summonRecompute();
+    summonGateDiag.selfParkRequest = spr;
+    if (summonRequestConfirmsSession(spr)) {
+        summonGateDiag.sprSeen = true;
+        summonGateDiag.sprConfirmedMs = nowMs;
+    } else if (summonRequestCancelsSession(spr)) {
+        summonGateDiag.sprSeen = false;
+    }
+    summonRecompute(nowMs);
 }
 
 inline void summonGateMaintain(uint32_t nowMs) {
@@ -301,6 +448,7 @@ inline void summonGateMaintain(uint32_t nowMs) {
     if (last280Ms > 0 && nowMs - last280Ms > kSummonParkedTimeoutMs) {
         summonGateDiag.parked = true;
     }
+    summonRecompute(nowMs);
 }
 
 inline constexpr uint8_t kATxGuardReasonNone = 0;
@@ -316,6 +464,21 @@ inline constexpr uint8_t kATxGuardTxFailBurstThreshold = 2;
 inline constexpr uint32_t kAChannelWakeGapMs = 2000;
 inline constexpr uint32_t kAMcpBusOffRecoverIntervalMs = 1000;
 inline constexpr uint32_t kAMcpBusOffRestartFallbackMs = 10000;
+
+// MCP2515 One-shot은 중재 손실(MLOA) 뒤 하드웨어 자동 재전송을 하지 않는다.
+// 실제 Summoning(ACA+SPR) 구간에 한해서만 최신 mux 1 프레임을 짧게 한 번
+// 재시도한다. 20ms를 넘긴 프레임은 차량 상태가 바뀌었을 수 있어 폐기한다.
+inline constexpr uint32_t kSummonRetryDelayMs = 3;
+inline constexpr uint32_t kSummonRetryExpiryMs = 20;
+
+inline constexpr uint8_t kSummonRetryCancelNone = 0;
+inline constexpr uint8_t kSummonRetryCancelExpired = 1;
+inline constexpr uint8_t kSummonRetryCancelSuperseded = 2;
+inline constexpr uint8_t kSummonRetryCancelGate = 3;
+inline constexpr uint8_t kSummonRetryCancelGuard = 4;
+inline constexpr uint8_t kSummonRetryCancelOta = 5;
+inline constexpr uint8_t kSummonRetryCancelDisabled = 6;
+inline constexpr uint8_t kSummonRetryCancelControllerReset = 7;
 
 inline constexpr uint8_t kATxSourceMaskNone   = 0;
 inline constexpr uint8_t kATxSourceMaskSummon = 1U << 0;
@@ -686,6 +849,35 @@ struct AChannelDiagnostics {
     Shared<uint32_t> aTxAbortedSummon{0};
     Shared<uint32_t> aTxAbortedTsllc{0};
     Shared<uint32_t> aTxAbortedOther{0};
+    // 실제 Summoning 중 One-shot MLOA를 보완하는 단발 재시도 진단.
+    // 누적값과 현재 Summoning 세션값을 모두 유지해 시계열/이벤트에서 비교한다.
+    Shared<uint32_t> aSummonRetryScheduled{0};
+    Shared<uint32_t> aSummonRetryQueued{0};
+    Shared<uint32_t> aSummonRetryCompleted{0};
+    Shared<uint32_t> aSummonRetryArbitrationLost{0};
+    Shared<uint32_t> aSummonRetryFailed{0};
+    Shared<uint32_t> aSummonRetryExpired{0};
+    Shared<uint32_t> aSummonRetryCanceled{0};
+    Shared<uint8_t>  aSummonRetryLastCancelReason{kSummonRetryCancelNone};
+    Shared<bool>     aSummonRetryPending{false};
+    Shared<uint32_t> aSummonSessionStartMs{0};
+    Shared<uint32_t> aSummonSessionTxCompleted{0};
+    Shared<uint32_t> aSummonSessionTxArbitrationLost{0};
+    Shared<uint32_t> aSummonSessionTxAborted{0};
+    Shared<uint32_t> aSummonSessionTxError{0};
+    Shared<uint32_t> aSummonSessionRetryScheduled{0};
+    Shared<uint32_t> aSummonSessionRetryQueued{0};
+    Shared<uint32_t> aSummonSessionRetryCompleted{0};
+    Shared<uint32_t> aSummonSessionRetryArbitrationLost{0};
+    Shared<uint32_t> aSummonSessionRetryFailed{0};
+    Shared<uint32_t> aSummonSessionRetryDiscarded{0};
+    Shared<uint32_t> aSummonSessionMloaStreak{0};
+    Shared<uint32_t> aSummonSessionMloaStreakMax{0};
+    Shared<uint32_t> aSummonSessionLastSuccessMs{0};
+    Shared<uint32_t> aSummonSessionSuccessGapLastMs{0};
+    Shared<uint32_t> aSummonSessionSuccessGapMaxMs{0};
+    Shared<uint32_t> tsllcSuppressedSummoningCount{0};
+    Shared<uint32_t> aSummonSessionTsllcSuppressed{0};
     Shared<uint8_t>  aTxFailWindowDelta{0};     // 최근 1초 TX Fail 증가량
     Shared<uint8_t>  aTxFailWindowPeak{0};      // 세션 내 1초 TX Fail 증가량 최대값
     Shared<uint8_t>  aTec{0};
@@ -753,6 +945,52 @@ inline bool aTxGuardActive(uint32_t nowMs)
 {
     if (!(bool)aTxGuardRuntime) return false;
     return (uint32_t)aChannelDiag.aTxGuardUntilMs > nowMs;
+}
+
+inline const char* summonRetryCancelReasonName(uint8_t reason)
+{
+    switch (reason) {
+    case kSummonRetryCancelExpired: return "EXPIRED";
+    case kSummonRetryCancelSuperseded: return "NEW_FRAME";
+    case kSummonRetryCancelGate: return "GATE_CLOSED";
+    case kSummonRetryCancelGuard: return "TX_GUARD";
+    case kSummonRetryCancelOta: return "OTA_QUIESCE";
+    case kSummonRetryCancelDisabled: return "DISABLED";
+    case kSummonRetryCancelControllerReset: return "CONTROLLER_RESET";
+    default: return "NONE";
+    }
+}
+
+inline bool summonRetryPolicyAllowed(uint32_t nowMs)
+{
+    return (bool)aMcpOneShotRuntime &&
+           (bool)aChannelTxRuntime &&
+           (bool)summonUnlockRuntime &&
+           (bool)summonGateDiag.summoning &&
+           summonGateOpen(nowMs) &&
+           !aTxGuardActive(nowMs) &&
+           !(bool)canTxQuiescing;
+}
+
+inline void resetSummonTxSessionDiagnostics(uint32_t nowMs)
+{
+    aChannelDiag.aSummonSessionStartMs = nowMs;
+    aChannelDiag.aSummonSessionTxCompleted = 0;
+    aChannelDiag.aSummonSessionTxArbitrationLost = 0;
+    aChannelDiag.aSummonSessionTxAborted = 0;
+    aChannelDiag.aSummonSessionTxError = 0;
+    aChannelDiag.aSummonSessionRetryScheduled = 0;
+    aChannelDiag.aSummonSessionRetryQueued = 0;
+    aChannelDiag.aSummonSessionRetryCompleted = 0;
+    aChannelDiag.aSummonSessionRetryArbitrationLost = 0;
+    aChannelDiag.aSummonSessionRetryFailed = 0;
+    aChannelDiag.aSummonSessionRetryDiscarded = 0;
+    aChannelDiag.aSummonSessionMloaStreak = 0;
+    aChannelDiag.aSummonSessionMloaStreakMax = 0;
+    aChannelDiag.aSummonSessionLastSuccessMs = 0;
+    aChannelDiag.aSummonSessionSuccessGapLastMs = 0;
+    aChannelDiag.aSummonSessionSuccessGapMaxMs = 0;
+    aChannelDiag.aSummonSessionTsllcSuppressed = 0;
 }
 
 inline const char* aTxGuardReasonName(uint8_t reason)

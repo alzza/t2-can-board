@@ -6,6 +6,34 @@
 
 ## [Unreleased]
 
+## [1.3.16] - 2026-08-15
+
+### 실제 Summon 다중 검증과 차단 사유 통합
+
+- AP 주행의 ECE R79 경로는 기존 `AP 상태 3~6 안정 1초` 조건으로 유지하고, `ACA + SPR` 실제 Summon 후보에만 ID `0x118` 기어·ACA, `0x186` 보조 기어, `0x257` 속도, `0x399` AP 상태, `0x3F8` SelfParkRequest의 500ms 최근 수신 검증을 추가했다.
+- SelfParkRequest는 확인된 호출 값만 인정하고 취소 값을 분리했으며, ACA 시작보다 2초 넘게 오래된 요청은 새 Summon 세션으로 재사용하지 않는다. 유효하지 않은 기어·속도, P 상태 이동, 주·보조 기어 불일치, AP 활성, 신호 누락·오래됨은 실제 Summoning을 닫는다.
+- 실제 Summon 검증이 닫히면 아직 완료되지 않은 Summon 하드웨어 TX와 One-shot 단발 재시도를 즉시 폐기한다. TSLLC는 실제 Summoning 동안만 보류되고 AP/ECE R79 경로는 별도로 유지된다.
+- 이벤트 `SUMMON_POLICY_STATE`, 상태 API, Web UI와 시계열 CSV 스키마 6에 검증 허용 여부·차단 사유·기어·SelfParkRequest·속도 원시값·신호별 경과시간을 추가했다.
+
+## [1.3.15] - 2026-08-15
+
+### 실제 Summon 중 One-shot MLOA 보완
+
+- MCP2515 One-shot과 TX Guard는 그대로 유지하면서, `ACA + SPR`로 확인된 실제 Summoning 구간에서 원본 Summon mux 1 프레임이 MLOA로 끝난 경우에만 최신 프레임을 3ms 뒤 한 번 재시도한다. 원본 수신 후 20ms가 지나거나 새 mux 1, Summoning 종료, 기능/A TX OFF, TX Guard, OTA 전송 차단이 들어오면 대기 재시도를 폐기한다.
+- 주차 또는 AP 안정 게이트에서 수행하는 ECE R79/Summon 제한 해제, TSLLC, Nag Killer에는 재시도를 적용하지 않는다. HW3 ID `0x3FD` mux 1의 bit19/46과 기존 송신 허용 조건은 유지한다.
+- 실제 Summoning 동안에는 주행용 TSLLC mux 0 송신을 완전히 보류해 같은 ID의 Summon mux 1 및 MCP2515 TX 버퍼와 경쟁하지 않게 한다. Summoning이 끝나면 TSLLC는 기존 조건으로 자동 복귀한다.
+- 상태 API, 자가 진단, 시계열 CSV 스키마 5와 통합 로그에 재시도 예약·큐 등록·완료·MLOA·실패·만료·취소, 연속 MLOA 최대값, 실제 완료 송신 최대 공백, Summoning 중 TSLLC 보류 횟수를 추가했다.
+- 이벤트 CSV에 `SUMMON_TX_SESSION`, `SUMMON_RETRY_SESSION`, `SUMMON_TX_TIMING`을 추가해 USER_MARK 없이도 실제 Summoning 종료 시 세션 결과를 함께 남긴다.
+
+## [1.3.14] - 2026-08-14
+
+### 실차 로그 기반 진단 정확도 개선
+
+- MCP2515 A채널의 실제 프레임 수신 시각을 드라이버 종류와 무관하게 갱신한다. 실제 수신 중인데 `a_frame_age_ms=65535`, `LastRx`가 약 49일 전, Web UI가 `NO_FRAMES`로 잘못 판정하던 조건 오류와 wake 구간 미기록을 수정했다.
+- `A_TX_QUALITY`는 MLOA 비율이 높더라도 완료 프레임이 있으면 정상 중재 경쟁 관측으로 `INFO` 처리한다. 완료가 0건이거나 ABTF가 동반된 구간만 `WARN`으로 유지하며, INFO와 WARN이 집계 중 서로 덮이지 않도록 분리했다.
+- B채널 통합 로그의 `Try/OK/Ack` 표현을 실제 의미인 `Try/Queue/SelfRx`로 정정했다. 현재 일반 TWAI 모드의 `SelfRx=0`은 송신 실패가 아니며, 실제 실패는 `TxFail/TxFailed`, TEC/REC, BUS_ERR 및 BUS-OFF로 판단한다.
+- CAN ID·HW3 bit19/46·TSLLC bit38/39·Nag 토크·주기·주입 게이트·MCP2515 One-shot·TX Guard·OTA 전송 차단 순서는 변경하지 않았다.
+
 ## [1.3.13] - 2026-08-12
 
 ### 실차 CAN 진단 문맥 보강
