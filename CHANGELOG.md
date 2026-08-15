@@ -6,6 +6,80 @@
 
 ## [Unreleased]
 
+## [1.3.16] - 2026-08-15
+
+### 실제 Summon 다중 검증과 차단 사유 통합
+
+- AP 주행의 ECE R79 경로는 기존 `AP 상태 3~6 안정 1초` 조건으로 유지하고, `ACA + SPR` 실제 Summon 후보에만 ID `0x118` 기어·ACA, `0x186` 보조 기어, `0x257` 속도, `0x399` AP 상태, `0x3F8` SelfParkRequest의 500ms 최근 수신 검증을 추가했다.
+- SelfParkRequest는 확인된 호출 값만 인정하고 취소 값을 분리했으며, ACA 시작보다 2초 넘게 오래된 요청은 새 Summon 세션으로 재사용하지 않는다. 유효하지 않은 기어·속도, P 상태 이동, 주·보조 기어 불일치, AP 활성, 신호 누락·오래됨은 실제 Summoning을 닫는다.
+- 실제 Summon 검증이 닫히면 아직 완료되지 않은 Summon 하드웨어 TX와 One-shot 단발 재시도를 즉시 폐기한다. TSLLC는 실제 Summoning 동안만 보류되고 AP/ECE R79 경로는 별도로 유지된다.
+- 이벤트 `SUMMON_POLICY_STATE`, 상태 API, Web UI와 시계열 CSV 스키마 6에 검증 허용 여부·차단 사유·기어·SelfParkRequest·속도 원시값·신호별 경과시간을 추가했다.
+
+## [1.3.15] - 2026-08-15
+
+### 실제 Summon 중 One-shot MLOA 보완
+
+- MCP2515 One-shot과 TX Guard는 그대로 유지하면서, `ACA + SPR`로 확인된 실제 Summoning 구간에서 원본 Summon mux 1 프레임이 MLOA로 끝난 경우에만 최신 프레임을 3ms 뒤 한 번 재시도한다. 원본 수신 후 20ms가 지나거나 새 mux 1, Summoning 종료, 기능/A TX OFF, TX Guard, OTA 전송 차단이 들어오면 대기 재시도를 폐기한다.
+- 주차 또는 AP 안정 게이트에서 수행하는 ECE R79/Summon 제한 해제, TSLLC, Nag Killer에는 재시도를 적용하지 않는다. HW3 ID `0x3FD` mux 1의 bit19/46과 기존 송신 허용 조건은 유지한다.
+- 실제 Summoning 동안에는 주행용 TSLLC mux 0 송신을 완전히 보류해 같은 ID의 Summon mux 1 및 MCP2515 TX 버퍼와 경쟁하지 않게 한다. Summoning이 끝나면 TSLLC는 기존 조건으로 자동 복귀한다.
+- 상태 API, 자가 진단, 시계열 CSV 스키마 5와 통합 로그에 재시도 예약·큐 등록·완료·MLOA·실패·만료·취소, 연속 MLOA 최대값, 실제 완료 송신 최대 공백, Summoning 중 TSLLC 보류 횟수를 추가했다.
+- 이벤트 CSV에 `SUMMON_TX_SESSION`, `SUMMON_RETRY_SESSION`, `SUMMON_TX_TIMING`을 추가해 USER_MARK 없이도 실제 Summoning 종료 시 세션 결과를 함께 남긴다.
+
+## [1.3.14] - 2026-08-14
+
+### 실차 로그 기반 진단 정확도 개선
+
+- MCP2515 A채널의 실제 프레임 수신 시각을 드라이버 종류와 무관하게 갱신한다. 실제 수신 중인데 `a_frame_age_ms=65535`, `LastRx`가 약 49일 전, Web UI가 `NO_FRAMES`로 잘못 판정하던 조건 오류와 wake 구간 미기록을 수정했다.
+- `A_TX_QUALITY`는 MLOA 비율이 높더라도 완료 프레임이 있으면 정상 중재 경쟁 관측으로 `INFO` 처리한다. 완료가 0건이거나 ABTF가 동반된 구간만 `WARN`으로 유지하며, INFO와 WARN이 집계 중 서로 덮이지 않도록 분리했다.
+- B채널 통합 로그의 `Try/OK/Ack` 표현을 실제 의미인 `Try/Queue/SelfRx`로 정정했다. 현재 일반 TWAI 모드의 `SelfRx=0`은 송신 실패가 아니며, 실제 실패는 `TxFail/TxFailed`, TEC/REC, BUS_ERR 및 BUS-OFF로 판단한다.
+- CAN ID·HW3 bit19/46·TSLLC bit38/39·Nag 토크·주기·주입 게이트·MCP2515 One-shot·TX Guard·OTA 전송 차단 순서는 변경하지 않았다.
+
+## [1.3.13] - 2026-08-12
+
+### 실차 CAN 진단 문맥 보강
+
+- A채널은 5초 구간별로 Summon과 TSLLC의 `완료 / MLOA(중재 손실) / ABTF(중단)`을 따로 비교한다. 시도 10건 이상에서 MLOA 비율이 50% 이상일 때만 `A_TX_QUALITY` 경고를 남기며, 같은 기능의 반복 경고는 30초 동안 합산한다.
+- B채널 `BUS_ERR`가 발생하면 기존 원시 TWAI alert 행과 함께 같은 폴링 시점의 TWAI 상태·TEC/REC·Nag 모드/활성·AP·Hands-on·마지막 Nag 판정·DAS 상태를 `B_BUS_ERR_SNAPSHOT`으로 기록한다.
+- CAN ID·HW3 bit19/46·TSLLC bit38/39·Nag 토크·주기·MCP2515 One-shot·TX Guard와 OTA 전송 차단 순서는 변경하지 않았다.
+
+## [1.3.12] - 2026-08-10
+
+### Nag 게이트 기록 보존
+
+- 실차 로그에서 Hands-on과 AP 차단 상태가 짧게 반복될 때 `NAG_GATE_STATE`가 256행 이벤트 링을 소진하던 문제를 수정했다.
+- 첫 게이트 전이는 즉시 기록하고, 같은 30초 구간의 반복 전이는 `occurrences`로 합산한다. 해당 행의 `detail_text`는 마지막 게이트 상태를 표시한다.
+- 실제 `NAG_INJECTION_SESSION` 시작·종료, Summon 상태·Unlock 활동, BUS-OFF와 실제 TX 오류 이벤트는 기존처럼 각각 즉시 기록한다. CAN ID·비트·주기·토크·One-shot과 TX Guard 기준은 변경하지 않았다.
+
+## [1.3.11] - 2026-08-09
+
+### A채널 송신 결과 분류
+
+- MCP2515가 TX 요청 직후 `MLOA/ABTF`와 `TXREQ`를 동시에 반환하면 즉시 하드 오류로 확정하지 않고 진행 중인 TX 버퍼로 등록한 뒤 완료 폴링에서 최종 결과를 판정한다.
+- 최종 결과를 `완료 / 중재 손실(MLOA) / 중단(ABTF) / 실제 TX 오류(TXERR)`로 분리하고 Summon·TSLLC별 누적값을 상태 API, 시계열 CSV와 통합 로그에 추가했다.
+- A TX Guard의 `TX_FAIL` 입력에는 최종 `TXERR` 또는 컨트롤러 오류만 포함한다. 정상적인 CAN 우선순위 경쟁인 `MLOA`와 One-shot 중단 `ABTF`는 Guard를 시작하지 않는다. EFLG·TEC 보호, 15초 보호 시간과 1초 2회 임계값은 유지한다.
+
+### 자동 구간 기록
+
+- 주차 또는 AP 안정 상태에서 bit19/46을 주입하는 `SUMMON_UNLOCK_ACTIVITY`와 `ACA + SPR`로 확인하는 실제 `SUMMONING_STATE`를 서로 다른 이벤트로 기록한다.
+- Nag 주입 세션은 5초 시계열 추정 대신 첫 실제 송신에서 시작하고 AP 차단·Hands-on·기능 OFF 전이에 맞춰 밀리초 단위로 종료한다. Mode 2 내부 휴지는 같은 세션으로 유지한다.
+- `NAG_GATE_STATE` 이벤트에 허용·차단 상태, 판정 사유, 모드, AP, 실제 Hands-on, DAS 상태·소스와 주입 페이즈를 기록한다.
+- CAN ID·HW3 bit19/46·TSLLC bit38/39·Nag 토크값·주입 주기·One-shot 설정은 변경하지 않았다.
+
+## [1.3.10] - 2026-08-09
+
+### 자동 기능 구간 기록
+
+- USER_MARK 없이도 검증 INO 게이트의 `ACA + SPR` 기반 실제 Summoning 시작·종료를 기록하고, 종료 행에 해당 세션의 Summon TX 성공·실패·차단 수를 남긴다.
+- 실제 Nag 송신 세션의 시작·종료, 모드·AP 상태·마지막 판정·세션 주입 수를 이벤트 CSV에 추가했다. Mode 2의 내부 휴지 구간은 종료로 기록하지 않는다.
+- 기능의 CAN ID·비트·주기·조건과 A TX Guard 동작은 변경하지 않았다.
+
+## [1.3.9] - 2026-08-09
+
+### A채널 송신 실패 원인 기록 보강
+
+- MCP2515 `ERROR_FAILTX`가 발생하면 실제로 사용한 TXB0~2와 실패 직후의 `TXBnCTRL`을 다시 읽어 이벤트 CSV에 남긴다. 따라서 `TXERR`·`MLOA`·`ABTF`와 `driver_error`를 한 행에서 확인할 수 있다.
+- 송신 조건, Summon/TSLLC 비트·주기, MCP2515 One-shot, TX Guard 임계값과 보호 시간은 변경하지 않았다.
+
 ## [1.3.8] - 2026-08-07
 
 ### Summon TX 진단 보강

@@ -17,9 +17,20 @@ static void resetSummonState()
     summonGateDiag.summoning = false;
     summonGateDiag.acaActive = false;
     summonGateDiag.sprSeen = false;
+    summonGateDiag.sessionAllowed = false;
+    summonGateDiag.sessionReason = SUMMON_SESSION_IDLE;
+    summonGateDiag.diGear = 0;
+    summonGateDiag.secondaryGear = 0;
+    summonGateDiag.selfParkRequest = 0;
+    summonGateDiag.vehicleSpeedRaw = kSummonSpeedSnaRaw;
     summonGateDiag.last280Ms = 0;
+    summonGateDiag.last390Ms = 0;
+    summonGateDiag.last599Ms = 0;
+    summonGateDiag.last1016Ms = 0;
+    summonGateDiag.sprConfirmedMs = 0;
     summonGateDiag.frames280 = 0;
     summonGateDiag.frames390 = 0;
+    summonGateDiag.frames599 = 0;
     summonGateDiag.frames921 = 0;
     summonGateDiag.frames1016 = 0;
     summonGateDiag.mux1Received = 0;
@@ -52,6 +63,17 @@ static CanFrame frame280(uint8_t gear, bool aca)
     return frame;
 }
 
+static void primeSummonValidationContext()
+{
+    CanFrame speed = {.id = 599, .dlc = 8};
+    speed.data[1] = static_cast<uint8_t>((kSummonSpeedStationaryRaw & 0x0FU) << 4);
+    speed.data[2] = static_cast<uint8_t>(kSummonSpeedStationaryRaw >> 4);
+    handler.handleMessage(speed, mock);
+    CanFrame ap = {.id = 921, .dlc = 8};
+    ap.data[0] = 0;
+    handler.handleMessage(ap, mock);
+}
+
 void setUp()
 {
     mock.reset();
@@ -61,6 +83,11 @@ void setUp()
     tsllcRuntime = true;
     aChannelTxRuntime = true;
     aTxGuardRuntime = false;
+    aMcpOneShotRuntime = true;
+    aChannelDiag.aTxGuardUntilMs = 0;
+    aChannelDiag.tsllcSuppressedSummoningCount = 0;
+    aChannelDiag.aSummonSessionTsllcSuppressed = 0;
+    aChannelDiag.aSummonSessionStartMs = 0;
     canTxInFlight = 0;
     canTxQuiesceCancel();
     resetSummonState();
@@ -72,12 +99,13 @@ void test_filter_contains_validated_gate_ids_and_no_659()
 {
     const uint32_t *ids = handler.filterIds();
     const uint8_t count = handler.filterIdCount();
-    TEST_ASSERT_GREATER_OR_EQUAL_UINT8(5, count);
+    TEST_ASSERT_EQUAL_UINT8(6, count);
     TEST_ASSERT_EQUAL_UINT32(1021, ids[0]);
     TEST_ASSERT_EQUAL_UINT32(280, ids[1]);
     TEST_ASSERT_EQUAL_UINT32(921, ids[2]);
     TEST_ASSERT_EQUAL_UINT32(1016, ids[3]);
     TEST_ASSERT_EQUAL_UINT32(390, ids[4]);
+    TEST_ASSERT_EQUAL_UINT32(599, ids[5]);
     for (uint8_t i = 0; i < count; ++i) TEST_ASSERT_NOT_EQUAL(659, ids[i]);
 }
 
@@ -120,6 +148,7 @@ void test_drive_without_summon_blocks_mux1_injection()
 
 void test_aca_plus_spr_opens_summoning_gate_while_in_drive()
 {
+    primeSummonValidationContext();
     CanFrame driveAca = frame280(4, true);
     handler.handleMessage(driveAca, mock);
     CanFrame spr = {.id = 1016, .dlc = 8};
@@ -136,6 +165,7 @@ void test_aca_plus_spr_opens_summoning_gate_while_in_drive()
 
 void test_aca_falling_edge_clears_spr_and_closes_drive_gate()
 {
+    primeSummonValidationContext();
     CanFrame driveAca = frame280(4, true);
     handler.handleMessage(driveAca, mock);
     CanFrame spr = {.id = 1016, .dlc = 8};
@@ -188,7 +218,7 @@ void test_390_fallback_and_280_watchdog_match_ino()
     summonGateDiag.parked = false;
     summonGateDiag.last280Ms = 100;
     CanFrame park390 = {.id = 390, .dlc = 8};
-    park390.data[2] = 1U << 5;
+    park390.data[7] = 1U << 3;
     summonHandle390(park390, 200);
     TEST_ASSERT_FALSE(summonGateDiag.parked);
 
@@ -219,6 +249,110 @@ void test_tsllc_mux0_remains_active_when_summon_gate_is_closed()
     TEST_ASSERT_TRUE((mock.sent[0].data[4] >> 7) & 0x01U);
     TEST_ASSERT_FALSE((mock.sent[0].data[5] >> 6) & 0x01U);
     TEST_ASSERT_EQUAL_UINT32(0, summonGateDiag.mux1Received);
+}
+
+void test_tsllc_mux0_is_held_while_actual_summoning()
+{
+    primeSummonValidationContext();
+    CanFrame driveAca = frame280(4, true);
+    handler.handleMessage(driveAca, mock);
+    CanFrame spr = {.id = 1016, .dlc = 8};
+    spr.data[3] = 0x40;
+    handler.handleMessage(spr, mock);
+    CanFrame frame = mux0Frame();
+    handler.handleMessage(frame, mock);
+
+    TEST_ASSERT_TRUE((bool)summonGateDiag.summoning);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1, aChannelDiag.tsllcSuppressedSummoningCount);
+    TEST_ASSERT_EQUAL_UINT32(1, aChannelDiag.aSummonSessionTsllcSuppressed);
+}
+
+void test_tsllc_mux0_resumes_after_summoning_ends()
+{
+    primeSummonValidationContext();
+    CanFrame driveAca = frame280(4, true);
+    handler.handleMessage(driveAca, mock);
+    CanFrame spr = {.id = 1016, .dlc = 8};
+    spr.data[3] = 0x40;
+    handler.handleMessage(spr, mock);
+    CanFrame held = mux0Frame();
+    handler.handleMessage(held, mock);
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+
+    CanFrame driveNoAca = frame280(4, false);
+    handler.handleMessage(driveNoAca, mock);
+    CanFrame resumed = mux0Frame();
+    handler.handleMessage(resumed, mock);
+
+    TEST_ASSERT_FALSE((bool)summonGateDiag.summoning);
+    TEST_ASSERT_EQUAL(1, mock.sent.size());
+    TEST_ASSERT_TRUE((mock.sent[0].data[4] >> 6) & 0x01U);
+    TEST_ASSERT_TRUE((mock.sent[0].data[4] >> 7) & 0x01U);
+}
+
+void test_summon_retry_policy_requires_actual_summoning_and_safety_gates()
+{
+    summonGateDiag.parked = true;
+    summonGateDiag.summoning = false;
+    TEST_ASSERT_FALSE(summonRetryPolicyAllowed(1000));
+
+    summonGateDiag.summoning = true;
+    TEST_ASSERT_TRUE(summonRetryPolicyAllowed(1000));
+
+    aTxGuardRuntime = true;
+    aChannelDiag.aTxGuardUntilMs = 2000;
+    TEST_ASSERT_FALSE(summonRetryPolicyAllowed(1000));
+    aTxGuardRuntime = false;
+
+    canTxQuiesceBegin();
+    TEST_ASSERT_FALSE(summonRetryPolicyAllowed(1000));
+    canTxQuiesceCancel();
+
+    aMcpOneShotRuntime = false;
+    TEST_ASSERT_FALSE(summonRetryPolicyAllowed(1000));
+}
+
+void test_summon_candidate_fails_closed_without_fresh_speed()
+{
+    CanFrame ap = {.id = 921, .dlc = 8};
+    ap.data[0] = 0;
+    handler.handleMessage(ap, mock);
+    CanFrame driveAca = frame280(4, true);
+    handler.handleMessage(driveAca, mock);
+    CanFrame spr = {.id = 1016, .dlc = 8};
+    spr.data[3] = 0xB0;
+    handler.handleMessage(spr, mock);
+
+    TEST_ASSERT_TRUE((bool)summonGateDiag.sprSeen);
+    TEST_ASSERT_FALSE((bool)summonGateDiag.summoning);
+    TEST_ASSERT_EQUAL_UINT8(SUMMON_SESSION_SPEED_MISSING,
+                            (uint8_t)summonGateDiag.sessionReason);
+    TEST_ASSERT_FALSE(summonGateOpen(0));
+}
+
+void test_summon_candidate_rejects_active_ap_but_ap_path_stays_separate()
+{
+    primeSummonValidationContext();
+    CanFrame driveAca = frame280(4, true);
+    handler.handleMessage(driveAca, mock);
+    CanFrame spr = {.id = 1016, .dlc = 8};
+    spr.data[3] = 0xB0;
+    handler.handleMessage(spr, mock);
+    TEST_ASSERT_TRUE((bool)summonGateDiag.summoning);
+
+    CanFrame ap = {.id = 921, .dlc = 8};
+    ap.data[0] = 3;
+    handler.handleMessage(ap, mock);
+    const uint32_t apNow = (uint32_t)summonGateDiag.last921Ms;
+    TEST_ASSERT_FALSE((bool)summonGateDiag.summoning);
+    TEST_ASSERT_EQUAL_UINT8(SUMMON_SESSION_AP_ACTIVE,
+                            (uint8_t)summonGateDiag.sessionReason);
+    TEST_ASSERT_FALSE(summonGateOpen(apNow + kSummonApStableRequiredMs));
+
+    summonGateDiag.sprSeen = false;
+    summonRecompute(apNow + kSummonApStableRequiredMs);
+    TEST_ASSERT_TRUE(summonGateOpen(apNow + kSummonApStableRequiredMs));
 }
 
 void test_a_channel_tx_master_blocks_tsllc_and_summon()
@@ -261,6 +395,11 @@ int main()
     RUN_TEST(test_390_fallback_and_280_watchdog_match_ino);
     RUN_TEST(test_removed_id_659_is_ignored);
     RUN_TEST(test_tsllc_mux0_remains_active_when_summon_gate_is_closed);
+    RUN_TEST(test_tsllc_mux0_is_held_while_actual_summoning);
+    RUN_TEST(test_tsllc_mux0_resumes_after_summoning_ends);
+    RUN_TEST(test_summon_retry_policy_requires_actual_summoning_and_safety_gates);
+    RUN_TEST(test_summon_candidate_fails_closed_without_fresh_speed);
+    RUN_TEST(test_summon_candidate_rejects_active_ap_but_ap_path_stays_separate);
     RUN_TEST(test_a_channel_tx_master_blocks_tsllc_and_summon);
     RUN_TEST(test_ota_quiesce_blocks_new_a_channel_modification_tx);
     return UNITY_END();

@@ -71,50 +71,88 @@ struct HW3Handler : public CarManagerBase
 
     const uint32_t *filterIds() const override
     {
-        // RXF0~1 → RXB0, RXF2~5 → RXB1. RXF5는 드라이버가 ids[0]
-        // (1021)로 채워 두 버퍼에서 1021을 받을 수 있게 한다.
-        static constexpr uint32_t ids[] = {1021, 280, 921, 1016, 390};
+        // RXF0~1 → RXB0, RXF2~5 → RXB1. 여섯 번째 필터는 Summon 세션
+        // 속도 유효성 검증용 DI_speed(0x257)를 수신한다.
+        static constexpr uint32_t ids[] = {1021, 280, 921, 1016, 390, 599};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 5; }
+    uint8_t filterIdCount() const override { return 6; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
         const uint32_t nowMs = millis();
+        maintainSummonUnlockActivity(nowMs);
         aChannelDiag.framesReceivedTotal++;
         aChannelDiag.lastFrameIdReceived = frame.id;
 
         if (frame.id == 280) {
             aChannelDiag.frames280++;
             summonHandle280(frame, nowMs);
+            trackSummoningState(nowMs, driver);
+            trackSummonPolicyState(nowMs);
             return;
         }
 
         if (frame.id == 390) {
             aChannelDiag.frames390++;
             summonHandle390(frame, nowMs);
+            trackSummoningState(nowMs, driver);
+            trackSummonPolicyState(nowMs);
+            return;
+        }
+
+        if (frame.id == 599) {
+            summonHandle599(frame, nowMs);
+            trackSummoningState(nowMs, driver);
+            trackSummonPolicyState(nowMs);
             return;
         }
 
         if (frame.id == 921) {
             aChannelDiag.frames921++;
             summonHandle921(frame, nowMs);
+            summonRecompute(nowMs);
+            trackSummoningState(nowMs, driver);
+            trackSummonPolicyState(nowMs);
             return;
         }
 
         if (frame.id == 1016) {
             aChannelDiag.frames1016++;
-            summonHandle1016(frame);
+            summonHandle1016(frame, nowMs);
+            trackSummoningState(nowMs, driver);
+            trackSummonPolicyState(nowMs);
             return;
         }
 
         if (frame.id != 1021) return;
+        // 1021만 계속 들어오는 구간에서도 500ms 신선도 만료를 즉시 반영해
+        // 오래된 Summon 후보의 대기 TX가 남지 않게 한다.
+        summonGateMaintain(nowMs);
+        trackSummoningState(nowMs, driver);
+        trackSummonPolicyState(nowMs);
         aChannelDiag.frames1021++;
         if (frame.dlc < 8) return;
 
         if (readMuxID(frame) == 0) {
 #if defined(SUMMON_UNLOCK)
             if (tsllcRuntime) {
+                // TSLLC는 주행 중 기능이다. 실제 Summoning(ACA+SPR) 중에는 같은
+                // ID 1021의 mux 0 송신을 완전히 보류해 mux 1 Summon 재송신과
+                // MCP2515 TX 버퍼를 경쟁하지 않게 한다.
+                if ((bool)summonGateDiag.summoning) {
+                    aChannelDiag.tsllcSuppressedSummoningCount =
+                        (uint32_t)aChannelDiag.tsllcSuppressedSummoningCount + 1U;
+                    if ((uint32_t)aChannelDiag.aSummonSessionStartMs != 0U)
+                        aChannelDiag.aSummonSessionTsllcSuppressed =
+                            (uint32_t)aChannelDiag.aSummonSessionTsllcSuppressed + 1U;
+                    static unsigned long lastTsllcSummonHoldLog = 0;
+                    if (nowMs - lastTsllcSummonHoldLog > 5000U) {
+                        logRing.push("[A-CH] TSLLC 주입 보류: 실제 Summoning 우선", nowMs);
+                        lastTsllcSummonHoldLog = nowMs;
+                    }
+                    return;
+                }
                 if (shouldSkipATx("TSLLC")) return;
                 if (!canTxPermitBegin()) return;
                 setBit(frame, 38, true);  // UI_fsdStopsControlEnabled: 스톱사인/신호등 자동 정지 제어 활성화 (TSLLC 검증)
@@ -131,8 +169,8 @@ struct HW3Handler : public CarManagerBase
                 } else if (txResult == CanTxResult::Busy) {
                     aChannelDiag.aTxBusy++;
                     aChannelDiag.tsllcTxBusy++;
-                } else {
-                    aChannelDiag.aTxFail++;
+                } else if (txResult == CanTxResult::ControllerError ||
+                           txResult == CanTxResult::InvalidFrame) {
                     aChannelDiag.tsllcTxFail++;
                 }
                 canTxPermitEnd();
@@ -176,6 +214,7 @@ struct HW3Handler : public CarManagerBase
                     aChannelDiag.lastTxMs = sentAtMs;
                     summonGateDiag.txOk = (uint32_t)summonGateDiag.txOk + 1;
                     summonGateDiag.lastTxMs = sentAtMs;
+                    noteSummonUnlockActivity(sentAtMs);
                     if ((bool)aChannelDiag.wakeAwaitingSummonTx) {
                         const uint32_t wakeMs = (uint32_t)aChannelDiag.lastWakeRxMs;
                         const uint32_t wakeDelayMs = wakeMs > 0 ? sentAtMs - wakeMs : 0;
@@ -189,8 +228,8 @@ struct HW3Handler : public CarManagerBase
                 } else if (txResult == CanTxResult::Busy) {
                     aChannelDiag.aTxBusy++;
                     summonGateDiag.txBusy = (uint32_t)summonGateDiag.txBusy + 1;
-                } else {
-                    aChannelDiag.aTxFail++;
+                } else if (txResult == CanTxResult::ControllerError ||
+                           txResult == CanTxResult::InvalidFrame) {
                     summonGateDiag.txFail = (uint32_t)summonGateDiag.txFail + 1;
                 }
                 canTxPermitEnd();
@@ -204,6 +243,157 @@ struct HW3Handler : public CarManagerBase
 #endif
         }
     }
+
+private:
+    static constexpr uint32_t kSummonUnlockActivityIdleMs = 1500;
+
+    void noteSummonUnlockActivity(uint32_t nowMs)
+    {
+        if (!summonUnlockActivityActive_) {
+            summonUnlockActivityActive_ = true;
+            const uint32_t queued = (uint32_t)summonGateDiag.txOk;
+            summonUnlockStartQueued_ = queued > 0 ? queued - 1U : 0U;
+            summonUnlockStartCompleted_ =
+                (uint32_t)aChannelDiag.aTxCompletedSummon;
+            summonUnlockStartArbitrationLost_ =
+                (uint32_t)aChannelDiag.aTxArbitrationLostSummon;
+            eventLogPush(EV_SUMMON_UNLOCK_ACTIVITY,
+                         (uint16_t)(uint8_t)aChannelDiag.aTec,
+                         (uint16_t)(uint8_t)aChannelDiag.aRec,
+                         eventSummonUnlockActivityDetail(
+                             true, (bool)summonGateDiag.parked,
+                             (bool)summonGateDiag.apActive,
+                             (bool)summonGateDiag.summoning,
+                             summonGateReasonCode(nowMs), 0, 0, 0));
+        }
+        summonUnlockActivityLastQueuedMs_ = nowMs;
+    }
+
+    void maintainSummonUnlockActivity(uint32_t nowMs)
+    {
+        if (!summonUnlockActivityActive_ ||
+            nowMs - summonUnlockActivityLastQueuedMs_ <= kSummonUnlockActivityIdleMs)
+            return;
+
+        summonUnlockActivityActive_ = false;
+        eventLogPush(EV_SUMMON_UNLOCK_ACTIVITY,
+                     (uint16_t)(uint8_t)aChannelDiag.aTec,
+                     (uint16_t)(uint8_t)aChannelDiag.aRec,
+                     eventSummonUnlockActivityDetail(
+                         false, (bool)summonGateDiag.parked,
+                         (bool)summonGateDiag.apActive,
+                         (bool)summonGateDiag.summoning,
+                         summonGateReasonCode(nowMs),
+                         (uint32_t)summonGateDiag.txOk - summonUnlockStartQueued_,
+                         (uint32_t)aChannelDiag.aTxCompletedSummon -
+                             summonUnlockStartCompleted_,
+                         (uint32_t)aChannelDiag.aTxArbitrationLostSummon -
+                             summonUnlockStartArbitrationLost_));
+    }
+
+    void trackSummoningState(uint32_t nowMs, CanDriver &driver)
+    {
+        const bool active = (bool)summonGateDiag.summoning;
+        if (!summoningStateSeen_) {
+            summoningStateSeen_ = true;
+            lastSummoningState_ = active;
+            if (!active) return;
+        } else if (active == lastSummoningState_) {
+            return;
+        }
+
+        if (active) {
+            resetSummonTxSessionDiagnostics(nowMs);
+        } else {
+            // END 이벤트 직전에 이미 끝난 MCP2515 TX 결과를 한 번 더 회수해
+            // 세션 완료/MLOA 값이 가능한 한 마지막 mux 1까지 포함되게 한다.
+            driver.pollTransmitResults();
+        }
+
+        const uint32_t txOk = (uint32_t)summonGateDiag.txOk;
+        const uint32_t txFail = (uint32_t)summonGateDiag.txFail;
+        const uint32_t blocked = (uint32_t)summonGateDiag.blocked;
+        const uint32_t detail = eventSummoningStateDetail(
+            active, (bool)summonGateDiag.parked, (bool)summonGateDiag.acaActive,
+            (bool)summonGateDiag.sprSeen, summonGateOpen(nowMs),
+            summonGateReasonCode(nowMs),
+            active ? 0U : txOk - summoningStartTxOk_,
+            active ? 0U : txFail - summoningStartTxFail_,
+            active ? 0U : blocked - summoningStartBlocked_);
+        eventLogPush(EV_SUMMONING_STATE,
+                     (uint16_t)(uint8_t)aChannelDiag.aTec,
+                     (uint16_t)(uint8_t)aChannelDiag.aRec, detail);
+        if (active) {
+            summoningStartTxOk_ = txOk;
+            summoningStartTxFail_ = txFail;
+            summoningStartBlocked_ = blocked;
+        } else {
+            // 실제 Summon 다중 검증이 닫히는 순간, 오래된 mux 1이 뒤늦게
+            // 전송되지 않도록 하드웨어 대기 TX와 단발 재시도를 함께 폐기한다.
+            driver.cancelPendingTransmit(CanTxSource::Summon);
+            eventLogPush(EV_SUMMON_TX_SESSION,
+                         (uint16_t)(uint8_t)aChannelDiag.aTec,
+                         (uint16_t)(uint8_t)aChannelDiag.aRec,
+                         eventSummonTxSessionDetail(
+                             (uint32_t)aChannelDiag.aSummonSessionTxCompleted,
+                             (uint32_t)aChannelDiag.aSummonSessionTxArbitrationLost,
+                             (uint32_t)aChannelDiag.aSummonSessionTxAborted,
+                             (uint32_t)aChannelDiag.aSummonSessionTxError));
+            eventLogPush(EV_SUMMON_RETRY_SESSION,
+                         (uint16_t)(uint8_t)aChannelDiag.aTec,
+                         (uint16_t)(uint8_t)aChannelDiag.aRec,
+                         eventSummonRetrySessionDetail(
+                             (uint32_t)aChannelDiag.aSummonSessionRetryScheduled,
+                             (uint32_t)aChannelDiag.aSummonSessionRetryCompleted,
+                             (uint32_t)aChannelDiag.aSummonSessionRetryArbitrationLost,
+                             (uint32_t)aChannelDiag.aSummonSessionRetryDiscarded));
+            eventLogPush(EV_SUMMON_TX_TIMING,
+                         (uint16_t)(uint8_t)aChannelDiag.aTec,
+                         (uint16_t)(uint8_t)aChannelDiag.aRec,
+                         eventSummonTxTimingDetail(
+                             (uint32_t)aChannelDiag.aSummonSessionMloaStreakMax,
+                             (uint32_t)aChannelDiag.aSummonSessionSuccessGapMaxMs,
+                             (uint32_t)aChannelDiag.aSummonSessionTsllcSuppressed));
+            aChannelDiag.aSummonSessionStartMs = 0;
+        }
+        lastSummoningState_ = active;
+    }
+
+    void trackSummonPolicyState(uint32_t nowMs)
+    {
+        const uint8_t reason = (uint8_t)summonGateDiag.sessionReason;
+        if (!summonPolicyReasonSeen_) {
+            summonPolicyReasonSeen_ = true;
+            lastSummonPolicyReason_ = reason;
+            return;
+        }
+        if (reason == lastSummonPolicyReason_) return;
+        eventLogPush(EV_SUMMON_POLICY_STATE,
+                     (uint16_t)(uint8_t)aChannelDiag.aTec,
+                     (uint16_t)(uint8_t)aChannelDiag.aRec,
+                     eventSummonPolicyStateDetail(
+                         reason, (bool)summonGateDiag.sessionAllowed,
+                         (bool)summonGateDiag.acaActive,
+                         (bool)summonGateDiag.sprSeen,
+                         (uint8_t)summonGateDiag.diGear,
+                         (uint8_t)summonGateDiag.secondaryGear,
+                         (uint16_t)summonGateDiag.vehicleSpeedRaw));
+        lastSummonPolicyReason_ = reason;
+        (void)nowMs;
+    }
+
+    bool summoningStateSeen_ = false;
+    bool lastSummoningState_ = false;
+    uint32_t summoningStartTxOk_ = 0;
+    uint32_t summoningStartTxFail_ = 0;
+    uint32_t summoningStartBlocked_ = 0;
+    bool summonUnlockActivityActive_ = false;
+    uint32_t summonUnlockActivityLastQueuedMs_ = 0;
+    uint32_t summonUnlockStartQueued_ = 0;
+    uint32_t summonUnlockStartCompleted_ = 0;
+    uint32_t summonUnlockStartArbitrationLost_ = 0;
+    bool summonPolicyReasonSeen_ = false;
+    uint8_t lastSummonPolicyReason_ = SUMMON_SESSION_IDLE;
 };
  
 
@@ -283,14 +473,14 @@ struct NagHandler : public CarManagerBase
         if (!transmissionAllowed || !nagKillerActive || !nagKillerRuntime)
         {
             bChannelDiag.skipRuntimeOrInactive++;
-            bChannelDiag.nagLastDecision = kNagDecisionRuntimeOff;
+            setNagDecision(kNagDecisionRuntimeOff, now);
             return;
         }
 
         if (!(bool)bChannelDiag.nagReady)
         {
             bChannelDiag.skipWarmup++;
-            bChannelDiag.nagLastDecision = kNagDecisionWarmup;
+            setNagDecision(kNagDecisionWarmup, now);
             return;
         }
 
@@ -298,7 +488,7 @@ struct NagHandler : public CarManagerBase
         if (handsOn != 0)
         {
             bChannelDiag.skipHandsOn++;
-            bChannelDiag.nagLastDecision = kNagDecisionHandsOn;
+            setNagDecision(kNagDecisionHandsOn, now);
             return;
         }
 
@@ -309,13 +499,13 @@ struct NagHandler : public CarManagerBase
             if (!dasStateSeen_ || now - lastDasStateMs_ > kContextFreshMs)
             {
                 bChannelDiag.skipApState++;
-                bChannelDiag.nagLastDecision = kNagDecisionNo921;
+                setNagDecision(kNagDecisionNo921, now);
                 return;
             }
             if (!nagApStateAllowsInjection(apState_))
             {
                 bChannelDiag.skipApState++;
-                bChannelDiag.nagLastDecision = kNagDecisionApBlocked;
+                setNagDecision(kNagDecisionApBlocked, now);
                 return;
             }
         }
@@ -363,6 +553,10 @@ private:
     bool canStarted_ = false;
     uint32_t canStartedMs_ = 0;
     uint32_t targetFramesSeen_ = 0;
+    uint8_t lastNagGateClass_ = 0xFF;
+    bool nagInjectionSessionActive_ = false;
+    uint32_t nagInjectionSessionBase_ = 0;
+    uint8_t nagInjectionSessionMode_ = 0;
 
     static uint32_t packFrameWord(const CanFrame &frame, uint8_t offset)
     {
@@ -439,8 +633,64 @@ private:
         return value > 65535UL ? 65535U : static_cast<uint16_t>(value);
     }
 
+    void endNagInjectionSession(uint32_t now, uint8_t decision)
+    {
+        (void)now;
+        if (!nagInjectionSessionActive_) return;
+        nagInjectionSessionActive_ = false;
+        const uint32_t injections =
+            (uint32_t)bChannelDiag.modeBInjectCount - nagInjectionSessionBase_;
+        eventLogPush(EV_NAG_INJECTION_SESSION,
+                     clampU16((uint32_t)bChannelDiag.twaiTxErrNow),
+                     clampU16((uint32_t)bChannelDiag.twaiRxErrNow),
+                     eventNagInjectionSessionDetail(
+                         false, nagInjectionSessionMode_,
+                         nagApStateAllowsInjection(apState_),
+                         (uint8_t)bChannelDiag.modeBPhase, decision, injections));
+    }
+
+    void setNagDecision(uint8_t decision, uint32_t now)
+    {
+        bChannelDiag.nagLastDecision = decision;
+        const uint8_t gateClass = nagDecisionGateClass(decision);
+        if (gateClass != lastNagGateClass_) {
+            lastNagGateClass_ = gateClass;
+            eventLogPush(EV_NAG_GATE_STATE,
+                         clampU16((uint32_t)bChannelDiag.twaiTxErrNow),
+                         clampU16((uint32_t)bChannelDiag.twaiRxErrNow),
+                         eventNagGateStateDetail(
+                             decision, (uint8_t)bChannelDiag.nagMode,
+                             nagApStateAllowsInjection(apState_),
+                             (uint8_t)bChannelDiag.realHo,
+                             (uint8_t)bChannelDiag.dasHandsOnStateRx,
+                             (uint16_t)(uint32_t)bChannelDiag.dasStatusSourceId,
+                             (uint8_t)bChannelDiag.modeBPhase));
+        }
+        if (gateClass != kNagGateReady)
+            endNagInjectionSession(now, decision);
+    }
+
+    void noteNagInjectionSession(uint32_t now)
+    {
+        (void)now;
+        if (nagInjectionSessionActive_) return;
+        nagInjectionSessionActive_ = true;
+        const uint32_t count = (uint32_t)bChannelDiag.modeBInjectCount;
+        nagInjectionSessionBase_ = count > 0 ? count - 1U : 0U;
+        nagInjectionSessionMode_ = (uint8_t)bChannelDiag.nagMode;
+        eventLogPush(EV_NAG_INJECTION_SESSION,
+                     clampU16((uint32_t)bChannelDiag.twaiTxErrNow),
+                     clampU16((uint32_t)bChannelDiag.twaiRxErrNow),
+                     eventNagInjectionSessionDetail(
+                         true, nagInjectionSessionMode_,
+                         nagApStateAllowsInjection(apState_),
+                         (uint8_t)bChannelDiag.modeBPhase,
+                         kNagDecisionEcho, 0));
+    }
+
     void resetModeState(uint8_t mode, uint32_t now)
     {
+        setNagDecision(kNagDecisionRuntimeOff, now);
         activeMode_ = mode;
         mode2TorqueIndex_ = 0;
         modeEnteredMs_ = now;
@@ -526,7 +776,7 @@ private:
             if ((now - modeEnteredMs_) % kCycleMs >= kMode2BurstMs)
             {
                 setPhase(0, now);
-                bChannelDiag.nagLastDecision = kNagDecisionModePause;
+                setNagDecision(kNagDecisionModePause, now);
                 return false;
             }
             if (now - mode2LastStepMs_ >= kMode2TorqueStepMs)
@@ -540,7 +790,7 @@ private:
             return true;
         }
 
-        bChannelDiag.nagLastDecision = kNagDecisionRuntimeOff;
+        setNagDecision(kNagDecisionRuntimeOff, now);
         return false;
     }
 
@@ -565,13 +815,13 @@ private:
         if (elapsedUs > kNagEchoDeadlineUs)
         {
             bChannelDiag.echoDroppedLate++;
-            bChannelDiag.nagLastDecision = kNagDecisionLateDrop;
+            setNagDecision(kNagDecisionLateDrop, now);
             return false;
         }
 
         if (!canTxPermitBegin())
         {
-            bChannelDiag.nagLastDecision = kNagDecisionRuntimeOff;
+            setNagDecision(kNagDecisionRuntimeOff, now);
             return false;
         }
 
@@ -580,7 +830,7 @@ private:
         canTxPermitEnd();
         if (!sent)
         {
-            bChannelDiag.nagLastDecision = kNagDecisionNoEcho;
+            setNagDecision(kNagDecisionNoEcho, now);
             return false;
         }
 
@@ -599,7 +849,8 @@ private:
             static_cast<uint8_t>((echo.data[4] >> 6) & 0x03);
         if (!dasStateSeen_)
             bChannelDiag.nagFiredNoDas++;
-        bChannelDiag.nagLastDecision = kNagDecisionEcho;
+        setNagDecision(kNagDecisionEcho, now);
+        noteNagInjectionSession(now);
         return true;
     }
 };

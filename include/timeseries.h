@@ -132,6 +132,14 @@ struct TsSample {
     uint32_t summonBlocked;
     uint32_t tsllcTxOk;
     uint32_t tsllcTxFail;
+    uint32_t summonTxCompleted;
+    uint32_t summonTxArbitrationLost;
+    uint32_t summonTxAborted;
+    uint32_t summonTxError;
+    uint32_t tsllcTxCompleted;
+    uint32_t tsllcTxArbitrationLost;
+    uint32_t tsllcTxAborted;
+    uint32_t tsllcTxError;
     uint16_t dSummonTxOk;
     uint16_t dSummonTxFail;
     uint16_t dSummonBlocked;
@@ -145,6 +153,32 @@ struct TsSample {
     uint32_t aLoopGapOver2ms;
     uint16_t dALoopGapOver2ms;
     uint8_t  aLastOverrunPhase;
+    // 실제 Summoning 전용 One-shot MLOA 재시도와 TSLLC 보류 진단.
+    uint32_t summonRetryScheduled;
+    uint32_t summonRetryQueued;
+    uint32_t summonRetryCompleted;
+    uint32_t summonRetryArbitrationLost;
+    uint32_t summonRetryFailed;
+    uint32_t summonRetryExpired;
+    uint32_t summonRetryCanceled;
+    uint8_t  summonRetryPending;
+    uint8_t  summonRetryLastCancelReason;
+    uint32_t summonSessionMloaStreak;
+    uint32_t summonSessionMloaStreakMax;
+    uint32_t summonSessionSuccessGapLastMs;
+    uint32_t summonSessionSuccessGapMaxMs;
+    uint32_t tsllcSuppressedSummoning;
+    uint8_t  summonSessionAllowed;
+    uint8_t  summonSessionReason;
+    uint8_t  summonDiGear;
+    uint8_t  summonSecondaryGear;
+    uint8_t  summonSelfParkRequest;
+    uint16_t summonVehicleSpeedRaw;
+    uint16_t summonAge280Ms;
+    uint16_t summonAge390Ms;
+    uint16_t summonAge599Ms;
+    uint16_t summonAge921Ms;
+    uint16_t summonAge1016Ms;
 };
 
 static constexpr size_t TS_CAP = 240;  // 240 × 5s = 20분
@@ -209,6 +243,12 @@ inline volatile uint32_t tsPrevSummonTxFail = 0;
 inline volatile uint32_t tsPrevSummonBlocked = 0;
 inline volatile uint32_t tsPrevTsllcTxOk = 0;
 inline volatile uint32_t tsPrevTsllcTxFail = 0;
+inline volatile uint32_t tsPrevSummonTxCompleted = 0;
+inline volatile uint32_t tsPrevSummonTxArbitrationLost = 0;
+inline volatile uint32_t tsPrevSummonTxAborted = 0;
+inline volatile uint32_t tsPrevTsllcTxCompleted = 0;
+inline volatile uint32_t tsPrevTsllcTxArbitrationLost = 0;
+inline volatile uint32_t tsPrevTsllcTxAborted = 0;
 inline volatile bool tsFeatureActivitySeen = false;
 inline volatile uint32_t tsFeatureActivityLast = 0;
 
@@ -336,6 +376,49 @@ static void timeseriesTaskFn(void*) {
         s.summonBlocked = tsDelta(curSummonBlocked, (uint32_t)tsBaseSummonBlocked);
         s.tsllcTxOk = tsDelta(curTsllcTxOk, (uint32_t)tsBaseTsllcTxOk);
         s.tsllcTxFail = tsDelta(curTsllcTxFail, (uint32_t)tsBaseTsllcTxFail);
+        s.summonTxCompleted = (uint32_t)aChannelDiag.aTxCompletedSummon;
+        s.summonTxArbitrationLost =
+            (uint32_t)aChannelDiag.aTxArbitrationLostSummon;
+        s.summonTxAborted = (uint32_t)aChannelDiag.aTxAbortedSummon;
+        s.summonTxError = (uint32_t)aChannelDiag.aTxFailSummon;
+        s.tsllcTxCompleted = (uint32_t)aChannelDiag.aTxCompletedTsllc;
+        s.tsllcTxArbitrationLost =
+            (uint32_t)aChannelDiag.aTxArbitrationLostTsllc;
+        s.tsllcTxAborted = (uint32_t)aChannelDiag.aTxAbortedTsllc;
+        s.tsllcTxError = (uint32_t)aChannelDiag.aTxFailTsllc;
+        s.summonRetryScheduled = (uint32_t)aChannelDiag.aSummonRetryScheduled;
+        s.summonRetryQueued = (uint32_t)aChannelDiag.aSummonRetryQueued;
+        s.summonRetryCompleted = (uint32_t)aChannelDiag.aSummonRetryCompleted;
+        s.summonRetryArbitrationLost =
+            (uint32_t)aChannelDiag.aSummonRetryArbitrationLost;
+        s.summonRetryFailed = (uint32_t)aChannelDiag.aSummonRetryFailed;
+        s.summonRetryExpired = (uint32_t)aChannelDiag.aSummonRetryExpired;
+        s.summonRetryCanceled = (uint32_t)aChannelDiag.aSummonRetryCanceled;
+        s.summonRetryPending = (bool)aChannelDiag.aSummonRetryPending ? 1U : 0U;
+        s.summonRetryLastCancelReason =
+            (uint8_t)aChannelDiag.aSummonRetryLastCancelReason;
+        s.summonSessionMloaStreak =
+            (uint32_t)aChannelDiag.aSummonSessionMloaStreak;
+        s.summonSessionMloaStreakMax =
+            (uint32_t)aChannelDiag.aSummonSessionMloaStreakMax;
+        s.summonSessionSuccessGapLastMs =
+            (uint32_t)aChannelDiag.aSummonSessionSuccessGapLastMs;
+        s.summonSessionSuccessGapMaxMs =
+            (uint32_t)aChannelDiag.aSummonSessionSuccessGapMaxMs;
+        s.tsllcSuppressedSummoning =
+            (uint32_t)aChannelDiag.tsllcSuppressedSummoningCount;
+        const uint16_t dSummonTxCompleted = tsDelta16(
+            s.summonTxCompleted, (uint32_t)tsPrevSummonTxCompleted);
+        const uint16_t dSummonTxArbitrationLost = tsDelta16(
+            s.summonTxArbitrationLost, (uint32_t)tsPrevSummonTxArbitrationLost);
+        const uint16_t dSummonTxAborted = tsDelta16(
+            s.summonTxAborted, (uint32_t)tsPrevSummonTxAborted);
+        const uint16_t dTsllcTxCompleted = tsDelta16(
+            s.tsllcTxCompleted, (uint32_t)tsPrevTsllcTxCompleted);
+        const uint16_t dTsllcTxArbitrationLost = tsDelta16(
+            s.tsllcTxArbitrationLost, (uint32_t)tsPrevTsllcTxArbitrationLost);
+        const uint16_t dTsllcTxAborted = tsDelta16(
+            s.tsllcTxAborted, (uint32_t)tsPrevTsllcTxAborted);
         s.dSummonTxOk = tsDelta16(curSummonTxOk, (uint32_t)tsPrevSummonTxOk);
         s.dSummonTxFail = tsDelta16(curSummonTxFail, (uint32_t)tsPrevSummonTxFail);
         s.dSummonBlocked = tsDelta16(curSummonBlocked, (uint32_t)tsPrevSummonBlocked);
@@ -395,11 +478,23 @@ static void timeseriesTaskFn(void*) {
         s.summonApActive = (bool)summonGateDiag.apActive ? 1U : 0U;
         s.summonParked = (bool)summonGateDiag.parked ? 1U : 0U;
         s.summoning = (bool)summonGateDiag.summoning ? 1U : 0U;
+        s.summonSessionAllowed = (bool)summonGateDiag.sessionAllowed ? 1U : 0U;
+        s.summonSessionReason = (uint8_t)summonGateDiag.sessionReason;
+        s.summonDiGear = (uint8_t)summonGateDiag.diGear;
+        s.summonSecondaryGear = (uint8_t)summonGateDiag.secondaryGear;
+        s.summonSelfParkRequest = (uint8_t)summonGateDiag.selfParkRequest;
+        s.summonVehicleSpeedRaw = (uint16_t)summonGateDiag.vehicleSpeedRaw;
+        s.summonAge280Ms = tsElapsed16(s.t_ms, (uint32_t)summonGateDiag.last280Ms);
+        s.summonAge390Ms = tsElapsed16(s.t_ms, (uint32_t)summonGateDiag.last390Ms);
+        s.summonAge599Ms = tsElapsed16(s.t_ms, (uint32_t)summonGateDiag.last599Ms);
+        s.summonAge921Ms = tsElapsed16(s.t_ms, (uint32_t)summonGateDiag.last921Ms);
+        s.summonAge1016Ms = tsElapsed16(s.t_ms, (uint32_t)summonGateDiag.last1016Ms);
         s.summonGateReason = summonGateReasonCode(s.t_ms);
         s.summonApStableMs = tsDelta16(summonApStableMs(s.t_ms), 0);
         s.summonInjectReady =
             s.summonEnabled && s.aTxEnabled && s.summonGateOpen && !s.aGuardActive;
-        s.tsllcInjectReady = s.tsllcEnabled && s.aTxEnabled && !s.aGuardActive;
+        s.tsllcInjectReady = s.tsllcEnabled && s.aTxEnabled && !s.aGuardActive &&
+                             !s.summoning;
         s.nagApOnly = (bool)nagApOnlyRuntime ? 1U : 0U;
         s.nagApActive = nagApStateAllowsInjection(s.apState) ? 1U : 0U;
         s.nagInjecting = s.dModeBInject > 0 ? 1U : 0U;
@@ -408,6 +503,16 @@ static void timeseriesTaskFn(void*) {
         const uint32_t featureActivity = eventFeatureActivityDetail(
             s.dSummonTxOk > 0, s.dTsllcTxOk > 0, s.dModeBInject > 0,
             s.summonGateOpen != 0, s.aGuardActive != 0, s.nagApActive != 0);
+        const bool emitSummonQuality = eventATxQualityIsWarning(
+            dSummonTxCompleted, dSummonTxArbitrationLost, dSummonTxAborted);
+        const bool emitTsllcQuality = eventATxQualityIsWarning(
+            dTsllcTxCompleted, dTsllcTxArbitrationLost, dTsllcTxAborted);
+        const uint32_t summonQualityDetail = eventATxQualityDetail(
+            (uint8_t)CanTxSource::Summon, dSummonTxCompleted,
+            dSummonTxArbitrationLost, dSummonTxAborted);
+        const uint32_t tsllcQualityDetail = eventATxQualityDetail(
+            (uint8_t)CanTxSource::Tsllc, dTsllcTxCompleted,
+            dTsllcTxArbitrationLost, dTsllcTxAborted);
         bool emitFeatureActivity = false;
         portENTER_CRITICAL(&tsMux);
         tsBuf[tsHead] = s;
@@ -435,6 +540,12 @@ static void timeseriesTaskFn(void*) {
         tsPrevSummonBlocked = curSummonBlocked;
         tsPrevTsllcTxOk = curTsllcTxOk;
         tsPrevTsllcTxFail = curTsllcTxFail;
+        tsPrevSummonTxCompleted = s.summonTxCompleted;
+        tsPrevSummonTxArbitrationLost = s.summonTxArbitrationLost;
+        tsPrevSummonTxAborted = s.summonTxAborted;
+        tsPrevTsllcTxCompleted = s.tsllcTxCompleted;
+        tsPrevTsllcTxArbitrationLost = s.tsllcTxArbitrationLost;
+        tsPrevTsllcTxAborted = s.tsllcTxAborted;
         if (!tsFeatureActivitySeen || tsFeatureActivityLast != featureActivity) {
             tsFeatureActivitySeen = true;
             tsFeatureActivityLast = featureActivity;
@@ -448,6 +559,16 @@ static void timeseriesTaskFn(void*) {
                          (uint16_t)bChannelDiag.twaiTxErrNow,
                          (uint16_t)bChannelDiag.twaiRxErrNow,
                          featureActivity);
+        }
+        if (emitSummonQuality) {
+            eventLogPush(EV_A_TX_QUALITY,
+                         (uint16_t)aChannelDiag.aTec, (uint16_t)aChannelDiag.aRec,
+                         summonQualityDetail);
+        }
+        if (emitTsllcQuality) {
+            eventLogPush(EV_A_TX_QUALITY,
+                         (uint16_t)aChannelDiag.aTec, (uint16_t)aChannelDiag.aRec,
+                         tsllcQualityDetail);
         }
     }
 }
@@ -517,6 +638,12 @@ inline void timeseriesReset(bool beginManualRecording = false) {
     tsPrevSummonBlocked = (uint32_t)summonGateDiag.blocked;
     tsPrevTsllcTxOk = (uint32_t)aChannelDiag.tsllcTxOk;
     tsPrevTsllcTxFail = (uint32_t)aChannelDiag.tsllcTxFail;
+    tsPrevSummonTxCompleted = (uint32_t)aChannelDiag.aTxCompletedSummon;
+    tsPrevSummonTxArbitrationLost = (uint32_t)aChannelDiag.aTxArbitrationLostSummon;
+    tsPrevSummonTxAborted = (uint32_t)aChannelDiag.aTxAbortedSummon;
+    tsPrevTsllcTxCompleted = (uint32_t)aChannelDiag.aTxCompletedTsllc;
+    tsPrevTsllcTxArbitrationLost = (uint32_t)aChannelDiag.aTxArbitrationLostTsllc;
+    tsPrevTsllcTxAborted = (uint32_t)aChannelDiag.aTxAbortedTsllc;
     tsFeatureActivitySeen = false;
     tsFeatureActivityLast = 0;
     portEXIT_CRITICAL(&tsMux);
@@ -577,7 +704,16 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
         "a_summon_ap_stable_ms,a_summon_gate_reason,"
         "a_summon_inject_ready,a_summon_tx_ok,a_summon_tx_fail,a_summon_blocked,"
         "a_d_summon_tx_ok,a_d_summon_tx_fail,a_d_summon_blocked,a_tsllc_inject_ready,a_tsllc_tx_ok,a_tsllc_tx_fail,"
-        "a_d_tsllc_tx_ok,a_d_tsllc_tx_fail,b_nag_ap_only,b_nag_ap_active,b_nag_injecting,b_nag_tx_ok,b_d_nag_tx_ok\r\n";
+        "a_d_tsllc_tx_ok,a_d_tsllc_tx_fail,b_nag_ap_only,b_nag_ap_active,b_nag_injecting,b_nag_tx_ok,b_d_nag_tx_ok,"
+        "a_summon_tx_completed,a_summon_tx_arbitration_lost,a_summon_tx_aborted,a_summon_tx_error,"
+        "a_tsllc_tx_completed,a_tsllc_tx_arbitration_lost,a_tsllc_tx_aborted,a_tsllc_tx_error,"
+        "a_summon_retry_scheduled,a_summon_retry_queued,a_summon_retry_completed,a_summon_retry_arbitration_lost,"
+        "a_summon_retry_failed,a_summon_retry_expired,a_summon_retry_canceled,a_summon_retry_pending,"
+        "a_summon_retry_last_cancel_reason,a_summon_session_mloa_streak,a_summon_session_mloa_streak_max,"
+        "a_summon_session_success_gap_last_ms,a_summon_session_success_gap_max_ms,a_tsllc_summoning_hold,"
+        "a_summon_session_allowed,a_summon_session_reason,a_summon_di_gear,a_summon_secondary_gear,"
+        "a_summon_self_park_request,a_summon_vehicle_speed_raw,a_summon_age_280_ms,a_summon_age_390_ms,"
+        "a_summon_age_599_ms,a_summon_age_921_ms,a_summon_age_1016_ms\r\n";
     httpd_resp_sendstr_chunk(req, hdr);
     char line[1792];
     char wallTime[40];
@@ -587,7 +723,7 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
         timeseriesCopyAt(start + i, s);
         timeseriesFormatTime(s.t_ms, wallTime, sizeof(wallTime));
         int used = snprintf(line, sizeof(line),
-            "4,%s,%s,%s,%u,%s,"
+            "6,%s,%s,%s,%u,%s,"
             "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
             "%u,%u,%s,%s,%u,%u,"
             "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
@@ -624,7 +760,10 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
             "%u,%u,%u,%u,%u,%u,%u,%u,"
             "%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,"
             "%u,%u,%u,%u,%u,%u,%u,%s,"
-            "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+            "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+            "%u,%u,%u,%u,%u,%u,%u,%u,"
+            "%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u,%u,"
+            "%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
             (unsigned)s.aFrames, (double)s.aFrameHz,
             (unsigned)s.aEflg, aMcpEflgStateName(s.aEflg), (unsigned)s.aEflgPeak,
             (unsigned)s.aTec, (unsigned)s.aRec, (unsigned)s.aTecPeak, (unsigned)s.aRecPeak,
@@ -665,7 +804,38 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
             (unsigned)s.tsllcTxFail, (unsigned)s.dTsllcTxOk,
             (unsigned)s.dTsllcTxFail, (unsigned)s.nagApOnly,
             (unsigned)s.nagApActive, (unsigned)s.nagInjecting,
-            (unsigned)s.modeBInject, (unsigned)s.dModeBInject);
+            (unsigned)s.modeBInject, (unsigned)s.dModeBInject,
+            (unsigned)s.summonTxCompleted,
+            (unsigned)s.summonTxArbitrationLost,
+            (unsigned)s.summonTxAborted, (unsigned)s.summonTxError,
+            (unsigned)s.tsllcTxCompleted,
+            (unsigned)s.tsllcTxArbitrationLost,
+            (unsigned)s.tsllcTxAborted, (unsigned)s.tsllcTxError,
+            (unsigned)s.summonRetryScheduled,
+            (unsigned)s.summonRetryQueued,
+            (unsigned)s.summonRetryCompleted,
+            (unsigned)s.summonRetryArbitrationLost,
+            (unsigned)s.summonRetryFailed,
+            (unsigned)s.summonRetryExpired,
+            (unsigned)s.summonRetryCanceled,
+            (unsigned)s.summonRetryPending,
+            summonRetryCancelReasonName(s.summonRetryLastCancelReason),
+            (unsigned)s.summonSessionMloaStreak,
+            (unsigned)s.summonSessionMloaStreakMax,
+            (unsigned)s.summonSessionSuccessGapLastMs,
+            (unsigned)s.summonSessionSuccessGapMaxMs,
+            (unsigned)s.tsllcSuppressedSummoning,
+            (unsigned)s.summonSessionAllowed,
+            summonSessionReasonName(s.summonSessionReason),
+            (unsigned)s.summonDiGear,
+            (unsigned)s.summonSecondaryGear,
+            (unsigned)s.summonSelfParkRequest,
+            (unsigned)s.summonVehicleSpeedRaw,
+            (unsigned)s.summonAge280Ms,
+            (unsigned)s.summonAge390Ms,
+            (unsigned)s.summonAge599Ms,
+            (unsigned)s.summonAge921Ms,
+            (unsigned)s.summonAge1016Ms);
         if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) return ESP_FAIL;
     }
     httpd_resp_sendstr_chunk(req, NULL);

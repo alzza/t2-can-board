@@ -50,6 +50,16 @@ static void canDiagTaskFn(void* /*pv*/) {
         sc==1?"running":sc==2?"BUS_OFF":"init/error",
         nagOk ? "OK" : "ERROR");
     L(buf);
+    snprintf(buf, sizeof(buf),
+        "  Summon검증:%s(%s) ACA/SPR=%u/%u Gear=%u/%u SpeedRaw=%u",
+        (bool)summonGateDiag.sessionAllowed ? "ALLOW" : "BLOCK",
+        summonSessionReasonName((uint8_t)summonGateDiag.sessionReason),
+        (unsigned)(bool)summonGateDiag.acaActive,
+        (unsigned)(bool)summonGateDiag.sprSeen,
+        (unsigned)(uint8_t)summonGateDiag.diGear,
+        (unsigned)(uint8_t)summonGateDiag.secondaryGear,
+        (unsigned)(uint16_t)summonGateDiag.vehicleSpeedRaw);
+    L(buf);
     if (!aInit || aLoopAge > 2000 || sc == 0 || !nagOk) {
         L("  \u274c \ub4dc\ub77c\uc774\ubc84/\ud0dc\uc2a4\ud06c \ubbf8\ucd08\uae30\ud654 \u2192 \uc804\uc6d0\xb7\ubc30\uc120 \ud655\uc778 \ud6c4 \uc7ac\ubd80\ud305");
         ok = false;
@@ -79,9 +89,25 @@ static void canDiagTaskFn(void* /*pv*/) {
          summonGateOpen() && !aTxGuardActive(now1)) ? "YES" : "NO",
         summonGateOpen() ? "OPEN" : "BLOCKED",
         ((bool)tsllcRuntime && (bool)aChannelTxRuntime &&
-         !aTxGuardActive(now1)) ? "YES" : "NO",
+         !aTxGuardActive(now1) && !(bool)summonGateDiag.summoning) ? "YES" : "NO",
         (bool)bChannelDiag.nagReady ? "YES" : "NO",
         (unsigned)(uint8_t)bChannelDiag.dasAutopilotStateRx);
+    L(buf);
+    snprintf(buf, sizeof(buf),
+        "  Summon retry S/Q/C/MLOA/X=%u/%u/%u/%u/%u pending=%s | MLOA연속=%u/peak=%u Gap=%u/peak=%ums | TSLLC Summoning보류=%u",
+        (unsigned)aChannelDiag.aSummonRetryScheduled,
+        (unsigned)aChannelDiag.aSummonRetryQueued,
+        (unsigned)aChannelDiag.aSummonRetryCompleted,
+        (unsigned)aChannelDiag.aSummonRetryArbitrationLost,
+        (unsigned)((uint32_t)aChannelDiag.aSummonRetryExpired +
+                   (uint32_t)aChannelDiag.aSummonRetryCanceled +
+                   (uint32_t)aChannelDiag.aSummonRetryFailed),
+        (bool)aChannelDiag.aSummonRetryPending ? "YES" : "NO",
+        (unsigned)aChannelDiag.aSummonSessionMloaStreak,
+        (unsigned)aChannelDiag.aSummonSessionMloaStreakMax,
+        (unsigned)aChannelDiag.aSummonSessionSuccessGapLastMs,
+        (unsigned)aChannelDiag.aSummonSessionSuccessGapMaxMs,
+        (unsigned)aChannelDiag.tsllcSuppressedSummoningCount);
     L(buf);
     vTaskDelay(pdMS_TO_TICKS(200));
 

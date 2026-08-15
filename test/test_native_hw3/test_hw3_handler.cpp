@@ -34,15 +34,16 @@ void setUp()
 
 void tearDown() {}
 
-void test_hw3_filter_is_exact_ino_five_ids_without_default_experiment()
+void test_hw3_filter_keeps_ino_ids_and_adds_summon_speed_context()
 {
     const uint32_t *ids = handler.filterIds();
-    TEST_ASSERT_EQUAL_UINT8(5, handler.filterIdCount());
+    TEST_ASSERT_EQUAL_UINT8(6, handler.filterIdCount());
     TEST_ASSERT_EQUAL_UINT32(1021, ids[0]);
     TEST_ASSERT_EQUAL_UINT32(280, ids[1]);
     TEST_ASSERT_EQUAL_UINT32(921, ids[2]);
     TEST_ASSERT_EQUAL_UINT32(1016, ids[3]);
     TEST_ASSERT_EQUAL_UINT32(390, ids[4]);
+    TEST_ASSERT_EQUAL_UINT32(599, ids[5]);
 }
 
 void test_id1016_updates_summon_spr_without_transmitting()
@@ -100,7 +101,7 @@ void test_short_1021_frame_never_transmits()
 int main()
 {
     UNITY_BEGIN();
-    RUN_TEST(test_hw3_filter_is_exact_ino_five_ids_without_default_experiment);
+    RUN_TEST(test_hw3_filter_keeps_ino_ids_and_adds_summon_speed_context);
     RUN_TEST(test_id1016_updates_summon_spr_without_transmitting);
     RUN_TEST(test_removed_id1001_experiment_is_ignored);
     RUN_TEST(test_tsllc_mux0_sets_only_validated_bits);

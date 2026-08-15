@@ -716,6 +716,9 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
         <div class="stat"><div class="k">차량 호출 중</div><div class="v" id="suSummoning">--</div></div>
         <div class="stat"><div class="k">ACA</div><div class="v" id="suAca">--</div></div>
         <div class="stat"><div class="k">SPR 유지</div><div class="v" id="suSpr">--</div></div>
+        <div class="stat"><div class="k">Summon 검증</div><div class="v" id="suPolicy">--</div></div>
+        <div class="stat"><div class="k">기어 DI / 보조</div><div class="v" id="suGear">--</div></div>
+        <div class="stat"><div class="k">속도 원시값</div><div class="v" id="suSpeed">--</div></div>
         <div class="stat"><div class="k">AP 상태 / 안정시간</div><div class="v" id="suAp">--</div></div>
         <div class="stat"><div class="k">A채널 상태</div><div class="v" id="suCanState">--</div></div>
         <div class="stat"><div class="k">ID 280 수신</div><div class="v" id="su280Age">--</div></div>
@@ -853,7 +856,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   <div class="row"><span class="label">수신 속도</span><span class="val" id="aHz">-- Hz</span></div>
   <div class="row"><span class="label">ID 1021 Frame</span><span class="meta" style="font-size:13px">실제 CAN에서 들어오는 프레임</span></div>
   <div class="row"><span class="label">└ Summon Unlock 주입 (누적)</span><span class="val" id="aSummonMod">0</span></div>
-  <div class="row"><span class="label">ID 280 / 390 수신</span><span class="val" id="aSummonGearRx">0 / 0</span></div>
+  <div class="row"><span class="label">ID 280 / 390 / 599 수신</span><span class="val" id="aSummonGearRx">0 / 0 / 0</span></div>
   <div class="row"><span class="label">ID 921 / 1016 수신</span><span class="val" id="aSummonGateRx">0 / 0</span></div>
   <div class="row"><span class="label">Mux1 적용 / 차단</span><span class="val" id="aSummonMuxBlocked">0 / 0</span></div>
   <div class="row"><span class="label">Summon TX Q / Busy / Hard</span><span class="val" id="aSummonTx">0 / 0 / 0</span></div>
@@ -885,7 +888,7 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   <div class="row">
     <div class="labelWrap">
       <span class="label">A TX Guard</span>
-      <span class="meta" id="metaATxGuard">TEC/EFLG 즉시 보호 · 1초 TX_FAIL 2회 이상 시 1021 주입 일시 보류</span>
+      <span class="meta" id="metaATxGuard">TEC/EFLG 즉시 보호 · 1초 실제 TX 오류(TXERR/컨트롤러) 2회 이상 시 1021 주입 일시 보류</span>
     </div>
     <label class="sw"><input type="checkbox" id="tATxGuard" onchange="togSwitch('/api/a-tx-guard',this)"><span class="sl"></span></label>
   </div>
@@ -1679,6 +1682,9 @@ async function poll(){
     suBool('suSummoning',!!su.summon);
     suBool('suAca',!!su.aca);
     suBool('suSpr',!!su.spr);
+    setTxt('suPolicy',su.session_reason||'--','v '+(su.session_allowed?'on':(su.aca&&su.spr)?'off':''));
+    setTxt('suGear',n(su.di_gear)+' / '+n(su.secondary_gear),'v');
+    setTxt('suSpeed',n(su.vehicle_speed_raw),'v '+(n(su.vehicle_speed_raw)>4062?'off':''));
     setTxt('suAp',n(su.ap_state)+' / '+n(su.ap_stable_ms)+' ms','v '+(su.ap?'on':'off'));
     setTxt('suCanState',twaiName(su.canState),'v '+(n(su.canState)===1?'on':'off'));
     setTxt('su280Age',su.last_280_age_ms?n(su.last_280_age_ms)+' ms':'--','v');
@@ -1686,12 +1692,12 @@ async function poll(){
     setTxt('s-main-summon-state',su.summon?'SUMMONING':su.parked?'PARKED':'DRIVING','stat-val '+(su.summon||su.parked?'v-ok':'v-warn'));
     setTxt('s-main-ece',su.condition_limit?'ON':'OFF','stat-val '+(su.condition_limit?'v-ok':'v-warn'));
     setTxt('s-main-summon-tx',n(su.txOk)+' / '+n(su.txBusy)+' / '+n(su.txFail),'stat-val '+(n(su.txFail)?'v-err':'v-acc'));
-    setTxt('aSummonGearRx',n(su.rx280)+' / '+n(su.rx390),'val');
+    setTxt('aSummonGearRx',n(su.rx280)+' / '+n(su.rx390)+' / '+n(su.rx599),'val');
     setTxt('aSummonGateRx',n(su.rx921)+' / '+n(su.rx1016),'val');
     setTxt('aSummonMuxBlocked',n(su.rxMux1)+' / '+n(su.blocked),'val');
     setTxt('aSummonTx',n(su.txOk)+' / '+n(su.txBusy)+' / '+n(su.txFail),'val '+(n(su.txFail)?'off':'on'));
     var suReason=document.getElementById('summonGateReason');
-    if(suReason)suReason.textContent='Gate '+(su.gate?'OPEN':'BLOCKED')+' · '+(su.gate_reason||su.block_reason||'--')+' · AP '+n(su.ap_state)+' / '+n(su.ap_stable_ms)+'ms · HW3 bit19=0 / bit46=1';
+    if(suReason)suReason.textContent='Gate '+(su.gate?'OPEN':'BLOCKED')+' · '+(su.gate_reason||su.block_reason||'--')+' · Summon '+(su.session_reason||'--')+' · AP '+n(su.ap_state)+' / '+n(su.ap_stable_ms)+'ms · HW3 bit19=0 / bit46=1';
     var tTsllc=document.getElementById('tTsllc');if(tTsllc)tTsllc.checked=!!d.tsllc_enabled;
     var mTsllc=document.getElementById('mTsllc');if(mTsllc)mTsllc.checked=!!d.tsllc_enabled;
     var tAChannelTx=document.getElementById('tAChannelTx');if(tAChannelTx)tAChannelTx.checked=!!d.a_channel_tx;

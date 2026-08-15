@@ -353,8 +353,21 @@ void nagKillerTask(void* pvParameters) {
                 const uint32_t alerts = driverB->pollAlerts(alertTec, alertRec);
                 if (alerts & TWAI_ALERT_ERR_PASS)
                     eventLogPush(EV_ALERT_ERR_PASS, alertTec, alertRec, alerts);
-                if (alerts & TWAI_ALERT_BUS_ERROR)
+                if (alerts & TWAI_ALERT_BUS_ERROR) {
                     eventLogPush(EV_ALERT_BUS_ERR, alertTec, alertRec, alerts);
+                    // BUS_ERR 원시 alert와 같은 폴링 시점의 Nag/AP 문맥을 별도
+                    // 기록한다. 송신·복구 동작에는 관여하지 않는 진단 전용 값이다.
+                    eventLogPush(EV_B_BUS_ERR_SNAPSHOT, alertTec, alertRec,
+                                 eventBBusErrSnapshotDetail(
+                                     twaiStateCode, alertTec, alertRec,
+                                     (uint8_t)bChannelDiag.nagMode,
+                                     (bool)nagKillerRuntime,
+                                     nagApStateAllowsInjection(
+                                         (uint8_t)bChannelDiag.dasAutopilotStateRx),
+                                     (uint8_t)bChannelDiag.realHo,
+                                     (uint8_t)bChannelDiag.nagLastDecision,
+                                     (uint8_t)bChannelDiag.dasHandsOnStateRx));
+                }
                 if (alerts & TWAI_ALERT_TX_FAILED)
                     eventLogPush(EV_ALERT_TX_FAIL, alertTec, alertRec, alerts);
                 if (alerts & TWAI_ALERT_RX_QUEUE_FULL)

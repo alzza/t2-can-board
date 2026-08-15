@@ -57,6 +57,9 @@ struct CanDriver
     // 비동기 TX 완료 상태를 회수한다. MCP2515처럼 TXREQ가 나중에 해제되는
     // 드라이버가 완료/중재 손실/중단을 진단 카운터에 반영할 때 사용한다.
     virtual void pollTransmitResults() {}
+    // 차량 상태 게이트가 닫힐 때 해당 기능의 아직 완료되지 않은 하드웨어
+    // 송신과 소프트웨어 재시도를 폐기한다. 미지원 드라이버는 no-op이다.
+    virtual void cancelPendingTransmit(CanTxSource /*source*/) {}
     // OTA 플래시 쓰기 전에 하드웨어 송신 경로를 물리적으로 정지한다.
     // 성공 뒤에는 재부팅 전까지 송신을 재개하지 않는다.
     virtual bool quiesceTransmit() { return true; }
