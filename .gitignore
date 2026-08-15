@@ -240,3 +240,4 @@ pyrightconfig.json
 # CUSTOM STUFF #
 .tests
 .tmpcoverage_build/
+docs/sessions/
