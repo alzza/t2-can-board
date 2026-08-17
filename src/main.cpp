@@ -298,6 +298,7 @@ static void statusLogTask(void*) {
         prevSkipHandsOn = curSkipHandsOn;
         prevSkipDas = curSkipDas;
         prevNoDas = curNoDas;
+        updateRtcCanSnapshot(millis());
     }
 }
 
@@ -746,10 +747,12 @@ static bool otaBootCheck()
 
 void setup() {
     Serial.begin(115200);
+    const uint32_t resetReason = (uint32_t)esp_reset_reason();
+    bootDiagnosticsBegin(resetReason);
     delay(2000);
 
     Serial.println("\n\n==================================================");
-    Serial.println("  [V17-RX STABLE] Tesla CAN (EAP/Summon HW3 + TSLLC)");
+    Serial.println("  [V18-TSLLC SAFE] Tesla CAN (EAP/Summon HW3 + TSLLC)");
     Serial.printf("  >> Firmware %s | %s | env=%s\n", FIRMWARE_VERSION, FIRMWARE_BUILD_ID, FIRMWARE_BUILD_ENV);
     Serial.printf("  >> Built %s | git %s/%s dirty=%u source=%s\n",
                   FIRMWARE_BUILD_AT,
@@ -757,8 +760,28 @@ void setup() {
                   FIRMWARE_GIT_SHA,
                   (unsigned)(FIRMWARE_GIT_DIRTY != 0),
                   FIRMWARE_SOURCE_HASH);
-    Serial.printf("  >> Reset reason: %d\n", (int)esp_reset_reason());
+    Serial.printf("  >> Reset reason: %s (%u) | RTC boot=%u | unexpected=%u\n",
+                  bootResetReasonName(resetReason), (unsigned)resetReason,
+                  (unsigned)(uint32_t)bootDiagnostics.rtcBootCount,
+                  (unsigned)(bool)bootDiagnostics.unexpectedReset);
     Serial.println("==================================================");
+    eventLogPush(EV_BOOT_RESET, 0, 0,
+                 (resetReason & 0xFFU) |
+                 (((uint32_t)bootDiagnostics.rtcBootCount & 0xFFFFU) << 8) |
+                 ((bool)bootDiagnostics.unexpectedReset ? (1U << 24) : 0U) |
+                 ((bool)bootDiagnostics.previousSnapshotValid ? (1U << 25) : 0U));
+    if ((bool)bootDiagnostics.previousSnapshotValid) {
+        char previousBoot[224];
+        const RtcCanSnapshot &p = bootDiagnostics.previous;
+        snprintf(previousBoot, sizeof(previousBoot),
+                 "[BOOT-RTC] prev uptime=%ums reset=%s(%u) A_EFLG=0x%02X RXOVR=%u TXQ=%u TXFAIL=%u last=%s/%u features=0x%02X",
+                 (unsigned)p.uptimeMs, bootResetReasonName(p.resetReason),
+                 (unsigned)p.resetReason, (unsigned)p.aEflg,
+                 (unsigned)p.aRxOverrunCount, (unsigned)p.aTxQueued,
+                 (unsigned)p.aTxFail, aTxSourceName(p.lastTxSource),
+                 (unsigned)p.lastTxResult, (unsigned)p.featureFlags);
+        logRing.push(previousBoot, millis());
+    }
     Serial.println("  >> Runtime self-diagnostics disabled in this build");
     Serial.println("==================================================");
 
@@ -824,7 +847,13 @@ void setup() {
     if (!gOtaRecoveryModeActive) {
         esp_err_t loadErr = loadVehicleRuntimeSettingsBeforeCan();
         if (loadErr != ESP_OK) enterCanBootFailClosed("NVS_VEHICLE_SETTINGS_LOAD_FAILED", loadErr);
-        else Serial.println("[BOOT-SAFE] 차량 영향 NVS 설정 선로드 완료 — CAN 시작 허용");
+        else {
+            if ((bool)bootDiagnostics.unexpectedReset && (bool)tsllcRuntime) {
+                tsllcRearmRequired = true;
+                Serial.println("[BOOT-SAFE] 비정상 재부팅: TSLLC 설정 보존, 사용자 재승인 전 송신 차단");
+            }
+            Serial.println("[BOOT-SAFE] 차량 영향 NVS 설정 선로드 완료 — CAN 시작 허용");
+        }
     }
 #endif
 

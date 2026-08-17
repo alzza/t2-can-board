@@ -16,6 +16,13 @@ void setUp()
     aMcpOneShotRuntime = false;
     aTxGuardRuntime = false;
     nagApOnlyRuntime = false;
+    tsllcRearmRequired = false;
+    aChannelDiag.aSafetyHold = false;
+    aChannelDiag.aSafetyLatched = false;
+    aChannelDiag.aSafetyFirstOverrunMs = 0;
+    aChannelDiag.aSafetyHoldCount = 0;
+    aChannelDiag.aSafetyLatchCount = 0;
+    aChannelDiag.aSafetyRecoveryCount = 0;
 }
 void tearDown() {}
 
@@ -348,6 +355,45 @@ void test_busoff_recorder_writes_one_row_per_success_or_failure()
     TEST_ASSERT_EQUAL_UINT32(800, log.at(1).recoveryDurMs);
 }
 
+void test_unexpected_reset_restores_previous_rtc_snapshot()
+{
+    rtcCanSnapshot = {};
+    rtcCanSnapshot.magic = kRtcCanSnapshotMagic;
+    rtcCanSnapshot.schema = kRtcCanSnapshotSchema;
+    rtcCanSnapshot.bootCount = 7;
+    rtcCanSnapshot.uptimeMs = 12345;
+    rtcCanSnapshot.aEflg = 0x80;
+    rtcCanSnapshot.aRxOverrunCount = 2;
+
+    bootDiagnosticsBegin(6); // TASK_WDT
+
+    TEST_ASSERT_TRUE((bool)bootDiagnostics.unexpectedReset);
+    TEST_ASSERT_TRUE((bool)bootDiagnostics.previousSnapshotValid);
+    TEST_ASSERT_EQUAL_UINT32(8, (uint32_t)bootDiagnostics.rtcBootCount);
+    TEST_ASSERT_EQUAL_UINT32(12345, bootDiagnostics.previous.uptimeMs);
+    TEST_ASSERT_EQUAL_HEX8(0x80, bootDiagnostics.previous.aEflg);
+}
+
+void test_a_safety_first_overrun_recovers_and_second_latches()
+{
+    aChannelDiag.framesReceivedTotal = 1000;
+    TEST_ASSERT_FALSE(aSafetyRecordOverrun(100));
+    TEST_ASSERT_TRUE((bool)aChannelDiag.aSafetyHold);
+    TEST_ASSERT_FALSE((bool)aChannelDiag.aSafetyLatched);
+
+    aChannelDiag.mcpEflg = 0;
+    aChannelDiag.framesReceivedTotal = 1100;
+    aChannelDiag.lastFrameRxMs = 2100;
+    TEST_ASSERT_TRUE(aSafetyTryRecover(2100));
+    TEST_ASSERT_FALSE((bool)aChannelDiag.aSafetyHold);
+    TEST_ASSERT_EQUAL_UINT32(1, (uint32_t)aChannelDiag.aSafetyRecoveryCount);
+
+    TEST_ASSERT_TRUE(aSafetyRecordOverrun(5000));
+    TEST_ASSERT_TRUE((bool)aChannelDiag.aSafetyLatched);
+    TEST_ASSERT_FALSE((bool)aChannelDiag.aSafetyHold);
+    TEST_ASSERT_EQUAL_UINT32(1, (uint32_t)aChannelDiag.aSafetyLatchCount);
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -388,6 +434,8 @@ int main()
     RUN_TEST(test_monitor_protocol_is_compact_versioned_and_read_only);
     RUN_TEST(test_busoff_recorder_keeps_entry_pending_until_recovery_result);
     RUN_TEST(test_busoff_recorder_writes_one_row_per_success_or_failure);
+    RUN_TEST(test_unexpected_reset_restores_previous_rtc_snapshot);
+    RUN_TEST(test_a_safety_first_overrun_recovers_and_second_latches);
 
     return UNITY_END();
 }

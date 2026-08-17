@@ -733,6 +733,13 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
     </div>
     <label class="sw"><input type="checkbox" id="tTsllc" onchange="togSwitch('/api/tsllc',this)"><span class="sl"></span></label>
   </div>
+  <div class="row child-row">
+    <div class="labelWrap">
+      <span class="label" id="tsllcStateLabel">TSLLC 상태 수신 대기</span>
+      <span class="meta" id="tsllcGateStatus">AP 3~6 최근 신호·1초 안정, 시작 15초·유효 A 프레임 1,001개 이후에만 송신</span>
+    </div>
+    <button class="btn" id="tsllcRearmBtn" type="button" style="display:none" onclick="rearmTsllc()">TSLLC 재승인</button>
+  </div>
   <div class="row">
     <div class="labelWrap">
       <span class="label">Nag Killer</span>
@@ -1542,6 +1549,8 @@ function channelAState(a){
   if(a.health_state)return {text:String(a.health_state),level:n(a.health_level)>=2?'err':n(a.health_level)===1?'warn':'ok',reason:a.health_reason||''};
   if(!a.driver_ok)return {text:'INIT_FAILED',level:'err',reason:'MCP2515 초기화 실패'};
   if(!a.task_alive)return {text:'LOOP_STALLED',level:'err',reason:'A채널 폴링 루프 지연'};
+  if(a.safety_latched)return {text:'A_TX_LOCKED',level:'err',reason:'60초 내 RX overrun 재발 · 재부팅 필요'};
+  if(a.safety_hold)return {text:'A_TX_HOLD',level:'warn',reason:'RX overrun 복구 확인 중'};
   if(n(a.mcp_eflg)&0x20)return {text:'BUS_OFF',level:'err',reason:'MCP2515 BUS-OFF'};
   if(!a.fresh)return {text:'NO_FRAMES',level:'warn',reason:'최근 2초간 수신 프레임 없음'};
   if(n(a.mcp_eflg)!==0)return {text:'EFLG 0x'+hex2(a.mcp_eflg),level:'warn',reason:'MCP2515 오류 플래그 감지'};
@@ -1701,6 +1710,19 @@ async function poll(){
     if(suReason)suReason.textContent='Path '+suPath+' · Gate '+(su.gate?'OPEN':'BLOCKED')+' · '+(su.gate_reason||su.block_reason||'--')+' · Policy '+(su.policy_mode||'ACA_SPR_1315')+' / '+(su.session_reason||'--')+' · AP '+n(su.ap_state)+' / '+n(su.ap_stable_ms)+'ms · HW3 bit19=0 / bit46=1';
     var tTsllc=document.getElementById('tTsllc');if(tTsllc)tTsllc.checked=!!d.tsllc_enabled;
     var mTsllc=document.getElementById('mTsllc');if(mTsllc)mTsllc.checked=!!d.tsllc_enabled;
+    var ts=d.tsllc||{};
+    var tsReason=ts.block_reason||d.tsllc_block_reason||'DISABLED';
+    var tsState=!ts.enabled?'설정 OFF':
+      ts.a_safety_latched?'A 안전 잠금':
+      (ts.rearm_required||tsReason==='REARM_REQUIRED')?'재승인 필요':
+      tsReason==='SUMMONING'?'Summon 차단':
+      ts.active?'활성':
+      (tsReason==='STARTUP_TIME'||tsReason==='STARTUP_FRAMES')?'시작 대기':
+      (tsReason==='AP_INACTIVE'||tsReason==='AP_STALE'||tsReason==='AP_STABILIZING')?'AP 대기':'설정 ON';
+    var tsLevel=ts.active?'on':(ts.a_safety_latched||ts.rearm_required?'off':'');
+    setTxt('tsllcStateLabel',tsState,'label '+tsLevel);
+    setTxt('tsllcGateStatus','Gate '+tsReason+' · 시작 '+n(ts.startup_ms)+'/'+n(ts.startup_required_ms)+'ms · A 프레임 '+n(ts.valid_frames)+'/'+n(ts.valid_frames_required)+' · 중복 무송신 '+n(ts.unchanged_skip_count),'meta');
+    var tsRearm=document.getElementById('tsllcRearmBtn');if(tsRearm)tsRearm.style.display=ts.rearm_required?'inline-flex':'none';
     var tAChannelTx=document.getElementById('tAChannelTx');if(tAChannelTx)tAChannelTx.checked=!!d.a_channel_tx;
     var tNag=document.getElementById('tNag');if(tNag)tNag.checked=!!d.nag_killer;
     var mNag=document.getElementById('mNag');if(mNag)mNag.checked=!!d.nag_killer;
@@ -1738,6 +1760,15 @@ async function poll(){
     errCount++;
     if(errCount>3){var ce2=document.getElementById('connErr');if(ce2)ce2.style.display='block';}
   }
+}
+async function rearmTsllc(){
+  var b=document.getElementById('tsllcRearmBtn');if(b)b.disabled=true;
+  try{
+    var r=await fetch('/api/tsllc',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:true})});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    await poll();
+  }catch(e){alert('TSLLC 재승인 실패: '+e.message);}
+  finally{if(b)b.disabled=false;}
 }
 function clearBusOffLog(){
   if(!confirm('BUS-OFF 로그를 모두 삭제하시겠습니까?'))return;

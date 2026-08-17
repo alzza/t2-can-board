@@ -178,7 +178,9 @@ public:
         Lock lock(mutex_);
         pollTransmitResultsUnlocked(false);
         if (source == CanTxSource::Summon)
-            cancelSummonRetryUnlocked(kSummonRetryCancelGate);
+            cancelSummonRetryUnlocked(aSafetyTxBlocked() ?
+                                      kSummonRetryCancelSafety :
+                                      kSummonRetryCancelGate);
         for (uint8_t i = 0; i < 3; ++i) {
             if (!txPending_[i] || txPendingSource_[i] != source) continue;
             bitModifyUnlocked(kTxCtrlRegisters[i], kTxReqMask, 0);
@@ -307,6 +309,7 @@ private:
     uint8_t summonRetryCancelReasonUnlocked(uint32_t nowMs) const
     {
         if (txQuiesced_ || (bool)canTxQuiescing) return kSummonRetryCancelOta;
+        if (aSafetyTxBlocked()) return kSummonRetryCancelSafety;
         if (!(bool)aMcpOneShotRuntime || !(bool)aChannelTxRuntime ||
             !(bool)summonUnlockRuntime)
             return kSummonRetryCancelDisabled;
@@ -443,6 +446,7 @@ private:
     CanTxResult queueFrameUnlocked(const can_frame &raw, CanTxSource source,
                                    bool isRetry, uint32_t originMs)
     {
+        aChannelDiag.aLastTxSource = (uint8_t)source;
         for (uint8_t i = 0; i < 3; ++i) {
             const uint8_t ctrl = readRegisterUnlocked(kTxCtrlRegisters[i]);
             if ((ctrl & kTxReqMask) != 0) continue;
@@ -468,9 +472,13 @@ private:
                         aChannelDiag.aSummonSessionRetryQueued =
                             (uint32_t)aChannelDiag.aSummonSessionRetryQueued + 1U;
                 }
+                aChannelDiag.aLastTxResult = (uint8_t)CanTxResult::Queued;
                 return CanTxResult::Queued;
             }
-            if (result == MCP2515::ERROR_ALLTXBUSY) return CanTxResult::Busy;
+            if (result == MCP2515::ERROR_ALLTXBUSY) {
+                aChannelDiag.aLastTxResult = (uint8_t)CanTxResult::Busy;
+                return CanTxResult::Busy;
+            }
             // autowp sendMessage(TXBn)는 TXREQ 설정 직후 결과 비트를 읽는다.
             // TXREQ가 남아 있으면 즉시 실패로 확정하지 않고 완료 폴링으로 넘긴다.
             const uint8_t resultCtrl = readRegisterUnlocked(kTxCtrlRegisters[i]);
@@ -492,6 +500,7 @@ private:
                         aChannelDiag.aSummonSessionRetryQueued =
                             (uint32_t)aChannelDiag.aSummonSessionRetryQueued + 1U;
                 }
+                aChannelDiag.aLastTxResult = (uint8_t)CanTxResult::Queued;
                 return CanTxResult::Queued;
             }
             const CanTxResult finalResult = classifyFinishedTxUnlocked(
@@ -499,8 +508,10 @@ private:
             if (source == CanTxSource::Summon &&
                 finalResult == CanTxResult::ArbitrationLost && !isRetry)
                 scheduleSummonRetryUnlocked(raw, originMs);
+            aChannelDiag.aLastTxResult = (uint8_t)finalResult;
             return finalResult;
         }
+        aChannelDiag.aLastTxResult = (uint8_t)CanTxResult::Busy;
         return CanTxResult::Busy;
     }
 
@@ -584,12 +595,14 @@ private:
                                            uint8_t buffer, uint8_t ctrl,
                                            uint8_t driverCode, bool isRetry)
     {
+        aChannelDiag.aLastTxSource = (uint8_t)source;
         if ((ctrl & kTxErrorMask) != 0 ||
             ((ctrl & kTxResultMask) == 0 && driverCode != 0)) {
             aChannelDiag.aTxFail = (uint32_t)aChannelDiag.aTxFail + 1U;
             recordTxFailureUnlocked(source, polledResult, buffer, ctrl, driverCode);
             if (source == CanTxSource::Summon)
                 noteSummonOutcomeUnlocked(CanTxResult::ControllerError, isRetry, millis());
+            aChannelDiag.aLastTxResult = (uint8_t)CanTxResult::ControllerError;
             return CanTxResult::ControllerError;
         }
         if ((ctrl & kTxArbitrationLostMask) != 0) {
@@ -598,6 +611,7 @@ private:
             incrementSourceOutcomeUnlocked(source, CanTxResult::ArbitrationLost);
             if (source == CanTxSource::Summon)
                 noteSummonOutcomeUnlocked(CanTxResult::ArbitrationLost, isRetry, millis());
+            aChannelDiag.aLastTxResult = (uint8_t)CanTxResult::ArbitrationLost;
             return CanTxResult::ArbitrationLost;
         }
         if ((ctrl & kTxAbortedMask) != 0) {
@@ -605,12 +619,14 @@ private:
             incrementSourceOutcomeUnlocked(source, CanTxResult::Aborted);
             if (source == CanTxSource::Summon)
                 noteSummonOutcomeUnlocked(CanTxResult::Aborted, isRetry, millis());
+            aChannelDiag.aLastTxResult = (uint8_t)CanTxResult::Aborted;
             return CanTxResult::Aborted;
         }
         aChannelDiag.aTxCompleted = (uint32_t)aChannelDiag.aTxCompleted + 1U;
         incrementSourceOutcomeUnlocked(source, CanTxResult::Queued);
         if (source == CanTxSource::Summon)
             noteSummonOutcomeUnlocked(CanTxResult::Queued, isRetry, millis());
+        aChannelDiag.aLastTxResult = (uint8_t)CanTxResult::Queued;
         return CanTxResult::Queued;
     }
 

@@ -5,6 +5,9 @@
 #include <cstring>
 #include "can_frame_types.h"
 #include "shared_types.h"
+#ifndef NATIVE_BUILD
+#include <esp_attr.h>
+#endif
 
 inline constexpr uint8_t kTrackModeRequestOn = 0x01;
 
@@ -84,6 +87,20 @@ inline constexpr bool kNagApOnlyDefaultEnabled = true;
 // 두 비트를 함께 적용하며, OFF는 실험을 위해 ID 1021 mux 1을 조건 없이 수정한다.
 inline constexpr bool kSummonConditionLimitDefaultEnabled = true;
 
+// TSLLC는 ev-open 플러그인의 ID/mux/bit 규칙을 사용하되, 현재 프로젝트의
+// EAP/Summon과 분리된 주행 전용 안전 게이트를 적용한다.
+inline constexpr uint32_t kTsllcStartupDelayMs = 15000;
+inline constexpr uint32_t kTsllcMinValidAFrames = 1000;
+inline constexpr uint32_t kTsllcApFreshnessMs = 500;
+inline constexpr uint32_t kTsllcApStableRequiredMs = 1000;
+
+// MCP2515 RX overrun 단계 보호 정책. 첫 발생은 일시 보류 후 상태를
+// 재검증하고, 짧은 구간 내 재발하면 해당 부팅 동안 A TX를 잠근다.
+inline constexpr uint32_t kASafetyHoldMinMs = 2000;
+inline constexpr uint32_t kASafetyOverrunWindowMs = 60000;
+inline constexpr uint32_t kASafetyRecoveryFrames = 100;
+inline constexpr uint32_t kASafetyFrameFreshnessMs = 250;
+
 inline Shared<bool> bypassTlsscRequirementRuntime{kBypassTlsscRequirementDefaultEnabled};
 inline Shared<bool> isaSpeedChimeSuppressRuntime{kIsaSpeedChimeSuppressDefaultEnabled};
 inline Shared<bool> emergencyVehicleDetectionRuntime{kEmergencyVehicleDetectionDefaultEnabled};
@@ -92,7 +109,9 @@ inline Shared<bool> summonConditionLimitRuntime{kSummonConditionLimitDefaultEnab
 inline Shared<bool> nagKillerRuntime{kNagKillerDefaultEnabled};
 inline Shared<bool> nagApOnlyRuntime{kNagApOnlyDefaultEnabled};
 inline Shared<bool> tsllcRuntime{kTsllcDefaultEnabled};         // TSLLC 런타임 토글 (스톱사인/초록불 제어)
+inline Shared<bool> tsllcRearmRequired{false};  // 비정상 재부팅 뒤 사용자 재승인 필요
 inline Shared<bool> aChannelTxRuntime{true};     // A채널 1021 수정 송신 마스터 토글
+inline Shared<uint32_t> aCanStartedMs{0};        // A MCP2515 초기화 완료 시각
 inline Shared<uint32_t> aMcpSpiFreqHz{kAMcpDefaultSpiFreqHz};
 inline Shared<uint32_t> aMcpRequestedSpiFreqHz{kAMcpDefaultSpiFreqHz};
 inline Shared<bool> aMcpOneShotRuntime{kAMcpOneShotDefaultEnabled};
@@ -428,6 +447,7 @@ inline constexpr uint8_t kSummonRetryCancelGuard = 4;
 inline constexpr uint8_t kSummonRetryCancelOta = 5;
 inline constexpr uint8_t kSummonRetryCancelDisabled = 6;
 inline constexpr uint8_t kSummonRetryCancelControllerReset = 7;
+inline constexpr uint8_t kSummonRetryCancelSafety = 8;
 
 inline constexpr uint8_t kATxSourceMaskNone   = 0;
 inline constexpr uint8_t kATxSourceMaskSummon = 1U << 0;
@@ -870,9 +890,268 @@ struct AChannelDiagnostics {
     Shared<uint32_t> lastWakeRxMs{0};          // 최근 A채널 재수신 시작 시각
     Shared<bool>     wakeAwaitingSummonTx{false}; // 재수신 뒤 첫 Summon TX 대기
     Shared<uint32_t> wakeToSummonTxMs{0};      // 최근 재수신 시작→첫 Summon TX 성공 지연
+    // TSLLC 안전 게이트 진단
+    Shared<uint32_t> tsllcSkippedUnchanged{0}; // bit38/39가 이미 1이라 무송신
+    Shared<uint32_t> tsllcBlockedCount{0};      // 안전 조건 미충족으로 차단
+    Shared<uint8_t>  tsllcLastBlockReason{0};   // TsllcBlockReason
+    // A RX overrun 단계 보호 진단
+    Shared<bool>     aSafetyHold{false};
+    Shared<bool>     aSafetyLatched{false};
+    Shared<uint32_t> aSafetyHoldStartedMs{0};
+    Shared<uint32_t> aSafetyHoldUntilMs{0};
+    Shared<uint32_t> aSafetyFramesAtHold{0};
+    Shared<uint32_t> aSafetyFirstOverrunMs{0};
+    Shared<uint32_t> aSafetyHoldCount{0};
+    Shared<uint32_t> aSafetyLatchCount{0};
+    Shared<uint32_t> aSafetyRecoveryCount{0};
+    Shared<uint32_t> aSafetySkipCount{0};
+    // RTC 이전 부팅 스냅샷에 사용할 마지막 A TX 결과
+    Shared<uint8_t>  aLastTxSource{0};
+    Shared<uint8_t>  aLastTxResult{0};
 };
 
 inline AChannelDiagnostics aChannelDiag;
+
+// 아래 TSLLC 게이트가 사용하는 헬퍼의 정의는 기존 파일 하단에 있다.
+inline bool aTxGuardActive(uint32_t nowMs);
+inline uint8_t readMuxID(const CanFrame &frame);
+
+enum TsllcBlockReason : uint8_t {
+    TSLLC_BLOCK_READY = 0,
+    TSLLC_BLOCK_DISABLED = 1,
+    TSLLC_BLOCK_REARM_REQUIRED = 2,
+    TSLLC_BLOCK_A_TX_OFF = 3,
+    TSLLC_BLOCK_OTA = 4,
+    TSLLC_BLOCK_A_SAFETY_HOLD = 5,
+    TSLLC_BLOCK_A_SAFETY_LATCH = 6,
+    TSLLC_BLOCK_TX_GUARD = 7,
+    TSLLC_BLOCK_STARTUP_TIME = 8,
+    TSLLC_BLOCK_STARTUP_FRAMES = 9,
+    TSLLC_BLOCK_SUMMONING = 10,
+    TSLLC_BLOCK_AP_INACTIVE = 11,
+    TSLLC_BLOCK_AP_STALE = 12,
+    TSLLC_BLOCK_AP_STABILIZING = 13,
+};
+
+inline const char *tsllcBlockReasonName(uint8_t reason)
+{
+    switch (reason) {
+    case TSLLC_BLOCK_READY: return "ACTIVE";
+    case TSLLC_BLOCK_DISABLED: return "DISABLED";
+    case TSLLC_BLOCK_REARM_REQUIRED: return "REARM_REQUIRED";
+    case TSLLC_BLOCK_A_TX_OFF: return "A_TX_OFF";
+    case TSLLC_BLOCK_OTA: return "OTA_QUIESCE";
+    case TSLLC_BLOCK_A_SAFETY_HOLD: return "A_SAFETY_HOLD";
+    case TSLLC_BLOCK_A_SAFETY_LATCH: return "A_SAFETY_LATCH";
+    case TSLLC_BLOCK_TX_GUARD: return "TX_GUARD";
+    case TSLLC_BLOCK_STARTUP_TIME: return "STARTUP_TIME";
+    case TSLLC_BLOCK_STARTUP_FRAMES: return "STARTUP_FRAMES";
+    case TSLLC_BLOCK_SUMMONING: return "SUMMONING";
+    case TSLLC_BLOCK_AP_INACTIVE: return "AP_INACTIVE";
+    case TSLLC_BLOCK_AP_STALE: return "AP_STALE";
+    case TSLLC_BLOCK_AP_STABILIZING: return "AP_STABILIZING";
+    default: return "UNKNOWN";
+    }
+}
+
+inline bool aSafetyTxBlocked()
+{
+    return (bool)aChannelDiag.aSafetyHold || (bool)aChannelDiag.aSafetyLatched;
+}
+
+inline bool aSafetyRecoveryReady(uint32_t nowMs)
+{
+    if (!(bool)aChannelDiag.aSafetyHold || (bool)aChannelDiag.aSafetyLatched)
+        return false;
+    if (nowMs < (uint32_t)aChannelDiag.aSafetyHoldUntilMs)
+        return false;
+    if (((uint8_t)aChannelDiag.mcpEflg & 0xC0U) != 0U)
+        return false;
+    const uint32_t lastFrameMs = (uint32_t)aChannelDiag.lastFrameRxMs;
+    if (lastFrameMs == 0U || nowMs - lastFrameMs > kASafetyFrameFreshnessMs)
+        return false;
+    return (uint32_t)aChannelDiag.framesReceivedTotal -
+               (uint32_t)aChannelDiag.aSafetyFramesAtHold >=
+           kASafetyRecoveryFrames;
+}
+
+// true면 60초 내 두 번째 overrun으로 이번 부팅 A TX를 잠근 상태다.
+inline bool aSafetyRecordOverrun(uint32_t nowMs)
+{
+    const uint32_t firstOverrunMs = (uint32_t)aChannelDiag.aSafetyFirstOverrunMs;
+    const bool repeated = firstOverrunMs != 0U &&
+                          nowMs - firstOverrunMs <= kASafetyOverrunWindowMs;
+    aChannelDiag.aSafetyFramesAtHold = (uint32_t)aChannelDiag.framesReceivedTotal;
+    if (repeated) {
+        aChannelDiag.aSafetyHold = false;
+        aChannelDiag.aSafetyLatched = true;
+        aChannelDiag.aSafetyHoldUntilMs = 0;
+        aChannelDiag.aSafetyLatchCount =
+            (uint32_t)aChannelDiag.aSafetyLatchCount + 1U;
+        return true;
+    }
+    aChannelDiag.aSafetyFirstOverrunMs = nowMs;
+    aChannelDiag.aSafetyHold = true;
+    aChannelDiag.aSafetyLatched = false;
+    aChannelDiag.aSafetyHoldStartedMs = nowMs;
+    aChannelDiag.aSafetyHoldUntilMs = nowMs + kASafetyHoldMinMs;
+    aChannelDiag.aSafetyHoldCount =
+        (uint32_t)aChannelDiag.aSafetyHoldCount + 1U;
+    return false;
+}
+
+inline bool aSafetyTryRecover(uint32_t nowMs)
+{
+    if (!aSafetyRecoveryReady(nowMs)) return false;
+    aChannelDiag.aSafetyHold = false;
+    aChannelDiag.aSafetyHoldUntilMs = 0;
+    aChannelDiag.aSafetyRecoveryCount =
+        (uint32_t)aChannelDiag.aSafetyRecoveryCount + 1U;
+    return true;
+}
+
+inline uint32_t tsllcStartupElapsedMs(uint32_t nowMs)
+{
+    const uint32_t startedMs = (uint32_t)aCanStartedMs;
+    return startedMs == 0U ? 0U : nowMs - startedMs;
+}
+
+inline uint8_t tsllcInjectionBlockReason(uint32_t nowMs)
+{
+    if (!(bool)tsllcRuntime) return TSLLC_BLOCK_DISABLED;
+    if ((bool)tsllcRearmRequired) return TSLLC_BLOCK_REARM_REQUIRED;
+    if (!(bool)aChannelTxRuntime) return TSLLC_BLOCK_A_TX_OFF;
+    if ((bool)canTxQuiescing) return TSLLC_BLOCK_OTA;
+    if ((bool)aChannelDiag.aSafetyLatched) return TSLLC_BLOCK_A_SAFETY_LATCH;
+    if ((bool)aChannelDiag.aSafetyHold) return TSLLC_BLOCK_A_SAFETY_HOLD;
+    // 실제 차량 호출 중에는 시작 대기나 AP 상태보다 Summon 우선 차단을
+    // 표시해 동일 ID mux 경쟁이 없었음을 로그에서 바로 확인한다.
+    if ((bool)summonGateDiag.summoning) return TSLLC_BLOCK_SUMMONING;
+    if (aTxGuardActive(nowMs)) return TSLLC_BLOCK_TX_GUARD;
+    const uint32_t startedMs = (uint32_t)aCanStartedMs;
+    if (startedMs == 0U || nowMs - startedMs < kTsllcStartupDelayMs)
+        return TSLLC_BLOCK_STARTUP_TIME;
+    if ((uint32_t)aChannelDiag.framesReceivedTotal <= kTsllcMinValidAFrames)
+        return TSLLC_BLOCK_STARTUP_FRAMES;
+    if (!(bool)summonGateDiag.apActive) return TSLLC_BLOCK_AP_INACTIVE;
+    const uint32_t last921Ms = (uint32_t)summonGateDiag.last921Ms;
+    if (last921Ms == 0U || nowMs - last921Ms > kTsllcApFreshnessMs)
+        return TSLLC_BLOCK_AP_STALE;
+    if (summonApStableMs(nowMs) < kTsllcApStableRequiredMs)
+        return TSLLC_BLOCK_AP_STABILIZING;
+    return TSLLC_BLOCK_READY;
+}
+
+inline bool tsllcInjectionAllowed(uint32_t nowMs)
+{
+    return tsllcInjectionBlockReason(nowMs) == TSLLC_BLOCK_READY;
+}
+
+inline bool tsllcFrameNeedsModification(const CanFrame &frame)
+{
+    if (frame.dlc < 8 || readMuxID(frame) != 0) return false;
+    return (frame.data[4] & 0xC0U) != 0xC0U;
+}
+
+// RTC slow memory에는 flash 쓰기 없이 마지막 CAN 문맥만 보존한다.
+// 전원 완전 차단에서는 보존을 보장하지 않으며, magic/schema가 맞을 때만 사용한다.
+inline constexpr uint32_t kRtcCanSnapshotMagic = 0x54324331UL; // "T2C1"
+inline constexpr uint16_t kRtcCanSnapshotSchema = 1;
+
+struct RtcCanSnapshot {
+    uint32_t magic{0};
+    uint16_t schema{0};
+    uint16_t reserved{0};
+    uint32_t bootCount{0};
+    uint32_t uptimeMs{0};
+    uint32_t resetReason{0};
+    uint32_t aRxOverrunCount{0};
+    uint32_t aTxQueued{0};
+    uint32_t aTxFail{0};
+    uint8_t aEflg{0};
+    uint8_t lastTxSource{0};
+    uint8_t lastTxResult{0};
+    uint8_t featureFlags{0};
+};
+
+struct BootDiagnostics {
+    Shared<uint32_t> resetReason{0};
+    Shared<uint32_t> rtcBootCount{0};
+    Shared<bool> unexpectedReset{false};
+    Shared<bool> previousSnapshotValid{false};
+    RtcCanSnapshot previous{};
+};
+
+inline BootDiagnostics bootDiagnostics;
+#ifndef NATIVE_BUILD
+RTC_DATA_ATTR inline RtcCanSnapshot rtcCanSnapshot;
+#else
+inline RtcCanSnapshot rtcCanSnapshot;
+#endif
+
+inline const char *bootResetReasonName(uint32_t reason)
+{
+    switch (reason) {
+    case 1: return "POWERON";
+    case 2: return "EXTERNAL";
+    case 3: return "SOFTWARE";
+    case 4: return "PANIC";
+    case 5: return "INT_WDT";
+    case 6: return "TASK_WDT";
+    case 7: return "WDT";
+    case 8: return "DEEPSLEEP";
+    case 9: return "BROWNOUT";
+    case 10: return "SDIO";
+    default: return "UNKNOWN";
+    }
+}
+
+inline bool bootResetReasonUnexpected(uint32_t reason)
+{
+    // 명시적으로 정상인 전원 인가·외부 리셋·SW 재시작·딥슬립 외에는
+    // 새 ID가 추가되어도 UNKNOWN으로 안전하게 분류한다.
+    return reason != 1U && reason != 2U && reason != 3U && reason != 8U;
+}
+
+inline void bootDiagnosticsBegin(uint32_t resetReason)
+{
+    const bool retained = resetReason != 1U &&
+                          rtcCanSnapshot.magic == kRtcCanSnapshotMagic &&
+                          rtcCanSnapshot.schema == kRtcCanSnapshotSchema;
+    bootDiagnostics.resetReason = resetReason;
+    bootDiagnostics.unexpectedReset = bootResetReasonUnexpected(resetReason);
+    bootDiagnostics.previousSnapshotValid = retained;
+    bootDiagnostics.previous = retained ? rtcCanSnapshot : RtcCanSnapshot{};
+    const uint32_t bootCount = retained ? rtcCanSnapshot.bootCount + 1U : 1U;
+    bootDiagnostics.rtcBootCount = bootCount;
+    rtcCanSnapshot = {};
+    rtcCanSnapshot.magic = kRtcCanSnapshotMagic;
+    rtcCanSnapshot.schema = kRtcCanSnapshotSchema;
+    rtcCanSnapshot.bootCount = bootCount;
+    rtcCanSnapshot.resetReason = resetReason;
+}
+
+inline void updateRtcCanSnapshot(uint32_t nowMs)
+{
+    rtcCanSnapshot.magic = kRtcCanSnapshotMagic;
+    rtcCanSnapshot.schema = kRtcCanSnapshotSchema;
+    rtcCanSnapshot.bootCount = (uint32_t)bootDiagnostics.rtcBootCount;
+    rtcCanSnapshot.uptimeMs = nowMs;
+    rtcCanSnapshot.resetReason = (uint32_t)bootDiagnostics.resetReason;
+    rtcCanSnapshot.aRxOverrunCount = (uint32_t)aChannelDiag.aRxOvrCount;
+    rtcCanSnapshot.aTxQueued = (uint32_t)aChannelDiag.aTxOk;
+    rtcCanSnapshot.aTxFail = (uint32_t)aChannelDiag.aTxFail;
+    rtcCanSnapshot.aEflg = (uint8_t)aChannelDiag.mcpEflg;
+    rtcCanSnapshot.lastTxSource = (uint8_t)aChannelDiag.aLastTxSource;
+    rtcCanSnapshot.lastTxResult = (uint8_t)aChannelDiag.aLastTxResult;
+    rtcCanSnapshot.featureFlags =
+        ((bool)summonUnlockRuntime ? 0x01U : 0U) |
+        ((bool)tsllcRuntime ? 0x02U : 0U) |
+        ((bool)nagKillerRuntime ? 0x04U : 0U) |
+        ((bool)aChannelTxRuntime ? 0x08U : 0U) |
+        ((bool)aChannelDiag.aSafetyHold ? 0x10U : 0U) |
+        ((bool)aChannelDiag.aSafetyLatched ? 0x20U : 0U);
+}
 
 inline const char* aMcpEflgStateName(uint8_t eflg)
 {
@@ -906,6 +1185,7 @@ inline const char* summonRetryCancelReasonName(uint8_t reason)
     case kSummonRetryCancelOta: return "OTA_QUIESCE";
     case kSummonRetryCancelDisabled: return "DISABLED";
     case kSummonRetryCancelControllerReset: return "CONTROLLER_RESET";
+    case kSummonRetryCancelSafety: return "A_SAFETY";
     default: return "NONE";
     }
 }
@@ -918,6 +1198,7 @@ inline bool summonRetryPolicyAllowed(uint32_t nowMs)
            (bool)summonGateDiag.summoning &&
            summonGateOpen(nowMs) &&
            !aTxGuardActive(nowMs) &&
+           !aSafetyTxBlocked() &&
            !(bool)canTxQuiescing;
 }
 

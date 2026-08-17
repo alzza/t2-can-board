@@ -557,6 +557,7 @@ static void applyOtaSafeFeatureRuntimeDefaults()
     nagKillerRuntime = false;
     nagApOnlyRuntime = kNagApOnlyDefaultEnabled;
     tsllcRuntime = false;
+    tsllcRearmRequired = false;
     aChannelTxRuntime = false;
     uint8_t defaultMhz = (kAMcpDefaultSpiFreqHz >= 10000000UL) ? 10 : 8;
     aMcpSpiFreqHz = (uint32_t)defaultMhz * 1000000UL;
@@ -844,6 +845,10 @@ static esp_err_t featureToggleHandler(httpd_req_t *req, Shared<bool> &target, bo
         return ESP_FAIL;
     }
     target = enabled;
+    if (&target == &tsllcRuntime && enabled) {
+        tsllcRearmRequired = false;
+        logRing.push("[Web] TSLLC 비정상 재부팅 재승인 완료", millis());
+    }
     char buf[80];
     snprintf(buf, sizeof(buf), "[Web] %s: %s", logName, enabled ? "ON" : "OFF");
     logRing.push(buf, millis());
@@ -1089,6 +1094,8 @@ static esp_err_t statusHandler(httpd_req_t *req)
     bool tsllcEnabled = kWebSupportsTsllc ? (bool)tsllcRuntime : false;
     bool nagApOnly = (bool)nagApOnlyRuntime;
     bool aGuardActiveNow = aTxGuardActive(handlerStartMs);
+    const uint8_t tsllcBlockReason = tsllcInjectionBlockReason(handlerStartMs);
+    const bool tsllcActive = tsllcBlockReason == TSLLC_BLOCK_READY;
     cJSON *root = cJSON_CreateObject();
     if (!root) {
         webHealthRecordDuration(gWebStatusLastDurMs, gWebStatusMaxDurMs, handlerStartMs);
@@ -1103,6 +1110,25 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "nag_ap_only", nagApOnly);
     cJSON_AddBoolToObject(root, "a_channel_tx", aChannelTx);
     cJSON_AddBoolToObject(root, "tsllc_enabled", tsllcEnabled);
+    cJSON_AddBoolToObject(root, "tsllc_active", tsllcActive);
+    cJSON_AddStringToObject(root, "tsllc_block_reason",
+                            tsllcBlockReasonName(tsllcBlockReason));
+    cJSON_AddNumberToObject(root, "tsllc_startup_ms",
+                            tsllcStartupElapsedMs(handlerStartMs));
+    cJSON_AddNumberToObject(root, "tsllc_valid_frames",
+                            (uint32_t)aChannelDiag.framesReceivedTotal);
+    cJSON_AddBoolToObject(root, "tsllc_rearm_required",
+                          (bool)tsllcRearmRequired);
+    cJSON_AddBoolToObject(root, "a_safety_hold",
+                          (bool)aChannelDiag.aSafetyHold);
+    cJSON_AddBoolToObject(root, "a_safety_latched",
+                          (bool)aChannelDiag.aSafetyLatched);
+    cJSON_AddStringToObject(root, "reset_reason",
+                            bootResetReasonName((uint32_t)bootDiagnostics.resetReason));
+    cJSON_AddNumberToObject(root, "reset_reason_code",
+                            (uint32_t)bootDiagnostics.resetReason);
+    cJSON_AddNumberToObject(root, "rtc_boot_count",
+                            (uint32_t)bootDiagnostics.rtcBootCount);
     cJSON_AddBoolToObject(root, "can_boot_allowed", !gOtaRecoveryModeActive);
     cJSON_AddStringToObject(root, "can_boot_block_reason", gCanBootBlockReason);
 
@@ -1111,7 +1137,8 @@ static esp_err_t statusHandler(httpd_req_t *req)
         const bool summonEnabled = summonUnlockEnabled;
         const bool gateOpen = summonGateOpen(handlerStartMs);
         const bool summonUnlockActive =
-            summonEnabled && aChannelTx && gateOpen && !aGuardActiveNow;
+            summonEnabled && aChannelTx && gateOpen && !aGuardActiveNow &&
+            !aSafetyTxBlocked();
         const uint32_t last280Ms = (uint32_t)summonGateDiag.last280Ms;
         const uint32_t last280AgeMs = last280Ms ? handlerStartMs - last280Ms : 0;
         cJSON_AddBoolToObject(summon, "enabled", summonEnabled);
@@ -1121,7 +1148,8 @@ static esp_err_t statusHandler(httpd_req_t *req)
         cJSON_AddBoolToObject(summon, "condition_limit", summonConditionLimit);
         cJSON_AddBoolToObject(summon, "guard", aGuardActiveNow);
         cJSON_AddBoolToObject(summon, "inject_ready",
-                              summonEnabled && aChannelTx && gateOpen && !aGuardActiveNow);
+                              summonEnabled && aChannelTx && gateOpen && !aGuardActiveNow &&
+                              !aSafetyTxBlocked());
         cJSON_AddBoolToObject(summon, "ap", (bool)summonGateDiag.apActive);
         cJSON_AddNumberToObject(summon, "ap_state", (uint8_t)summonGateDiag.apState);
         cJSON_AddNumberToObject(summon, "ap_stable_ms", summonApStableMs(handlerStartMs));
@@ -1148,6 +1176,8 @@ static esp_err_t statusHandler(httpd_req_t *req)
         cJSON_AddStringToObject(summon, "block_reason",
                                 !summonEnabled ? "DISABLED" :
                                 !aChannelTx ? "A_TX_OFF" :
+                                (bool)aChannelDiag.aSafetyLatched ? "A_SAFETY_LATCH" :
+                                (bool)aChannelDiag.aSafetyHold ? "A_SAFETY_HOLD" :
                                 aGuardActiveNow ? "TX_GUARD" :
                                 gateOpen ? "NONE" : summonGateReasonName(handlerStartMs));
         cJSON_AddNumberToObject(summon, "last_280_age_ms", last280AgeMs);
@@ -1213,14 +1243,28 @@ static esp_err_t statusHandler(httpd_req_t *req)
         cJSON_AddBoolToObject(tsllc, "guard", aGuardActiveNow);
         cJSON_AddBoolToObject(tsllc, "summoning_hold",
                               (bool)summonGateDiag.summoning);
-        cJSON_AddBoolToObject(tsllc, "inject_ready",
-                              tsllcEnabled && aChannelTx && !aGuardActiveNow &&
-                              !(bool)summonGateDiag.summoning);
+        cJSON_AddBoolToObject(tsllc, "active", tsllcActive);
+        cJSON_AddBoolToObject(tsllc, "inject_ready", tsllcActive);
         cJSON_AddStringToObject(tsllc, "block_reason",
-                                !tsllcEnabled ? "DISABLED" :
-                                !aChannelTx ? "A_TX_OFF" :
-                                aGuardActiveNow ? "TX_GUARD" :
-                                (bool)summonGateDiag.summoning ? "SUMMONING" : "NONE");
+                                tsllcBlockReasonName(tsllcBlockReason));
+        cJSON_AddNumberToObject(tsllc, "startup_ms",
+                                tsllcStartupElapsedMs(handlerStartMs));
+        cJSON_AddNumberToObject(tsllc, "startup_required_ms",
+                                kTsllcStartupDelayMs);
+        cJSON_AddNumberToObject(tsllc, "valid_frames",
+                                (uint32_t)aChannelDiag.framesReceivedTotal);
+        cJSON_AddNumberToObject(tsllc, "valid_frames_required",
+                                kTsllcMinValidAFrames + 1U);
+        cJSON_AddBoolToObject(tsllc, "rearm_required",
+                              (bool)tsllcRearmRequired);
+        cJSON_AddBoolToObject(tsllc, "a_safety_hold",
+                              (bool)aChannelDiag.aSafetyHold);
+        cJSON_AddBoolToObject(tsllc, "a_safety_latched",
+                              (bool)aChannelDiag.aSafetyLatched);
+        cJSON_AddNumberToObject(tsllc, "blocked_count",
+                                (uint32_t)aChannelDiag.tsllcBlockedCount);
+        cJSON_AddNumberToObject(tsllc, "unchanged_skip_count",
+                                (uint32_t)aChannelDiag.tsllcSkippedUnchanged);
         cJSON_AddNumberToObject(tsllc, "txOk", (uint32_t)aChannelDiag.tsllcTxOk);
         cJSON_AddNumberToObject(tsllc, "txFail", (uint32_t)aChannelDiag.tsllcTxFail);
         cJSON_AddNumberToObject(tsllc, "summoning_hold_count",
@@ -1465,6 +1509,14 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddBoolToObject(ach, "mcp_one_shot", (bool)aMcpOneShotRuntime);
     cJSON_AddBoolToObject(ach, "channel_tx_enabled", (bool)aChannelTxRuntime);
     cJSON_AddBoolToObject(ach, "tx_guard_enabled", (bool)aTxGuardRuntime);
+    cJSON_AddBoolToObject(ach, "safety_hold", (bool)aChannelDiag.aSafetyHold);
+    cJSON_AddBoolToObject(ach, "safety_latched", (bool)aChannelDiag.aSafetyLatched);
+    cJSON_AddNumberToObject(ach, "safety_hold_count",
+                            (uint32_t)aChannelDiag.aSafetyHoldCount);
+    cJSON_AddNumberToObject(ach, "safety_recovery_count",
+                            (uint32_t)aChannelDiag.aSafetyRecoveryCount);
+    cJSON_AddNumberToObject(ach, "safety_latch_count",
+                            (uint32_t)aChannelDiag.aSafetyLatchCount);
     // MCP2515 에러 플래그 (EFLG 레지스터, 1초 폴링)
     cJSON_AddNumberToObject(ach, "mcp_eflg", (uint32_t)aChannelDiag.mcpEflg);
     cJSON_AddNumberToObject(ach, "mcp_eflg_peak", (uint32_t)aChannelDiag.mcpEflgPeak);
@@ -1561,6 +1613,14 @@ static esp_err_t statusHandler(httpd_req_t *req)
         aHealthState = "BUS_OFF";
         aHealthReason = "MCP2515 BUS-OFF";
         aHealthLevel = 2;
+    } else if ((bool)aChannelDiag.aSafetyLatched) {
+        aHealthState = "A_TX_LOCKED";
+        aHealthReason = "60초 내 RX overrun 재발 · 재부팅 필요";
+        aHealthLevel = 2;
+    } else if ((bool)aChannelDiag.aSafetyHold) {
+        aHealthState = "A_TX_HOLD";
+        aHealthReason = "RX overrun 복구 확인 중";
+        aHealthLevel = 1;
     } else if (!aFresh) {
         aHealthState = "NO_FRAMES";
         aHealthReason = "최근 2초간 수신 프레임 없음";
@@ -2379,7 +2439,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
     httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_set_hdr(req, "Connection", "close");
-    char line[1152];
+    char line[1536];
     char tsBuf[40];
 
     // 메타 정보 (Generated at = wall-clock, Boot at = wall-clock baseline)
@@ -2514,6 +2574,38 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
             (unsigned long)(aNow - (uint32_t)aChannelDiag.lastTxMs),
             (unsigned)aChannelDiag.mcpEflgEventCount);
         httpd_resp_sendstr_chunk(req, line);
+    snprintf(line, sizeof(line),
+        "부팅진단: Reset=%s(%u) RTCBoot=%u Unexpected=%u PrevValid=%u | Prev uptime=%u EFLG=0x%02X RXOVR=%u TXQ/Fail=%u/%u LastTX=%s/%u Features=0x%02X\r\n",
+        bootResetReasonName((uint32_t)bootDiagnostics.resetReason),
+        (unsigned)(uint32_t)bootDiagnostics.resetReason,
+        (unsigned)(uint32_t)bootDiagnostics.rtcBootCount,
+        (unsigned)(bool)bootDiagnostics.unexpectedReset,
+        (unsigned)(bool)bootDiagnostics.previousSnapshotValid,
+        (unsigned)bootDiagnostics.previous.uptimeMs,
+        (unsigned)bootDiagnostics.previous.aEflg,
+        (unsigned)bootDiagnostics.previous.aRxOverrunCount,
+        (unsigned)bootDiagnostics.previous.aTxQueued,
+        (unsigned)bootDiagnostics.previous.aTxFail,
+        aTxSourceName(bootDiagnostics.previous.lastTxSource),
+        (unsigned)bootDiagnostics.previous.lastTxResult,
+        (unsigned)bootDiagnostics.previous.featureFlags);
+    httpd_resp_sendstr_chunk(req, line);
+    snprintf(line, sizeof(line),
+        "A안전: Hold=%u Latched=%u Hold/Recover/Latch=%u/%u/%u Skip=%u | TSLLC=%s gate=%s startup=%ums frames=%u rearm=%u unchanged=%u blocked=%u\r\n",
+        (unsigned)(bool)aChannelDiag.aSafetyHold,
+        (unsigned)(bool)aChannelDiag.aSafetyLatched,
+        (unsigned)aChannelDiag.aSafetyHoldCount,
+        (unsigned)aChannelDiag.aSafetyRecoveryCount,
+        (unsigned)aChannelDiag.aSafetyLatchCount,
+        (unsigned)aChannelDiag.aSafetySkipCount,
+        (bool)tsllcRuntime ? "ON" : "OFF",
+        tsllcBlockReasonName(tsllcInjectionBlockReason(aNow)),
+        (unsigned)tsllcStartupElapsedMs(aNow),
+        (unsigned)aChannelDiag.framesReceivedTotal,
+        (unsigned)(bool)tsllcRearmRequired,
+        (unsigned)aChannelDiag.tsllcSkippedUnchanged,
+        (unsigned)aChannelDiag.tsllcBlockedCount);
+    httpd_resp_sendstr_chunk(req, line);
         snprintf(line, sizeof(line),
             "A수신: RX-OVR=%u (RX0=%u RX1=%u) | RXB0/1=%u/%u | Drain frames/calls=%u/%u | Queue peak/drop=%u/%u | Gap >250/500/1000/2000us=%u/%u/%u/%u | LastOverrun=%s\r\n",
             (unsigned)aChannelDiag.aRxOvrCount,
@@ -2542,8 +2634,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         ((bool)summonUnlockRuntime && (bool)aChannelTxRuntime &&
          summonGateOpen() && !aGuardActive) ? "YES" : "NO",
         (bool)tsllcRuntime ? "ON" : "OFF",
-        ((bool)tsllcRuntime && (bool)aChannelTxRuntime && !aGuardActive &&
-         !(bool)summonGateDiag.summoning)
+        tsllcInjectionAllowed(aNow)
             ? "YES" : "NO",
         (bool)nagKillerRuntime ? "ON" : "OFF",
         nagModeName((uint8_t)bChannelDiag.nagMode),
@@ -2793,7 +2884,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         tsSnapRecording ? "ON" : "OFF", (unsigned)tsN);
     httpd_resp_sendstr_chunk(req, line);
     httpd_resp_sendstr_chunk(req,
-        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,dasStateName,dasStateGroup,dasWarnLevel,dasWarning,nagMode,nagModeDefault,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,apState,nagPhase,realTorqueNm,nagInject,nagLastNm,age880Ms,ageDasMs,ageEchoMs,dNagInject,aFrames,aFrameHz,aEflg,aEflgState,aEflgPeak,aTec,aRec,aTecPeak,aRecPeak,aTxQueued,aTxBusy,aTxHardError,aTxCompleted,aTxArbitrationLost,aTxAborted,aMerrf,aRxOvr,aRx0Ovr,aRx1Ovr,aRxB0Frames,aRxB1Frames,aRxDrainFrames,aRxDrainCalls,aRxQueueHighWater,aRxQueueDrops,aEflgEvents,aFrameAgeMs,aLoopAgeMs,aGuardActive,aGuardReason,aGuardRemainingMs,aWakeCount,aWakeToSummonTxMs,aWakeAwaitingTx,dAFrames,dATxOk,dATxFail,dAMerrf,dARxOvr,dAEflgEvents,aDriverOk,aTxEnabled,summonEnabled,tsllcEnabled,aOneShotEnabled,aTxGuardEnabled,aSpiMhz,aSpiTargetMhz,bDriverState,nagEnabled,aLoopGapLastUs,aLoopGapPeakUs,aLoopGapOver250us,aLoopGapOver500us,aLoopGapOver1ms,aLoopGapOver2ms,dALoopGapOver2ms,aLastOverrunPhase,summonGateOpen,summonConditionLimit,summonApState,summonApActive,summonParked,summoning,summonApStableMs,summonGateReason,summonInjectReady,summonTxOk,summonTxFail,summonBlocked,dSummonTxOk,dSummonTxFail,dSummonBlocked,tsllcInjectReady,tsllcTxOk,tsllcTxFail,dTsllcTxOk,dTsllcTxFail,nagApOnly,nagApActive,nagInjecting,nagTxOk,dNagTxOk,aSummonTxCompleted,aSummonTxArbitrationLost,aSummonTxAborted,aSummonTxError,aTsllcTxCompleted,aTsllcTxArbitrationLost,aTsllcTxAborted,aTsllcTxError,aSummonRetryScheduled,aSummonRetryQueued,aSummonRetryCompleted,aSummonRetryArbitrationLost,aSummonRetryFailed,aSummonRetryExpired,aSummonRetryCanceled,aSummonRetryPending,aSummonRetryLastCancelReason,aSummonSessionMloaStreak,aSummonSessionMloaStreakMax,aSummonSessionSuccessGapLastMs,aSummonSessionSuccessGapMaxMs,aTsllcSummoningHold,summonSessionAllowed,summonSessionReason,summonDiGear,summonSecondaryGear,summonSelfParkRequest,summonVehicleSpeedRaw,summonAge280Ms,summonAge390Ms,summonAge599Ms,summonAge921Ms,summonAge1016Ms\r\n");
+        "wall_time,timestamp_ms,busoff,tec,rec,arbLost,busErr,txFail,echo,f880,f921,f923,ho,dasState,dasStateName,dasStateGroup,dasWarnLevel,dasWarning,nagMode,nagModeDefault,dasSource,echoDrop,skipOff,skipAP,skipHO,skipDAS,noDAS,userMark,d880,d921,d923,dEcho,dDrop,dSkipOff,dSkipAP,dSkipHO,dSkipDAS,dNoDAS,dUserMark,lastDecision,intervalDecision,apState,nagPhase,realTorqueNm,nagInject,nagLastNm,age880Ms,ageDasMs,ageEchoMs,dNagInject,aFrames,aFrameHz,aEflg,aEflgState,aEflgPeak,aTec,aRec,aTecPeak,aRecPeak,aTxQueued,aTxBusy,aTxHardError,aTxCompleted,aTxArbitrationLost,aTxAborted,aMerrf,aRxOvr,aRx0Ovr,aRx1Ovr,aRxB0Frames,aRxB1Frames,aRxDrainFrames,aRxDrainCalls,aRxQueueHighWater,aRxQueueDrops,aEflgEvents,aFrameAgeMs,aLoopAgeMs,aGuardActive,aGuardReason,aGuardRemainingMs,aWakeCount,aWakeToSummonTxMs,aWakeAwaitingTx,dAFrames,dATxOk,dATxFail,dAMerrf,dARxOvr,dAEflgEvents,aDriverOk,aTxEnabled,summonEnabled,tsllcEnabled,aOneShotEnabled,aTxGuardEnabled,aSpiMhz,aSpiTargetMhz,bDriverState,nagEnabled,aLoopGapLastUs,aLoopGapPeakUs,aLoopGapOver250us,aLoopGapOver500us,aLoopGapOver1ms,aLoopGapOver2ms,dALoopGapOver2ms,aLastOverrunPhase,summonGateOpen,summonConditionLimit,summonApState,summonApActive,summonParked,summoning,summonApStableMs,summonGateReason,summonInjectReady,summonTxOk,summonTxFail,summonBlocked,dSummonTxOk,dSummonTxFail,dSummonBlocked,tsllcInjectReady,tsllcTxOk,tsllcTxFail,dTsllcTxOk,dTsllcTxFail,nagApOnly,nagApActive,nagInjecting,nagTxOk,dNagTxOk,aSummonTxCompleted,aSummonTxArbitrationLost,aSummonTxAborted,aSummonTxError,aTsllcTxCompleted,aTsllcTxArbitrationLost,aTsllcTxAborted,aTsllcTxError,aSummonRetryScheduled,aSummonRetryQueued,aSummonRetryCompleted,aSummonRetryArbitrationLost,aSummonRetryFailed,aSummonRetryExpired,aSummonRetryCanceled,aSummonRetryPending,aSummonRetryLastCancelReason,aSummonSessionMloaStreak,aSummonSessionMloaStreakMax,aSummonSessionSuccessGapLastMs,aSummonSessionSuccessGapMaxMs,aTsllcSummoningHold,summonSessionAllowed,summonSessionReason,summonDiGear,summonSecondaryGear,summonSelfParkRequest,summonVehicleSpeedRaw,summonAge280Ms,summonAge390Ms,summonAge599Ms,summonAge921Ms,summonAge1016Ms,resetReason,rtcBootCount,previousBootValid,previousUptimeMs,previousAEflg,previousARxOverrun,previousLastTxSource,previousLastTxResult,tsllcBlockReason,tsllcStartupMs,tsllcValidFrames,tsllcRearmRequired,aSafetyHold,aSafetyLatched,aSafetyHoldCount,aSafetyLatchCount,aSafetyRecoveryCount\r\n");
     {
         if (tsN == 0) {
             httpd_resp_sendstr_chunk(req, "(시계열 없음)\r\n");
@@ -2849,7 +2940,8 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                     "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
                     "%u,%u,%u,%u,%u,%u,%u,%u,"
                     "%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u,%u,"
-                    "%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+                    "%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+                    "%s,%u,%u,%u,%u,%u,%s,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
                     (unsigned)s.aFrames, (double)s.aFrameHz,
                     (unsigned)s.aEflg, aMcpEflgStateName(s.aEflg), (unsigned)s.aEflgPeak,
                     (unsigned)s.aTec, (unsigned)s.aRec, (unsigned)s.aTecPeak, (unsigned)s.aRecPeak,
@@ -2921,7 +3013,24 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
                     (unsigned)s.summonAge390Ms,
                     (unsigned)s.summonAge599Ms,
                     (unsigned)s.summonAge921Ms,
-                    (unsigned)s.summonAge1016Ms);
+                    (unsigned)s.summonAge1016Ms,
+                    bootResetReasonName(s.resetReason),
+                    (unsigned)s.rtcBootCount,
+                    (unsigned)s.previousBootValid,
+                    (unsigned)s.previousUptimeMs,
+                    (unsigned)s.previousAEflg,
+                    (unsigned)s.previousARxOverrun,
+                    aTxSourceName(s.previousLastTxSource),
+                    (unsigned)s.previousLastTxResult,
+                    tsllcBlockReasonName(s.tsllcBlockReason),
+                    (unsigned)s.tsllcStartupMs,
+                    (unsigned)s.tsllcValidFrames,
+                    (unsigned)s.tsllcRearmRequired,
+                    (unsigned)s.aSafetyHold,
+                    (unsigned)s.aSafetyLatched,
+                    (unsigned)s.aSafetyHoldCount,
+                    (unsigned)s.aSafetyLatchCount,
+                    (unsigned)s.aSafetyRecoveryCount);
                 if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) {
                     logsBundleSerialTrace("fail section4", handlerStartMs);
                     if (wdtDetached) esp_task_wdt_add(NULL);
@@ -3114,7 +3223,10 @@ static esp_err_t canDiagLogDlHandler(httpd_req_t *req) {
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_sendstr_chunk(req, "\xEF\xBB\xBF");
     httpd_resp_sendstr_chunk(req,
-        "schema_version,firmware_version,firmware_build_id,wall_time,uptime_ms,diag_state,sequence,scope,message\r\n");
+        "schema_version,firmware_version,firmware_build_id,wall_time,uptime_ms,diag_state,sequence,scope,message,"
+        "reset_reason,reset_reason_code,rtc_boot_count,previous_boot_valid,previous_uptime_ms,previous_a_eflg,"
+        "previous_a_rx_overrun,previous_last_tx_source,previous_last_tx_result,tsllc_block_reason,tsllc_rearm_required,"
+        "a_safety_hold,a_safety_latched\r\n");
 
     const uint32_t head = diagLog.currentHead();
     const uint32_t start = head > LogRingBuffer::kCapacity ? head - LogRingBuffer::kCapacity : 0;
@@ -3122,24 +3234,52 @@ static esp_err_t canDiagLogDlHandler(httpd_req_t *req) {
         diagState == DiagState::RUNNING ? "RUNNING" :
         diagState == DiagState::DONE ? "DONE" : "NOT_RUN";
     char escaped[LogRingBuffer::kMaxMsgLen * 2 + 3];
-    char line[LogRingBuffer::kMaxMsgLen * 2 + 160];
+    char line[LogRingBuffer::kMaxMsgLen * 2 + 384];
     char wallTime[40];
     if (head == 0) {
         const uint32_t now = millis();
         formatLogTimestamp(now, wallTime, sizeof(wallTime));
         csvEscapeCell("자가 진단을 실행한 기록이 없습니다. 먼저 '자가 진단 실행'을 완료한 뒤 저장하세요.",
                       escaped, sizeof(escaped));
-        snprintf(line, sizeof(line), "2,%s,%s,%s,%u,NOT_RUN,0,A/B,%s\r\n",
-                 FIRMWARE_VERSION, FIRMWARE_BUILD_ID, wallTime, (unsigned)now, escaped);
+        snprintf(line, sizeof(line),
+                 "3,%s,%s,%s,%u,NOT_RUN,0,A/B,%s,%s,%u,%u,%u,%u,%u,%u,%s,%u,%s,%u,%u,%u\r\n",
+                 FIRMWARE_VERSION, FIRMWARE_BUILD_ID, wallTime, (unsigned)now, escaped,
+                 bootResetReasonName((uint32_t)bootDiagnostics.resetReason),
+                 (unsigned)(uint32_t)bootDiagnostics.resetReason,
+                 (unsigned)(uint32_t)bootDiagnostics.rtcBootCount,
+                 (unsigned)(bool)bootDiagnostics.previousSnapshotValid,
+                 (unsigned)bootDiagnostics.previous.uptimeMs,
+                 (unsigned)bootDiagnostics.previous.aEflg,
+                 (unsigned)bootDiagnostics.previous.aRxOverrunCount,
+                 aTxSourceName(bootDiagnostics.previous.lastTxSource),
+                 (unsigned)bootDiagnostics.previous.lastTxResult,
+                 tsllcBlockReasonName(tsllcInjectionBlockReason(now)),
+                 (unsigned)(bool)tsllcRearmRequired,
+                 (unsigned)(bool)aChannelDiag.aSafetyHold,
+                 (unsigned)(bool)aChannelDiag.aSafetyLatched);
         httpd_resp_sendstr_chunk(req, line);
     }
     for (uint32_t i = start; i < head; ++i) {
         const LogRingBuffer::Entry &entry = diagLog.at(i);
         formatLogTimestamp(entry.timestamp_ms, wallTime, sizeof(wallTime));
         csvEscapeCell(entry.msg, escaped, sizeof(escaped));
-        snprintf(line, sizeof(line), "2,%s,%s,%s,%u,%s,%u,A/B,%s\r\n",
+        snprintf(line, sizeof(line),
+                 "3,%s,%s,%s,%u,%s,%u,A/B,%s,%s,%u,%u,%u,%u,%u,%u,%s,%u,%s,%u,%u,%u\r\n",
                  FIRMWARE_VERSION, FIRMWARE_BUILD_ID, wallTime, (unsigned)entry.timestamp_ms, stateName,
-                 (unsigned)(i - start + 1U), escaped);
+                 (unsigned)(i - start + 1U), escaped,
+                 bootResetReasonName((uint32_t)bootDiagnostics.resetReason),
+                 (unsigned)(uint32_t)bootDiagnostics.resetReason,
+                 (unsigned)(uint32_t)bootDiagnostics.rtcBootCount,
+                 (unsigned)(bool)bootDiagnostics.previousSnapshotValid,
+                 (unsigned)bootDiagnostics.previous.uptimeMs,
+                 (unsigned)bootDiagnostics.previous.aEflg,
+                 (unsigned)bootDiagnostics.previous.aRxOverrunCount,
+                 aTxSourceName(bootDiagnostics.previous.lastTxSource),
+                 (unsigned)bootDiagnostics.previous.lastTxResult,
+                 tsllcBlockReasonName(tsllcInjectionBlockReason(entry.timestamp_ms)),
+                 (unsigned)(bool)tsllcRearmRequired,
+                 (unsigned)(bool)aChannelDiag.aSafetyHold,
+                 (unsigned)(bool)aChannelDiag.aSafetyLatched);
         if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) return ESP_FAIL;
     }
     httpd_resp_sendstr_chunk(req, NULL);

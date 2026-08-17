@@ -59,6 +59,11 @@ enum CanEventType : uint8_t {
     EV_SUMMON_TX_TIMING = 36,
     // 실제 Summon ACA+SPR 정책의 허용/종료 사유 전이.
     EV_SUMMON_POLICY_STATE = 37,
+    EV_BOOT_RESET = 38,       // 현재 reset reason/RTC boot count
+    EV_A_SAFETY_HOLD = 39,    // 첫 RX overrun 뒤 A TX 일시 보류
+    EV_A_SAFETY_RECOVER = 40, // 수신 상태 재검증 후 A TX 재개
+    EV_A_SAFETY_LATCH = 41,   // 60초 내 RX overrun 재발로 부팅 중 A TX 잠금
+    EV_TSLLC_GATE_STATE = 42, // TSLLC 허용/차단 사유 전이
     EV_TYPE_COUNT
 };
 
@@ -115,6 +120,11 @@ inline const char* eventTypeName(uint8_t type) {
     case EV_SUMMON_RETRY_SESSION: return "SUMMON_RETRY_SESSION";
     case EV_SUMMON_TX_TIMING: return "SUMMON_TX_TIMING";
     case EV_SUMMON_POLICY_STATE: return "SUMMON_POLICY_STATE";
+    case EV_BOOT_RESET: return "BOOT_RESET";
+    case EV_A_SAFETY_HOLD: return "A_SAFETY_HOLD";
+    case EV_A_SAFETY_RECOVER: return "A_SAFETY_RECOVER";
+    case EV_A_SAFETY_LATCH: return "A_SAFETY_LATCH";
+    case EV_TSLLC_GATE_STATE: return "TSLLC_GATE_STATE";
     default: return "UNKNOWN";
     }
 }
@@ -136,6 +146,10 @@ inline uint8_t eventChannel(uint8_t type) {
     case EV_SUMMON_RETRY_SESSION:
     case EV_SUMMON_TX_TIMING:
     case EV_SUMMON_POLICY_STATE:
+    case EV_A_SAFETY_HOLD:
+    case EV_A_SAFETY_RECOVER:
+    case EV_A_SAFETY_LATCH:
+    case EV_TSLLC_GATE_STATE:
         return EV_CH_A;
     case EV_BUSOFF:
     case EV_RECOVERY_OK:
@@ -183,6 +197,8 @@ inline uint8_t eventSeverity(uint8_t type, uint32_t detail) {
     case EV_A_RX_OVERRUN:
     case EV_A_TX_GUARD_SET:
     case EV_A_TX_FAILURE:
+    case EV_A_SAFETY_HOLD:
+    case EV_A_SAFETY_LATCH:
         return EV_SEV_WARN;
     case EV_SUMMON_POLICY_STATE:
         return ((detail & 0x0FU) == SUMMON_SESSION_IDLE ||
@@ -224,6 +240,7 @@ inline bool eventTypeIsAggregated(uint8_t type) {
     // 보관하면 256행 이벤트 링이 먼저 소진되므로 30초 구간으로 묶는다.
     // 실제 Nag 주입 세션의 START/END는 별도 이벤트라 묶지 않는다.
     case EV_NAG_GATE_STATE:
+    case EV_TSLLC_GATE_STATE:
         return true;
     default:
         return false;
@@ -236,7 +253,8 @@ inline uint32_t eventAggregateKey(uint8_t type, uint32_t detail) {
     if (type == EV_A_RX_OVERRUN) return detail & 0xFFU;
     // 게이트 상태가 HANDS_ON <-> AP_BLOCK처럼 반복 전이해도 같은 구간으로
     // 합산한다. 최신 detail은 eventLogPushAt에서 보존한다.
-    if (type == EV_NAG_GATE_STATE || type == EV_B_BUS_ERR_SNAPSHOT) return type;
+    if (type == EV_NAG_GATE_STATE || type == EV_B_BUS_ERR_SNAPSHOT ||
+        type == EV_TSLLC_GATE_STATE) return type;
     // 기능별 품질 관측은 출처와 심각도별로 30초간 합산한다. INFO 중재 경쟁이
     // 완료 0건/ABTF 동반 WARN을 덮지 않도록 심각도도 집계 키에 포함한다.
     if (type == EV_A_TX_QUALITY)
@@ -451,6 +469,18 @@ inline uint32_t eventNagGateStateDetail(uint8_t decision, uint8_t mode, bool apA
            ((uint32_t)phase << 24);
 }
 
+inline uint32_t eventTsllcGateStateDetail(uint8_t reason, uint8_t apState,
+                                          bool rearmRequired, bool safetyHold,
+                                          bool safetyLatched, bool summoning)
+{
+    return (uint32_t)reason |
+           ((uint32_t)apState << 8) |
+           (rearmRequired ? (1U << 16) : 0U) |
+           (safetyHold ? (1U << 17) : 0U) |
+           (safetyLatched ? (1U << 18) : 0U) |
+           (summoning ? (1U << 19) : 0U);
+}
+
 #ifndef NATIVE_BUILD
 inline const char* eventDetailText(uint8_t type, uint32_t detail, char* out, size_t outLen) {
     if (!out || outLen == 0) return "";
@@ -503,6 +533,34 @@ inline const char* eventDetailText(uint8_t type, uint32_t detail, char* out, siz
                  (unsigned)loopGapUs);
         break;
     }
+    case EV_BOOT_RESET:
+        snprintf(out, outLen, "reset_reason=%s(%u) boot_count=%u unexpected=%u previous_valid=%u",
+                 bootResetReasonName(detail & 0xFFU), (unsigned)(detail & 0xFFU),
+                 (unsigned)((detail >> 8) & 0xFFFFU),
+                 (unsigned)((detail >> 24) & 1U),
+                 (unsigned)((detail >> 25) & 1U));
+        break;
+    case EV_A_SAFETY_HOLD:
+        snprintf(out, outLen, "eflg=0x%02X hold_ms=%u pending_tx_canceled=1",
+                 (unsigned)(detail & 0xFFU), (unsigned)(detail >> 8));
+        break;
+    case EV_A_SAFETY_RECOVER:
+        snprintf(out, outLen, "valid_frames_after_hold=%u", (unsigned)detail);
+        break;
+    case EV_A_SAFETY_LATCH:
+        snprintf(out, outLen, "eflg=0x%02X repeat_after_ms=%u reboot_required=1",
+                 (unsigned)(detail & 0xFFU), (unsigned)(detail >> 8));
+        break;
+    case EV_TSLLC_GATE_STATE:
+        snprintf(out, outLen,
+                 "reason=%s ap_state=%u rearm=%u safety_hold=%u safety_latched=%u summoning=%u",
+                 tsllcBlockReasonName((uint8_t)detail),
+                 (unsigned)((detail >> 8) & 0xFFU),
+                 (unsigned)((detail >> 16) & 1U),
+                 (unsigned)((detail >> 17) & 1U),
+                 (unsigned)((detail >> 18) & 1U),
+                 (unsigned)((detail >> 19) & 1U));
+        break;
     case EV_A_WAKE_FIRST_TX:
         snprintf(out, outLen, "wake_to_summon_tx_ms=%u", (unsigned)detail);
         break;
@@ -717,7 +775,8 @@ inline void eventLogPushAt(uint32_t now, uint8_t type, uint16_t tec, uint16_t re
                 // 묶음의 마지막 게이트 상태가 CSV의 마지막 시각과 일치하도록
                 // 최신 detail을 남긴다. occurrences가 구간 내 전이 횟수다.
                 if (type == EV_NAG_GATE_STATE || type == EV_A_TX_QUALITY ||
-                    type == EV_B_BUS_ERR_SNAPSHOT) previous.detail = detail;
+                    type == EV_B_BUS_ERR_SNAPSHOT ||
+                    type == EV_TSLLC_GATE_STATE) previous.detail = detail;
                 previous.occurrences++;
                 evtCoalescedTotal++;
 #ifndef NATIVE_BUILD
@@ -816,7 +875,9 @@ inline void eventLogCsvEscape(const char *in, char *out, size_t outLen) {
 inline void eventLogCsvHeader(httpd_req_t* req) {
     httpd_resp_sendstr_chunk(req,
         "schema_version,firmware_version,firmware_build_id,wall_time_first,wall_time_last,uptime_first_ms,uptime_last_ms,"
-        "sequence,channel,severity,event,type,occurrences,tec,rec,detail,detail_text\r\n");
+        "sequence,channel,severity,event,type,occurrences,tec,rec,detail,detail_text,"
+        "reset_reason,reset_reason_code,rtc_boot_count,previous_boot_valid,previous_uptime_ms,previous_a_eflg,"
+        "previous_a_rx_overrun,previous_a_tx_queued,previous_a_tx_fail,previous_last_tx_source,previous_last_tx_result,previous_feature_flags\r\n");
 }
 
 inline esp_err_t eventLogCsvRow(httpd_req_t* req, const CanEvent& e) {
@@ -824,20 +885,32 @@ inline esp_err_t eventLogCsvRow(httpd_req_t* req, const CanEvent& e) {
     char lastTime[40];
     char detailText[192];
     char detailCsv[392];
-    char line[768];
+    char line[1024];
     eventLogFormatTime(e.t_ms, firstTime, sizeof(firstTime));
     eventLogFormatTime(e.last_ms, lastTime, sizeof(lastTime));
     eventLogCsvEscape(
         eventDetailText(e.type, e.detail, detailText, sizeof(detailText)),
         detailCsv, sizeof(detailCsv));
     snprintf(line, sizeof(line),
-        "2,%s,%s,%s,%s,%u,%u,%u,%s,%s,%s,%u,%u,%u,%u,%u,%s\r\n",
+        "3,%s,%s,%s,%s,%u,%u,%u,%s,%s,%s,%u,%u,%u,%u,%u,%s,%s,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,%u\r\n",
         FIRMWARE_VERSION, FIRMWARE_BUILD_ID, firstTime, lastTime,
         (unsigned)e.t_ms, (unsigned)e.last_ms, (unsigned)e.sequence,
         eventChannelName(eventChannel(e.type)),
         eventSeverityName(eventSeverity(e.type, e.detail)),
         eventTypeName(e.type), (unsigned)e.type, (unsigned)e.occurrences,
-        (unsigned)e.tec, (unsigned)e.rec, (unsigned)e.detail, detailCsv);
+        (unsigned)e.tec, (unsigned)e.rec, (unsigned)e.detail, detailCsv,
+        bootResetReasonName((uint32_t)bootDiagnostics.resetReason),
+        (unsigned)(uint32_t)bootDiagnostics.resetReason,
+        (unsigned)(uint32_t)bootDiagnostics.rtcBootCount,
+        (unsigned)(bool)bootDiagnostics.previousSnapshotValid,
+        (unsigned)bootDiagnostics.previous.uptimeMs,
+        (unsigned)bootDiagnostics.previous.aEflg,
+        (unsigned)bootDiagnostics.previous.aRxOverrunCount,
+        (unsigned)bootDiagnostics.previous.aTxQueued,
+        (unsigned)bootDiagnostics.previous.aTxFail,
+        aTxSourceName(bootDiagnostics.previous.lastTxSource),
+        (unsigned)bootDiagnostics.previous.lastTxResult,
+        (unsigned)bootDiagnostics.previous.featureFlags);
     return httpd_resp_sendstr_chunk(req, line);
 }
 

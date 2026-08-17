@@ -6,6 +6,18 @@
 
 ## [Unreleased]
 
+## [1.3.18] - 2026-08-17
+
+### TSLLC 플러그인 정합과 A채널 단계 보호
+
+- HW3 TSLLC는 ev-open 플러그인과 같은 ID `0x3FD`, DLC 8, mux 0의 bit38/39만 변경한다. 두 비트가 원본에서 이미 1이면 송신하지 않으며 One-shot 1회만 사용하고 재시도하지 않는다.
+- TSLLC는 A CAN 시작 15초·유효 A 프레임 1,001개를 넘고, ID 921의 AP 상태 3~6이 최근 500ms 안에 수신되어 1초 이상 연속 안정된 경우에만 송신한다. 수동주행·주차·AP 안정 전·실제 Summoning에서는 차단한다.
+- HW3 EAP/Summon은 mux 1 bit19=0/bit46=1, `ACA + SPR` 실제 Summoning 판정과 Summoning 전용 3ms 1회·20ms 만료 MLOA 재시도를 유지한다. TSLLC 시작 게이트는 EAP/Summon 응답성에 적용하지 않는다.
+- panic·WDT·brownout·SDIO·unknown 재부팅 후 저장된 TSLLC ON 설정은 보존하되, 해당 부팅에서는 Web UI의 `TSLLC 재승인` 전까지 송신을 차단한다.
+- 첫 A RX overrun은 Summon/TSLLC 하드웨어 대기 TX와 Summon 재시도를 취소하고 최소 2초간 모든 A TX를 보류한다. EFLG 정상, 최근 250ms 이내 A 수신과 새 유효 프레임 100개를 확인하면 자동 재개한다. 60초 안에 두 번째 overrun이 발생하면 해당 부팅의 A TX를 잠그고 재부팅 필요 상태로 표시한다.
+- RTC 메모리에 부팅 횟수, 이전 uptime, A EFLG·overrun·마지막 TX 출처/결과와 기능 상태를 보존한다. 상태 API, Web UI, 통합 로그, 이벤트 CSV v3, 시계열 CSV v7, 자가진단 CSV v3에 reset·TSLLC 게이트·A 안전 상태를 추가했다.
+- All HW Summon 플러그인의 bit47은 적용하지 않았다. 이 프로젝트의 차량/빌드는 HW3이므로 검증된 bit46을 유지한다.
+
 ## [1.3.17] - 2026-08-16
 
 ### A채널 수신 부하 안정화와 EAP·TSLLC 표시 분리

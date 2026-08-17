@@ -64,11 +64,13 @@ static void appSetup(std::unique_ptr<Driver> drv, const char *readyMsg)
     aChannelDiag.driverInitialized = driverInitOk;
     if (!driverInitOk)
     {
+        aCanStartedMs = 0;
         Serial.println("CAN init failed");
     }
     else
     {
         appDriver->setFilters(appHandler->filterIds(), appHandler->filterIdCount());
+        aCanStartedMs = millis();
     }
     // ISR 지원 드라이버만 인터럽트 활성화 (T2CAN의 MCP2515는 폴링 전용)
     if constexpr (Driver::kSupportsISR)
@@ -80,6 +82,55 @@ static void appSetup(std::unique_ptr<Driver> drv, const char *readyMsg)
 
     // MCP2515 초기화 직후 수신 폴링을 시작한다. 여기서 2초를 멈추면
     // RX0/RX1 두 버퍼가 즉시 가득 차 OTA 재부팅 직후 EFLG RXOVR가 발생한다.
+}
+
+static void cancelPendingATransmits()
+{
+    if (!appDriver) return;
+    appDriver->cancelPendingTransmit(CanTxSource::Summon);
+    appDriver->cancelPendingTransmit(CanTxSource::Tsllc);
+}
+
+static void startAChannelSafetyProtection(uint32_t nowMs, uint8_t eflg,
+                                          uint8_t tec, uint8_t rec)
+{
+    const uint32_t firstOverrunMs = (uint32_t)aChannelDiag.aSafetyFirstOverrunMs;
+    const bool repeatedWithinWindow = aSafetyRecordOverrun(nowMs);
+    // 보호 상태를 먼저 세워 동시 송신을 차단한 뒤, 하드웨어 대기 TX와
+    // Summon 단발 재시도를 A_SAFETY 사유로 폐기한다.
+    cancelPendingATransmits();
+
+    if (repeatedWithinWindow) {
+        eventLogPush(EV_A_SAFETY_LATCH, tec, rec,
+                     (uint32_t)eflg | ((nowMs - firstOverrunMs) << 8));
+        logRing.push("[A-SAFETY] 60초 내 RX overrun 재발: 이번 부팅 A TX 잠금", nowMs);
+    } else {
+        eventLogPush(EV_A_SAFETY_HOLD, tec, rec,
+                     (uint32_t)eflg | ((uint32_t)kASafetyHoldMinMs << 8));
+        logRing.push("[A-SAFETY] RX overrun: 대기 TX 취소 및 최소 2초 A TX 보류", nowMs);
+    }
+    updateRtcCanSnapshot(nowMs);
+}
+
+static void maintainAChannelSafetyProtection(uint32_t nowMs)
+{
+    if (aSafetyTryRecover(nowMs)) {
+        const uint32_t recoveredFrames =
+            (uint32_t)aChannelDiag.framesReceivedTotal -
+            (uint32_t)aChannelDiag.aSafetyFramesAtHold;
+        eventLogPush(EV_A_SAFETY_RECOVER,
+                     (uint16_t)(uint8_t)aChannelDiag.aTec,
+                     (uint16_t)(uint8_t)aChannelDiag.aRec,
+                     recoveredFrames);
+        logRing.push("[A-SAFETY] EFLG 정상 및 새 A 프레임 100개 확인: A TX 재개", nowMs);
+        updateRtcCanSnapshot(nowMs);
+    }
+
+    const uint32_t firstOverrunMs = (uint32_t)aChannelDiag.aSafetyFirstOverrunMs;
+    if (!(bool)aChannelDiag.aSafetyHold && !(bool)aChannelDiag.aSafetyLatched &&
+        firstOverrunMs != 0U && nowMs - firstOverrunMs > kASafetyOverrunWindowMs) {
+        aChannelDiag.aSafetyFirstOverrunMs = 0;
+    }
 }
 
 template <typename Driver>
@@ -114,6 +165,7 @@ static uint16_t appLoop()
     const uint32_t appLoopNowMs = millis();
     aChannelDiag.lastLoopMs = appLoopNowMs;
     summonGateMaintain(appLoopNowMs);
+    maintainAChannelSafetyProtection(appLoopNowMs);
 #if !defined(NATIVE_BUILD)
     aChannelDiag.loopCoreId = xPortGetCoreID();
 #endif
@@ -248,6 +300,7 @@ static uint16_t appLoop()
                 if (eflg & 0x80U)
                     aChannelDiag.aRx1OvrCount = (uint32_t)aChannelDiag.aRx1OvrCount + 1U;
                 aChannelDiag.lastOverrunPhase = loopGapWindowPeakPhase;
+                startAChannelSafetyProtection(_nowMs, eflg, tec, rec);
                 appDriver->clearRxOverrun();
             }
 
@@ -309,6 +362,7 @@ static uint16_t appLoop()
                 }
                 if (_nowMs - _aTxBoSinceMs >= kAMcpBusOffRestartFallbackMs) {
                     logRing.push("🧯 [A-CH] MCP2515 BUS-OFF 지속 → ESP32 재시작", _nowMs);
+                    updateRtcCanSnapshot(_nowMs);
                     delay(100);
                     ESP.restart();
                 }

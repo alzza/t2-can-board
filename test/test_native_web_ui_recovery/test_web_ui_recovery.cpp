@@ -233,6 +233,15 @@ void test_main_ui_has_readable_iphone_safari_layout()
                               "/* ── iPhone/Safari: PC와 동일한 시각 체계, 모바일에 맞는 한 열 배치 ── */"));
 }
 
+void test_main_ui_exposes_tsllc_rearm_and_gate_states()
+{
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "TSLLC 재승인"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "REARM_REQUIRED"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "STARTUP_FRAMES"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "A 안전 잠금"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "fetch('/api/tsllc'"));
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -252,6 +261,7 @@ int main()
     RUN_TEST(test_main_ui_defaults_to_summary_and_important_live_logs);
     RUN_TEST(test_main_ui_uses_generic_paired_user_marker);
     RUN_TEST(test_main_ui_has_readable_iphone_safari_layout);
+    RUN_TEST(test_main_ui_exposes_tsllc_rearm_and_gate_states);
 
     return UNITY_END();
 }

@@ -20,6 +20,17 @@ static void resetSummonState()
     summonGateDiag.blocked = 0;
 }
 
+static void primeTsllcReadyContext()
+{
+    const uint32_t now = millis();
+    aCanStartedMs = now - kTsllcStartupDelayMs;
+    aChannelDiag.framesReceivedTotal = kTsllcMinValidAFrames + 1U;
+    summonGateDiag.apState = 3;
+    summonGateDiag.apActive = true;
+    summonGateDiag.last921Ms = now;
+    summonGateDiag.apActiveSinceMs = now - kTsllcApStableRequiredMs;
+}
+
 void setUp()
 {
     mock.reset();
@@ -29,6 +40,11 @@ void setUp()
     tsllcRuntime = true;
     aChannelTxRuntime = true;
     aTxGuardRuntime = false;
+    tsllcRearmRequired = false;
+    aChannelDiag.aSafetyHold = false;
+    aChannelDiag.aSafetyLatched = false;
+    aChannelDiag.framesReceivedTotal = 0;
+    aCanStartedMs = 0;
     resetSummonState();
 }
 
@@ -65,6 +81,7 @@ void test_removed_id1001_experiment_is_ignored()
 
 void test_tsllc_mux0_sets_only_validated_bits()
 {
+    primeTsllcReadyContext();
     CanFrame frame = {.id = 1021, .dlc = 8};
     handler.handleMessage(frame, mock);
 

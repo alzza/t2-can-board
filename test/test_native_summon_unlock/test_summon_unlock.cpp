@@ -70,6 +70,17 @@ static void primeSummonValidationContext()
     handler.handleMessage(ap, mock);
 }
 
+static void primeTsllcReadyContext()
+{
+    const uint32_t now = millis();
+    aCanStartedMs = now - kTsllcStartupDelayMs;
+    aChannelDiag.framesReceivedTotal = kTsllcMinValidAFrames + 1U;
+    summonGateDiag.apState = 3;
+    summonGateDiag.apActive = true;
+    summonGateDiag.last921Ms = now;
+    summonGateDiag.apActiveSinceMs = now - kTsllcApStableRequiredMs;
+}
+
 void setUp()
 {
     mock.reset();
@@ -84,6 +95,12 @@ void setUp()
     aChannelDiag.tsllcSuppressedSummoningCount = 0;
     aChannelDiag.aSummonSessionTsllcSuppressed = 0;
     aChannelDiag.aSummonSessionStartMs = 0;
+    aChannelDiag.tsllcSkippedUnchanged = 0;
+    aChannelDiag.framesReceivedTotal = 0;
+    aCanStartedMs = 0;
+    tsllcRearmRequired = false;
+    aChannelDiag.aSafetyHold = false;
+    aChannelDiag.aSafetyLatched = false;
     canTxInFlight = 0;
     canTxQuiesceCancel();
     resetSummonState();
@@ -234,7 +251,7 @@ void test_removed_id_659_is_ignored()
     TEST_ASSERT_EQUAL(0, mock.sent.size());
 }
 
-void test_tsllc_mux0_remains_active_when_summon_gate_is_closed()
+void test_tsllc_mux0_is_blocked_when_ap_is_inactive()
 {
     CanFrame drive = frame280(4, false);
     handler.handleMessage(drive, mock);
@@ -242,15 +259,42 @@ void test_tsllc_mux0_remains_active_when_summon_gate_is_closed()
     handler.handleMessage(frame, mock);
 
     TEST_ASSERT_FALSE(summonGateOpen());
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT8(TSLLC_BLOCK_STARTUP_TIME,
+                            (uint8_t)aChannelDiag.tsllcLastBlockReason);
+    TEST_ASSERT_EQUAL_UINT32(0, summonGateDiag.mux1Received);
+}
+
+void test_tsllc_mux0_transmits_only_after_ap_and_startup_gates()
+{
+    primeTsllcReadyContext();
+    CanFrame frame = mux0Frame();
+    handler.handleMessage(frame, mock);
+
     TEST_ASSERT_EQUAL(1, mock.sent.size());
     TEST_ASSERT_TRUE((mock.sent[0].data[4] >> 6) & 0x01U);
     TEST_ASSERT_TRUE((mock.sent[0].data[4] >> 7) & 0x01U);
-    TEST_ASSERT_FALSE((mock.sent[0].data[5] >> 6) & 0x01U);
-    TEST_ASSERT_EQUAL_UINT32(0, summonGateDiag.mux1Received);
+    TEST_ASSERT_EQUAL_UINT8(TSLLC_BLOCK_READY,
+                            (uint8_t)aChannelDiag.tsllcLastBlockReason);
+}
+
+void test_tsllc_does_not_send_when_validated_bits_are_already_set()
+{
+    primeTsllcReadyContext();
+    CanFrame frame = mux0Frame();
+    setBit(frame, 38, true);
+    setBit(frame, 39, true);
+    handler.handleMessage(frame, mock);
+
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_UINT32(1, aChannelDiag.tsllcSkippedUnchanged);
 }
 
 void test_tsllc_mux0_is_held_while_actual_summoning()
 {
+    const uint32_t now = millis();
+    aCanStartedMs = now - kTsllcStartupDelayMs;
+    aChannelDiag.framesReceivedTotal = kTsllcMinValidAFrames + 1U;
     primeSummonValidationContext();
     CanFrame driveAca = frame280(4, true);
     handler.handleMessage(driveAca, mock);
@@ -280,6 +324,7 @@ void test_tsllc_mux0_resumes_after_summoning_ends()
 
     CanFrame driveNoAca = frame280(4, false);
     handler.handleMessage(driveNoAca, mock);
+    primeTsllcReadyContext();
     CanFrame resumed = mux0Frame();
     handler.handleMessage(resumed, mock);
 
@@ -309,6 +354,53 @@ void test_summon_retry_policy_requires_actual_summoning_and_safety_gates()
 
     aMcpOneShotRuntime = false;
     TEST_ASSERT_FALSE(summonRetryPolicyAllowed(1000));
+}
+
+void test_tsllc_rearm_and_a_safety_gates_fail_closed()
+{
+    primeTsllcReadyContext();
+    const uint32_t now = millis();
+    tsllcRearmRequired = true;
+    TEST_ASSERT_EQUAL_UINT8(TSLLC_BLOCK_REARM_REQUIRED,
+                            tsllcInjectionBlockReason(now));
+    tsllcRearmRequired = false;
+    aChannelDiag.aSafetyHold = true;
+    TEST_ASSERT_EQUAL_UINT8(TSLLC_BLOCK_A_SAFETY_HOLD,
+                            tsllcInjectionBlockReason(now));
+    aChannelDiag.aSafetyHold = false;
+    aChannelDiag.aSafetyLatched = true;
+    TEST_ASSERT_EQUAL_UINT8(TSLLC_BLOCK_A_SAFETY_LATCH,
+                            tsllcInjectionBlockReason(now));
+}
+
+void test_tsllc_time_frame_ap_stability_and_freshness_boundaries()
+{
+    tsllcRuntime = true;
+    aChannelTxRuntime = true;
+    aCanStartedMs = 100;
+    aChannelDiag.framesReceivedTotal = kTsllcMinValidAFrames + 1U;
+    summonGateDiag.apState = 3;
+    summonGateDiag.apActive = true;
+    summonGateDiag.apActiveSinceMs = 14100;
+    summonGateDiag.last921Ms = 15100;
+
+    TEST_ASSERT_EQUAL_UINT8(TSLLC_BLOCK_STARTUP_TIME,
+                            tsllcInjectionBlockReason(15099));
+    TEST_ASSERT_EQUAL_UINT8(TSLLC_BLOCK_READY,
+                            tsllcInjectionBlockReason(15100));
+
+    aChannelDiag.framesReceivedTotal = kTsllcMinValidAFrames;
+    TEST_ASSERT_EQUAL_UINT8(TSLLC_BLOCK_STARTUP_FRAMES,
+                            tsllcInjectionBlockReason(15100));
+    aChannelDiag.framesReceivedTotal = kTsllcMinValidAFrames + 1U;
+
+    summonGateDiag.apActiveSinceMs = 14101;
+    TEST_ASSERT_EQUAL_UINT8(TSLLC_BLOCK_AP_STABILIZING,
+                            tsllcInjectionBlockReason(15100));
+    summonGateDiag.apActiveSinceMs = 14100;
+    summonGateDiag.last921Ms = 14599;
+    TEST_ASSERT_EQUAL_UINT8(TSLLC_BLOCK_AP_STALE,
+                            tsllcInjectionBlockReason(15100));
 }
 
 void test_summon_candidate_uses_aca_plus_spr_without_speed_filter()
@@ -407,10 +499,14 @@ int main()
     RUN_TEST(test_condition_limit_off_allows_drive_experiment);
     RUN_TEST(test_390_fallback_and_280_watchdog_match_ino);
     RUN_TEST(test_removed_id_659_is_ignored);
-    RUN_TEST(test_tsllc_mux0_remains_active_when_summon_gate_is_closed);
+    RUN_TEST(test_tsllc_mux0_is_blocked_when_ap_is_inactive);
+    RUN_TEST(test_tsllc_mux0_transmits_only_after_ap_and_startup_gates);
+    RUN_TEST(test_tsllc_does_not_send_when_validated_bits_are_already_set);
     RUN_TEST(test_tsllc_mux0_is_held_while_actual_summoning);
     RUN_TEST(test_tsllc_mux0_resumes_after_summoning_ends);
     RUN_TEST(test_summon_retry_policy_requires_actual_summoning_and_safety_gates);
+    RUN_TEST(test_tsllc_rearm_and_a_safety_gates_fail_closed);
+    RUN_TEST(test_tsllc_time_frame_ap_stability_and_freshness_boundaries);
     RUN_TEST(test_summon_candidate_uses_aca_plus_spr_without_speed_filter);
     RUN_TEST(test_active_ap_does_not_override_aca_spr_summoning_session);
     RUN_TEST(test_spr_cancel_closes_session_and_cancels_pending_summon_tx);

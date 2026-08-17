@@ -36,6 +36,9 @@ LILYGO T2-CAN ESP32-S3에서 동작하는 Tesla HW3용 듀얼 CAN 펌웨어입�
 
 - 실제 Summoning은 `ACA + 확인된 SPR`로 판단합니다.
 - Summoning 중에는 같은 ID의 송신 경쟁을 줄이기 위해 TSLLC를 잠시 보류합니다.
+- TSLLC는 A CAN 시작 15초·유효 프레임 1,001개 이후, AP 상태 3~6의 최근 신호가 1초 이상 안정된 경우에만 동작합니다. 원본 bit38/39가 이미 1이면 송신하지 않습니다.
+- 비정상 재부팅 후 TSLLC 설정은 보존되지만, Web UI에서 한 번 재승인해야 다시 송신합니다.
+- A RX overrun은 첫 발생 시 자동 복구 확인 동안 A TX를 보류하고, 60초 내 재발하면 해당 부팅의 A TX를 잠급니다.
 - API와 NVS는 기존 `/api/summon-unlock`, `/api/tsllc`, `summon_unlock`, `tsllc`를 그대로 사용합니다.
 
 ## 기록 규칙

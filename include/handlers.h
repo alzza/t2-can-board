@@ -55,6 +55,21 @@ struct HW3Handler : public CarManagerBase
             }
             return true;
         }
+        if (aSafetyTxBlocked()) {
+            aChannelDiag.aSafetySkipCount =
+                (uint32_t)aChannelDiag.aSafetySkipCount + 1U;
+            static unsigned long lastSafetySkipLog = 0;
+            if (nowMs - lastSafetySkipLog > 5000U) {
+                char buf[104];
+                snprintf(buf, sizeof(buf),
+                         "[A-CH] %s 주입 보류: RX 안전 %s",
+                         featureName,
+                         (bool)aChannelDiag.aSafetyLatched ? "LATCH" : "HOLD");
+                logRing.push(buf, nowMs);
+                lastSafetySkipLog = nowMs;
+            }
+            return true;
+        }
         if (!aTxGuardActive(nowMs)) return false;
 
         aChannelDiag.aTxGuardSkipCount = (uint32_t)aChannelDiag.aTxGuardSkipCount + 1;
@@ -130,11 +145,19 @@ struct HW3Handler : public CarManagerBase
 
         if (readMuxID(frame) == 0) {
 #if defined(SUMMON_UNLOCK)
+            const uint8_t blockReason = tsllcInjectionBlockReason(nowMs);
+            trackTsllcGateState(blockReason);
             if (tsllcRuntime) {
-                // TSLLC는 주행 중 기능이다. 실제 Summoning(ACA+SPR) 중에는 같은
-                // ID 1021의 mux 0 송신을 완전히 보류해 mux 1 Summon 재송신과
-                // MCP2515 TX 버퍼를 경쟁하지 않게 한다.
-                if ((bool)summonGateDiag.summoning) {
+                // ev-open TSLLC 플러그인과 같은 bit38/39 규칙을 사용하지만,
+                // 현재 프로젝트에서는 AP 3~6의 최근 신호가 1초 안정된 실제
+                // 주행 구간에서만 허용한다. 시작 15초/1000프레임, OTA, RX
+                // 안전보류, Guard, Summoning은 모두 fail-closed 한다.
+                aChannelDiag.tsllcLastBlockReason = blockReason;
+                if (blockReason != TSLLC_BLOCK_READY) {
+                    aChannelDiag.tsllcBlockedCount =
+                        (uint32_t)aChannelDiag.tsllcBlockedCount + 1U;
+                }
+                if (blockReason == TSLLC_BLOCK_SUMMONING) {
                     aChannelDiag.tsllcSuppressedSummoningCount =
                         (uint32_t)aChannelDiag.tsllcSuppressedSummoningCount + 1U;
                     if ((uint32_t)aChannelDiag.aSummonSessionStartMs != 0U)
@@ -145,6 +168,14 @@ struct HW3Handler : public CarManagerBase
                         logRing.push("[A-CH] TSLLC 주입 보류: 실제 Summoning 우선", nowMs);
                         lastTsllcSummonHoldLog = nowMs;
                     }
+                    return;
+                }
+                if (blockReason != TSLLC_BLOCK_READY) return;
+                // 플러그인 엔진처럼 원본 bit38/39가 이미 모두 1이면 중복
+                // 프레임을 만들지 않는다.
+                if (!tsllcFrameNeedsModification(frame)) {
+                    aChannelDiag.tsllcSkippedUnchanged =
+                        (uint32_t)aChannelDiag.tsllcSkippedUnchanged + 1U;
                     return;
                 }
                 if (shouldSkipATx("TSLLC")) return;
@@ -240,6 +271,23 @@ struct HW3Handler : public CarManagerBase
 
 private:
     static constexpr uint32_t kSummonUnlockActivityIdleMs = 1500;
+
+    void trackTsllcGateState(uint8_t reason)
+    {
+        aChannelDiag.tsllcLastBlockReason = reason;
+        if (tsllcGateReasonSeen_ && reason == lastTsllcGateReason_) return;
+        eventLogPush(EV_TSLLC_GATE_STATE,
+                     (uint16_t)(uint8_t)aChannelDiag.aTec,
+                     (uint16_t)(uint8_t)aChannelDiag.aRec,
+                     eventTsllcGateStateDetail(
+                         reason, (uint8_t)summonGateDiag.apState,
+                         (bool)tsllcRearmRequired,
+                         (bool)aChannelDiag.aSafetyHold,
+                         (bool)aChannelDiag.aSafetyLatched,
+                         (bool)summonGateDiag.summoning));
+        tsllcGateReasonSeen_ = true;
+        lastTsllcGateReason_ = reason;
+    }
 
     void noteSummonUnlockActivity(uint32_t nowMs)
     {
@@ -388,6 +436,8 @@ private:
     uint32_t summonUnlockStartArbitrationLost_ = 0;
     bool summonPolicyReasonSeen_ = false;
     uint8_t lastSummonPolicyReason_ = SUMMON_SESSION_IDLE;
+    bool tsllcGateReasonSeen_ = false;
+    uint8_t lastTsllcGateReason_ = TSLLC_BLOCK_DISABLED;
 };
  
 

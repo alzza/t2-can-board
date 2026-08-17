@@ -179,6 +179,24 @@ struct TsSample {
     uint16_t summonAge599Ms;
     uint16_t summonAge921Ms;
     uint16_t summonAge1016Ms;
+    // CSV v7: 재부팅 문맥과 TSLLC/A RX 안전 게이트를 행 시점 그대로 보존한다.
+    uint8_t  resetReason;
+    uint32_t rtcBootCount;
+    uint8_t  previousBootValid;
+    uint32_t previousUptimeMs;
+    uint8_t  previousAEflg;
+    uint32_t previousARxOverrun;
+    uint8_t  previousLastTxSource;
+    uint8_t  previousLastTxResult;
+    uint8_t  tsllcBlockReason;
+    uint32_t tsllcStartupMs;
+    uint32_t tsllcValidFrames;
+    uint8_t  tsllcRearmRequired;
+    uint8_t  aSafetyHold;
+    uint8_t  aSafetyLatched;
+    uint32_t aSafetyHoldCount;
+    uint32_t aSafetyLatchCount;
+    uint32_t aSafetyRecoveryCount;
 };
 
 static constexpr size_t TS_CAP = 240;  // 240 × 5s = 20분
@@ -483,7 +501,7 @@ static void timeseriesTaskFn(void*) {
         s.summonDiGear = (uint8_t)summonGateDiag.diGear;
         s.summonSecondaryGear = (uint8_t)summonGateDiag.secondaryGear;
         s.summonSelfParkRequest = (uint8_t)summonGateDiag.selfParkRequest;
-        // CSV v6 열 수는 유지하되 1.3.17부터 0x257 속도 검증은 사용하지 않는다.
+        // 기존 속도 열은 호환 유지하되 1.3.17부터 0x257 속도 검증은 사용하지 않는다.
         // 원시 속도와 경과시간은 각각 DBC SNA/uint16 SNA로 고정한다.
         s.summonVehicleSpeedRaw = kSummonSpeedSnaRaw;
         s.summonAge280Ms = tsElapsed16(s.t_ms, (uint32_t)summonGateDiag.last280Ms);
@@ -496,7 +514,24 @@ static void timeseriesTaskFn(void*) {
         s.summonInjectReady =
             s.summonEnabled && s.aTxEnabled && s.summonGateOpen && !s.aGuardActive;
         s.tsllcInjectReady = s.tsllcEnabled && s.aTxEnabled && !s.aGuardActive &&
-                             !s.summoning;
+                             tsllcInjectionAllowed(s.t_ms);
+        s.resetReason = (uint8_t)bootDiagnostics.resetReason;
+        s.rtcBootCount = (uint32_t)bootDiagnostics.rtcBootCount;
+        s.previousBootValid = (bool)bootDiagnostics.previousSnapshotValid ? 1U : 0U;
+        s.previousUptimeMs = bootDiagnostics.previous.uptimeMs;
+        s.previousAEflg = bootDiagnostics.previous.aEflg;
+        s.previousARxOverrun = bootDiagnostics.previous.aRxOverrunCount;
+        s.previousLastTxSource = bootDiagnostics.previous.lastTxSource;
+        s.previousLastTxResult = bootDiagnostics.previous.lastTxResult;
+        s.tsllcBlockReason = tsllcInjectionBlockReason(s.t_ms);
+        s.tsllcStartupMs = tsllcStartupElapsedMs(s.t_ms);
+        s.tsllcValidFrames = (uint32_t)aChannelDiag.framesReceivedTotal;
+        s.tsllcRearmRequired = (bool)tsllcRearmRequired ? 1U : 0U;
+        s.aSafetyHold = (bool)aChannelDiag.aSafetyHold ? 1U : 0U;
+        s.aSafetyLatched = (bool)aChannelDiag.aSafetyLatched ? 1U : 0U;
+        s.aSafetyHoldCount = (uint32_t)aChannelDiag.aSafetyHoldCount;
+        s.aSafetyLatchCount = (uint32_t)aChannelDiag.aSafetyLatchCount;
+        s.aSafetyRecoveryCount = (uint32_t)aChannelDiag.aSafetyRecoveryCount;
         s.nagApOnly = (bool)nagApOnlyRuntime ? 1U : 0U;
         s.nagApActive = nagApStateAllowsInjection(s.apState) ? 1U : 0U;
         s.nagInjecting = s.dModeBInject > 0 ? 1U : 0U;
@@ -715,7 +750,10 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
         "a_summon_session_success_gap_last_ms,a_summon_session_success_gap_max_ms,a_tsllc_summoning_hold,"
         "a_summon_session_allowed,a_summon_session_reason,a_summon_di_gear,a_summon_secondary_gear,"
         "a_summon_self_park_request,a_summon_vehicle_speed_raw,a_summon_age_280_ms,a_summon_age_390_ms,"
-        "a_summon_age_599_ms,a_summon_age_921_ms,a_summon_age_1016_ms\r\n";
+        "a_summon_age_599_ms,a_summon_age_921_ms,a_summon_age_1016_ms,"
+        "reset_reason,rtc_boot_count,previous_boot_valid,previous_uptime_ms,previous_a_eflg,previous_a_rx_overrun,"
+        "previous_last_tx_source,previous_last_tx_result,a_tsllc_block_reason,a_tsllc_startup_ms,a_tsllc_valid_frames,"
+        "a_tsllc_rearm_required,a_safety_hold,a_safety_latched,a_safety_hold_count,a_safety_latch_count,a_safety_recovery_count\r\n";
     httpd_resp_sendstr_chunk(req, hdr);
     char line[1792];
     char wallTime[40];
@@ -725,7 +763,7 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
         timeseriesCopyAt(start + i, s);
         timeseriesFormatTime(s.t_ms, wallTime, sizeof(wallTime));
         int used = snprintf(line, sizeof(line),
-            "6,%s,%s,%s,%u,%s,"
+            "7,%s,%s,%s,%u,%s,"
             "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
             "%u,%u,%s,%s,%u,%u,"
             "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
@@ -765,7 +803,8 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
             "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
             "%u,%u,%u,%u,%u,%u,%u,%u,"
             "%u,%u,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u,%u,"
-            "%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
+            "%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+            "%s,%u,%u,%u,%u,%u,%s,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u\r\n",
             (unsigned)s.aFrames, (double)s.aFrameHz,
             (unsigned)s.aEflg, aMcpEflgStateName(s.aEflg), (unsigned)s.aEflgPeak,
             (unsigned)s.aTec, (unsigned)s.aRec, (unsigned)s.aTecPeak, (unsigned)s.aRecPeak,
@@ -837,7 +876,24 @@ inline esp_err_t timeseriesCsvHandler(httpd_req_t* req) {
             (unsigned)s.summonAge390Ms,
             (unsigned)s.summonAge599Ms,
             (unsigned)s.summonAge921Ms,
-            (unsigned)s.summonAge1016Ms);
+            (unsigned)s.summonAge1016Ms,
+            bootResetReasonName(s.resetReason),
+            (unsigned)s.rtcBootCount,
+            (unsigned)s.previousBootValid,
+            (unsigned)s.previousUptimeMs,
+            (unsigned)s.previousAEflg,
+            (unsigned)s.previousARxOverrun,
+            aTxSourceName(s.previousLastTxSource),
+            (unsigned)s.previousLastTxResult,
+            tsllcBlockReasonName(s.tsllcBlockReason),
+            (unsigned)s.tsllcStartupMs,
+            (unsigned)s.tsllcValidFrames,
+            (unsigned)s.tsllcRearmRequired,
+            (unsigned)s.aSafetyHold,
+            (unsigned)s.aSafetyLatched,
+            (unsigned)s.aSafetyHoldCount,
+            (unsigned)s.aSafetyLatchCount,
+            (unsigned)s.aSafetyRecoveryCount);
         if (httpd_resp_sendstr_chunk(req, line) != ESP_OK) return ESP_FAIL;
     }
     httpd_resp_sendstr_chunk(req, NULL);

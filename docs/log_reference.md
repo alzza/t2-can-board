@@ -562,6 +562,11 @@ CSV 앞에 열 수가 다른 `#` 메타행을 두지 않는다. 첫 행부터 �
 | 35 | `SUMMON_RETRY_SESSION` | A | 실제 Summoning의 MLOA 단발 재시도 예약·완료·재MLOA·폐기 결과 |
 | 36 | `SUMMON_TX_TIMING` | A | 실제 Summoning의 최대 연속 MLOA, 완료 송신 최대 공백, TSLLC 보류 횟수 |
 | 37 | `SUMMON_POLICY_STATE` | A | 실제 Summon `ACA+SPR` 정책의 허용·종료 전이와 주·보조 기어 문맥 |
+| 38 | `BOOT_RESET` | SYSTEM | 현재 reset reason, RTC 부팅 횟수와 이전 부팅 스냅샷 유효 여부 |
+| 39 | `A_SAFETY_HOLD` | A | 첫 RX overrun 뒤 대기 TX 취소와 최소 2초 A TX 보류 시작 |
+| 40 | `A_SAFETY_RECOVER` | A | EFLG 정상·최근 수신·새 프레임 100개 확인 뒤 A TX 재개 |
+| 41 | `A_SAFETY_LATCH` | A | 60초 안에 두 번째 RX overrun이 발생해 해당 부팅 A TX 잠금 |
+| 42 | `TSLLC_GATE_STATE` | A | TSLLC 설정·시작·AP·Summon·재승인·A 안전 차단 사유 전이 |
 
 `ARB_LOST`는 다른 프레임에 우선권을 양보했다는 뜻이다. TEC/REC, BUS_ERR, TX_FAIL, BUS-OFF가 모두 0이면 이것만으로 물리 통신 오류로 판단하지 않는다.
 
@@ -601,7 +606,8 @@ CSV 앞에 열 수가 다른 `#` 메타행을 두지 않는다. 첫 행부터 �
 - `a_loop_gap_over_250us`, `a_loop_gap_over_500us`, `a_loop_gap_over_1ms`, `a_loop_gap_over_2ms`는 부팅 이후 처리 공백 누적 분포다. `a_last_overrun_phase`는 마지막 오버런을 발견한 CAN 태스크 단계다.
 - A 송신 안전 플래그는 `a_tx_enabled`, `a_summon_enabled`, `a_tsllc_enabled`, `a_one_shot_enabled`, `a_tx_guard_enabled`에 샘플 시점 값으로 저장한다.
 - Summon 게이트는 `a_summon_gate_open`, `a_summon_gate_reason`, `a_summon_ap_state`, `a_summon_ap_active`, `a_summon_ap_stable_ms`, `a_summon_parked`, `a_summoning`으로 허용 결과와 당시 근거를 함께 저장한다.
-- 시계열 CSV 스키마 6의 `a_summon_retry_*`, `a_summon_session_mloa_streak_max`, `a_summon_session_success_gap_max_ms`, `a_tsllc_summoning_hold`로 실제 Summoning 재시도와 TSLLC 보류 결과를 확인한다.
+- 시계열 CSV 스키마 7의 `a_summon_retry_*`, `a_summon_session_mloa_streak_max`, `a_summon_session_success_gap_max_ms`, `a_tsllc_summoning_hold`로 실제 Summoning 재시도와 TSLLC 보류 결과를 확인한다.
+- CSV 뒤쪽의 `reset_reason`, `rtc_boot_count`, `previous_*`, `a_tsllc_block_reason`, `a_tsllc_rearm_required`, `a_safety_*` 열로 재부팅 직전 문맥과 TSLLC/A RX 보호 상태를 함께 비교한다.
 - `a_summon_session_allowed/reason`, 주·보조 기어와 SelfParkRequest로 `ACA_SPR_1315` 세션 전이를 비교한다. 기존 CSV 열 호환을 위해 `a_summon_vehicle_speed_raw=4095`, `a_summon_age_599_ms=65535`를 SNA로 유지하지만 1.3.17 정책에는 사용하지 않는다.
 - B Nag 플래그는 `b_nag_enabled`, `b_nag_mode`, `b_driver_state`에 저장한다.
 
