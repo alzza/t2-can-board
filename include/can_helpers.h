@@ -153,11 +153,10 @@ inline bool canTxQuiesceIdle() { return (uint32_t)canTxInFlight == 0; }
 // Validated SummonUnlock gate state (HW3).
 inline constexpr uint32_t kSummonParkedTimeoutMs = 5000;
 inline constexpr uint32_t kSummonApStableRequiredMs = 1000;
-inline constexpr uint32_t kSummonSessionFreshnessMs = 500;
-inline constexpr uint32_t kSummonRequestLeadMs = 2000;
-inline constexpr uint16_t kSummonSpeedStationaryRaw = 500;
-inline constexpr uint16_t kSummonSpeedMaxValidRaw = 4062;
 inline constexpr uint16_t kSummonSpeedSnaRaw = 4095;
+inline constexpr uint16_t kSummonSignalAgeSnaMs = 65535;
+inline constexpr bool kSummonSpeedValidationEnabled = false;
+inline constexpr char kSummonPolicyName[] = "ACA_SPR_1315";
 
 enum SummonSessionReason : uint8_t {
     SUMMON_SESSION_IDLE = 0,
@@ -236,10 +235,6 @@ inline const char *summonSessionReasonName(uint8_t reason) {
     }
 }
 
-inline bool summonSessionFresh(uint32_t timestampMs, uint32_t nowMs) {
-    return nowMs - timestampMs <= kSummonSessionFreshnessMs;
-}
-
 inline bool summonRequestConfirmsSession(uint8_t request) {
     switch (request) {
     case 1: case 2: case 4: case 5: case 6:
@@ -255,38 +250,13 @@ inline bool summonRequestCancelsSession(uint8_t request) {
 }
 
 inline uint8_t summonEvaluateSession(uint32_t nowMs) {
-    if (!(bool)summonGateDiag.acaActive || !(bool)summonGateDiag.sprSeen)
-        return SUMMON_SESSION_IDLE;
-    if ((uint32_t)summonGateDiag.frames280 == 0) return SUMMON_SESSION_DI_MISSING;
-    if (!summonSessionFresh((uint32_t)summonGateDiag.last280Ms, nowMs))
-        return SUMMON_SESSION_DI_STALE;
-    if ((uint32_t)summonGateDiag.frames599 == 0) return SUMMON_SESSION_SPEED_MISSING;
-    if (!summonSessionFresh((uint32_t)summonGateDiag.last599Ms, nowMs))
-        return SUMMON_SESSION_SPEED_STALE;
-    if ((uint32_t)summonGateDiag.frames921 == 0) return SUMMON_SESSION_AP_MISSING;
-    if (!summonSessionFresh((uint32_t)summonGateDiag.last921Ms, nowMs))
-        return SUMMON_SESSION_AP_STALE;
-    if ((uint32_t)summonGateDiag.frames1016 == 0) return SUMMON_SESSION_UI_MISSING;
-    if (!summonSessionFresh((uint32_t)summonGateDiag.last1016Ms, nowMs))
-        return SUMMON_SESSION_UI_STALE;
-
-    const uint8_t gear = (uint8_t)summonGateDiag.diGear;
-    if (gear < 1 || gear > 4) return SUMMON_SESSION_GEAR_INVALID;
-    const uint16_t speed = (uint16_t)summonGateDiag.vehicleSpeedRaw;
-    if (speed > kSummonSpeedMaxValidRaw) return SUMMON_SESSION_SPEED_INVALID;
-    if ((bool)summonGateDiag.apActive) return SUMMON_SESSION_AP_ACTIVE;
-    if (gear == 1 && speed != kSummonSpeedStationaryRaw)
-        return SUMMON_SESSION_PARK_MOVING;
-    if (gear == 3) return SUMMON_SESSION_GEAR_CONFLICT;
-    const uint32_t last390Ms = (uint32_t)summonGateDiag.last390Ms;
-    if (last390Ms != 0 && summonSessionFresh(last390Ms, nowMs)) {
-        const uint8_t secondary = (uint8_t)summonGateDiag.secondaryGear;
-        if (secondary < 1 || secondary > 4 || secondary != gear)
-            return SUMMON_SESSION_GEAR_CONFLICT;
-    }
-    if (!summonRequestConfirmsSession((uint8_t)summonGateDiag.selfParkRequest))
-        return SUMMON_SESSION_SPR_UNCONFIRMED;
-    return SUMMON_SESSION_ALLOWED;
+    (void)nowMs;
+    // 1.3.15 실차 기준: 실제 Summoning은 검증 INO와 동일하게 ACA와
+    // 확인된 SelfParkRequest가 함께 유지될 때만 열린다. 1.3.16에서 추가한
+    // DI_speed(0x257)·500ms 다중 검증은 MCP2515 RX 부하 때문에 사용하지 않는다.
+    return (bool)summonGateDiag.acaActive && (bool)summonGateDiag.sprSeen
+        ? SUMMON_SESSION_ALLOWED
+        : SUMMON_SESSION_IDLE;
 }
 
 inline int8_t summonGearState(uint8_t gear) {
@@ -313,10 +283,6 @@ inline bool summonGateOpen(uint32_t nowMs = 0) {
         nowMs = millis();
 #endif
     }
-    // ACA+SPR 후보가 잡힌 동안은 실제 Summon 다중 검증 결과를 우선한다.
-    // 후보가 없을 때만 기존 AP 안정 경로로 ECE R79 주입을 허용한다.
-    if ((bool)summonGateDiag.acaActive && (bool)summonGateDiag.sprSeen)
-        return (bool)summonGateDiag.summoning;
     if ((bool)summonGateDiag.parked) return true;
     if ((bool)summonGateDiag.summoning) return true;
     return summonApStable(nowMs);
@@ -325,8 +291,6 @@ inline bool summonGateOpen(uint32_t nowMs = 0) {
 inline const char *summonGateReasonName(uint32_t nowMs) {
     if (!(bool)summonConditionLimitRuntime) return "UNRESTRICTED";
     if ((bool)summonGateDiag.summoning) return "SUMMONING";
-    if ((bool)summonGateDiag.acaActive && (bool)summonGateDiag.sprSeen)
-        return "SUMMON_BLOCKED";
     if ((bool)summonGateDiag.parked) return "PARKED";
     if (!(bool)summonGateDiag.apActive) return "AP_INACTIVE";
     return summonApStable(nowMs) ? "AP_STABLE" : "AP_STABILIZING";
@@ -335,7 +299,6 @@ inline const char *summonGateReasonName(uint32_t nowMs) {
 inline uint8_t summonGateReasonCode(uint32_t nowMs) {
     if (!(bool)summonConditionLimitRuntime) return 0; // UNRESTRICTED
     if ((bool)summonGateDiag.summoning) return 1;
-    if ((bool)summonGateDiag.acaActive && (bool)summonGateDiag.sprSeen) return 6;
     if ((bool)summonGateDiag.parked) return 2;
     if (!(bool)summonGateDiag.apActive) return 3;
     return summonApStable(nowMs) ? 4 : 5;
@@ -378,11 +341,6 @@ inline void summonHandle280(const CanFrame &frame, uint32_t nowMs) {
     if (gearState == 0) summonGateDiag.parked = false;
 
     const bool aca = (frame.data[6] & 0x04U) != 0;
-    if (!(bool)summonGateDiag.acaActive && aca) {
-        const uint32_t confirmedMs = (uint32_t)summonGateDiag.sprConfirmedMs;
-        if (confirmedMs == 0 || nowMs - confirmedMs > kSummonRequestLeadMs)
-            summonGateDiag.sprSeen = false;
-    }
     if ((bool)summonGateDiag.acaActive && !aca) summonGateDiag.sprSeen = false;
     summonGateDiag.acaActive = aca;
     summonRecompute(nowMs);
@@ -402,15 +360,6 @@ inline void summonHandle390(const CanFrame &frame, uint32_t nowMs) {
         summonGateDiag.parked = (gearState == 1);
         summonClearOnParkIfAcaInactive(gear);
     }
-    summonRecompute(nowMs);
-}
-
-inline void summonHandle599(const CanFrame &frame, uint32_t nowMs) {
-    if (frame.dlc < 3) return;
-    summonGateDiag.frames599 = (uint32_t)summonGateDiag.frames599 + 1;
-    summonGateDiag.last599Ms = nowMs;
-    summonGateDiag.vehicleSpeedRaw =
-        (uint16_t)((frame.data[1] >> 4) | ((uint16_t)frame.data[2] << 4));
     summonRecompute(nowMs);
 }
 

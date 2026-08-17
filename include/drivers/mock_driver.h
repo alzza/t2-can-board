@@ -11,6 +11,7 @@ public:
 
     std::vector<CanFrame> sent;
     std::vector<CanTxSource> sentSources;
+    std::vector<CanTxSource> canceledSources;
     bool sendSucceeds = true;
 
     bool init() override { return true; }
@@ -43,10 +44,16 @@ public:
         return CanTxResult::Queued;
     }
 
+    void cancelPendingTransmit(CanTxSource source) override
+    {
+        canceledSources.push_back(source);
+    }
+
     void reset()
     {
         sent.clear();
         sentSources.clear();
+        canceledSources.clear();
         sendSucceeds = true;
     }
 };

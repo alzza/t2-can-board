@@ -57,7 +57,7 @@ enum CanEventType : uint8_t {
     EV_SUMMON_RETRY_SESSION = 35,
     // 실제 Summoning 구간의 연속 MLOA, 성공 공백, TSLLC 보류를 기록한다.
     EV_SUMMON_TX_TIMING = 36,
-    // 실제 Summon 다중 검증의 허용/차단 사유 전이.
+    // 실제 Summon ACA+SPR 정책의 허용/종료 사유 전이.
     EV_SUMMON_POLICY_STATE = 37,
     EV_TYPE_COUNT
 };
@@ -517,11 +517,12 @@ inline const char* eventDetailText(uint8_t type, uint32_t detail, char* out, siz
         break;
     case EV_FEATURE_STATE:
         snprintf(out, outLen,
-                 "A_TX=%u SUMMON=%u TSLLC=%u NAG=%u ONE_SHOT=%u TX_GUARD=%u NAG_AP_ONLY=%u SUMMON_CONDITION_LIMIT=%u",
+                 "A_TX=%u EAP_SUMMON=%u TSLLC=%u NAG=%u ONE_SHOT=%u TX_GUARD=%u NAG_AP_ONLY=%u SUMMON_CONDITION_LIMIT=%u SUMMON_POLICY=%s",
                  (unsigned)((detail >> 0) & 1U), (unsigned)((detail >> 1) & 1U),
                  (unsigned)((detail >> 2) & 1U), (unsigned)((detail >> 3) & 1U),
                  (unsigned)((detail >> 4) & 1U), (unsigned)((detail >> 5) & 1U),
-                 (unsigned)((detail >> 6) & 1U), (unsigned)((detail >> 7) & 1U));
+                 (unsigned)((detail >> 6) & 1U), (unsigned)((detail >> 7) & 1U),
+                 kSummonPolicyName);
         break;
     case EV_FEATURE_ACTIVITY:
         snprintf(out, outLen,
@@ -617,7 +618,8 @@ inline const char* eventDetailText(uint8_t type, uint32_t detail, char* out, siz
         break;
     case EV_SUMMON_POLICY_STATE:
         snprintf(out, outLen,
-                 "reason=%s allowed=%u aca=%u spr=%u di_gear=%u secondary_gear=%u speed_raw=%u",
+                 "policy=%s reason=%s allowed=%u aca=%u spr=%u di_gear=%u secondary_gear=%u speed_validation=0 speed_raw_sna=%u",
+                 kSummonPolicyName,
                  summonSessionReasonName((uint8_t)(detail & 0x0FU)),
                  (unsigned)((detail >> 4) & 1U),
                  (unsigned)((detail >> 5) & 1U),

@@ -1,16 +1,16 @@
 #pragma once
 
-#define FIRMWARE_VERSION "1.3.16"
+#define FIRMWARE_VERSION "1.3.17"
 #define FIRMWARE_VERSION_MAJOR 1
 #define FIRMWARE_VERSION_MINOR 3
-#define FIRMWARE_VERSION_PATCH 16
+#define FIRMWARE_VERSION_PATCH 17
 
 // OTA/실차 테스트용 보관 bin 파일명에 사용할 당일 핵심 변경 요약.
-// 예: 1.3.16_26-08-15_summon-policy-gate-log.bin
-#define FIRMWARE_ARTIFACT_NOTE "summon-policy-gate-log"
+// 예: 1.3.17_26-08-16_rxload-eap-tsllc-split.bin
+#define FIRMWARE_ARTIFACT_NOTE "rxload-eap-tsllc-split"
 
 #ifndef FIRMWARE_BUILD_ID
-#define FIRMWARE_BUILD_ID "FW1316-summon-policy-gate-log"
+#define FIRMWARE_BUILD_ID "FW1317-rxload-eap-tsllc-split"
 #endif
 
 #ifndef FIRMWARE_BUILD_AT

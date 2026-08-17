@@ -1133,6 +1133,9 @@ static esp_err_t statusHandler(httpd_req_t *req)
         cJSON_AddBoolToObject(summon, "spr", (bool)summonGateDiag.sprSeen);
         cJSON_AddBoolToObject(summon, "session_allowed",
                               (bool)summonGateDiag.sessionAllowed);
+        cJSON_AddStringToObject(summon, "policy_mode", kSummonPolicyName);
+        cJSON_AddBoolToObject(summon, "speed_validation",
+                              kSummonSpeedValidationEnabled);
         cJSON_AddStringToObject(summon, "session_reason",
                                 summonSessionReasonName(
                                     (uint8_t)summonGateDiag.sessionReason));
@@ -1141,8 +1144,7 @@ static esp_err_t statusHandler(httpd_req_t *req)
                                 (uint8_t)summonGateDiag.secondaryGear);
         cJSON_AddNumberToObject(summon, "self_park_request",
                                 (uint8_t)summonGateDiag.selfParkRequest);
-        cJSON_AddNumberToObject(summon, "vehicle_speed_raw",
-                                (uint16_t)summonGateDiag.vehicleSpeedRaw);
+        cJSON_AddNumberToObject(summon, "vehicle_speed_raw", kSummonSpeedSnaRaw);
         cJSON_AddStringToObject(summon, "block_reason",
                                 !summonEnabled ? "DISABLED" :
                                 !aChannelTx ? "A_TX_OFF" :
@@ -1152,15 +1154,13 @@ static esp_err_t statusHandler(httpd_req_t *req)
         cJSON_AddNumberToObject(summon, "parked_timeout_ms", kSummonParkedTimeoutMs);
         cJSON_AddNumberToObject(summon, "rx280", (uint32_t)summonGateDiag.frames280);
         cJSON_AddNumberToObject(summon, "rx390", (uint32_t)summonGateDiag.frames390);
-        cJSON_AddNumberToObject(summon, "rx599", (uint32_t)summonGateDiag.frames599);
+        cJSON_AddNumberToObject(summon, "rx599", 0);
         cJSON_AddNumberToObject(summon, "rx921", (uint32_t)summonGateDiag.frames921);
         cJSON_AddNumberToObject(summon, "rx1016", (uint32_t)summonGateDiag.frames1016);
         cJSON_AddNumberToObject(summon, "age390_ms",
                                 webSafeAgeMs(handlerStartMs,
                                              (uint32_t)summonGateDiag.last390Ms));
-        cJSON_AddNumberToObject(summon, "age599_ms",
-                                webSafeAgeMs(handlerStartMs,
-                                             (uint32_t)summonGateDiag.last599Ms));
+        cJSON_AddNumberToObject(summon, "age599_ms", kSummonSignalAgeSnaMs);
         cJSON_AddNumberToObject(summon, "age921_ms",
                                 webSafeAgeMs(handlerStartMs,
                                              (uint32_t)summonGateDiag.last921Ms));
@@ -2390,7 +2390,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
     formatDurationHms(uptimeMs, uptimeHms, sizeof(uptimeHms));
     shortBuildId(FIRMWARE_BUILD_ID, fwShortBuild, sizeof(fwShortBuild));
     snprintf(line, sizeof(line),
-        "=== CanMod 통합 로그 ===\r\nGenerated: %s\r\nFirmware: %s\r\nBuild: %s\r\nEnv: %s\r\nBuiltAt: %s\r\nGit: %s/%s dirty=%u source=%s\r\nUptime: %u ms (%s)\r\nBUS-OFF 쿨다운: %u ms\r\n\r\n",
+        "=== CanMod 통합 로그 ===\r\nGenerated: %s\r\nFirmware: %s\r\nBuild: %s\r\nEnv: %s\r\nBuiltAt: %s\r\nGit: %s/%s dirty=%u source=%s\r\nUptime: %u ms (%s)\r\nBUS-OFF 쿨다운: %u ms\r\nSummonPolicy: %s speed_validation=0\r\n\r\n",
         tsBuf,
         FIRMWARE_VERSION,
         fwShortBuild,
@@ -2402,7 +2402,8 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         FIRMWARE_SOURCE_HASH,
         (unsigned)uptimeMs,
         uptimeHms,
-        (uint32_t)bChannelDiag.busoffCooldownMs);
+        (uint32_t)bChannelDiag.busoffCooldownMs,
+        kSummonPolicyName);
     httpd_resp_sendstr_chunk(req, line);
     logsBundleSerialTrace("meta sent", handlerStartMs);
 
@@ -2531,7 +2532,7 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
             aCanPhaseName((uint8_t)aChannelDiag.lastOverrunPhase));
         httpd_resp_sendstr_chunk(req, line);
     snprintf(line, sizeof(line),
-        "기능설정: Summon=%s ECE조건=%s Gate=%s(%s) AP=%u/%ums Ready=%s | TSLLC=%s Ready=%s | Nag=%s %s Scope=%s AP=%u Ready=%s\r\n",
+        "기능설정: EAP/Summon=%s 조건=%s Gate=%s(%s) AP=%u/%ums Ready=%s | TSLLC=%s Ready=%s | Nag=%s %s Scope=%s AP=%u Ready=%s\r\n",
         (bool)summonUnlockRuntime ? "ON" : "OFF",
         (bool)summonConditionLimitRuntime ? "ON" : "OFF",
         summonGateOpen() ? "OPEN" : "BLOCKED",
@@ -2551,7 +2552,8 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         (bool)bChannelDiag.nagReady ? "YES" : "NO");
     httpd_resp_sendstr_chunk(req, line);
     snprintf(line, sizeof(line),
-        "Summon검증: %s(%s) ACA/SPR=%u/%u Gear=%u/%u SPR=%u SpeedRaw=%u | Age 280/390/599/921/1016=%u/%u/%u/%u/%ums\r\n",
+        "Summon정책: %s %s(%s) ACA/SPR=%u/%u Gear=%u/%u SPR=%u Speed=미사용 | Age 280/390/599(SNA)/921/1016=%u/%u/%u/%u/%ums\r\n",
+        kSummonPolicyName,
         (bool)summonGateDiag.sessionAllowed ? "ALLOW" : "BLOCK",
         summonSessionReasonName((uint8_t)summonGateDiag.sessionReason),
         (unsigned)(bool)summonGateDiag.acaActive,
@@ -2559,10 +2561,9 @@ static esp_err_t logsBundleHandler(httpd_req_t *req) {
         (unsigned)(uint8_t)summonGateDiag.diGear,
         (unsigned)(uint8_t)summonGateDiag.secondaryGear,
         (unsigned)(uint8_t)summonGateDiag.selfParkRequest,
-        (unsigned)(uint16_t)summonGateDiag.vehicleSpeedRaw,
         (unsigned)webSafeAgeMs(aNow, (uint32_t)summonGateDiag.last280Ms),
         (unsigned)webSafeAgeMs(aNow, (uint32_t)summonGateDiag.last390Ms),
-        (unsigned)webSafeAgeMs(aNow, (uint32_t)summonGateDiag.last599Ms),
+        (unsigned)kSummonSignalAgeSnaMs,
         (unsigned)webSafeAgeMs(aNow, (uint32_t)summonGateDiag.last921Ms),
         (unsigned)webSafeAgeMs(aNow, (uint32_t)summonGateDiag.last1016Ms));
     httpd_resp_sendstr_chunk(req, line);

@@ -6,6 +6,18 @@
 
 ## [Unreleased]
 
+## [1.3.17] - 2026-08-16
+
+### A채널 수신 부하 안정화와 EAP·TSLLC 표시 분리
+
+- 1.3.16 실차 로그에서 A채널 수신량이 약 95→161 frame/s로 증가하고 차량 이상 시점인 05:38 전후에 RX1 overrun이 발생한 근거에 따라, 고주기 ID `0x257` 속도 필터와 속도 기반 다중 검증을 제거했다.
+- A채널 필터를 `0x3FD`, `0x118`, `0x399`, `0x3F8`, `0x186` 다섯 개로 복원했다. 남는 RXF5는 드라이버가 `0x3FD`로 채워 RXB0/RXB1 양쪽에서 핵심 mux 프레임을 받을 수 있게 한다.
+- 실제 Summoning은 1.3.15 기준 `ACA + 확인된 SPR`로 판단한다. 실제 Summoning 전용 3ms·1회·20ms 제한 MLOA 재시도, Summoning 중 TSLLC 보류, 세션 종료 시 대기 TX·재시도 취소와 세션 진단은 유지한다.
+- CAN 활성 중 Core 1의 1ms RTOS 양보 간격을 20ms에서 50ms로 조정하고, 비활성 상태에서는 20ms를 유지해 Idle/WDT 실행과 MCP2515 폴링 공백을 함께 관리한다.
+- Web UI는 `EAP / EU Unlock / Summon (HW3)`과 `TSLLC`를 독립 토글로 표시한다. 기존 `/api/summon-unlock`, `/api/tsllc`와 NVS 키는 변경하지 않았다.
+- 상태 API와 통합 로그에 `SUMMON_POLICY=ACA_SPR_1315`, `speed_validation=0`을 기록한다. 시계열 CSV v6 열 수는 유지하며 `0x257` 속도·경과시간 열은 SNA 값으로 남긴다.
+- HW3 bit19/46, TSLLC bit38/39, One-shot, TX Guard, Nag Killer와 OTA 전송 차단 순서는 변경하지 않았다.
+
 ## [1.3.16] - 2026-08-15
 
 ### 실제 Summon 다중 검증과 차단 사유 통합

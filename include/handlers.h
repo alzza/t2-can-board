@@ -71,12 +71,13 @@ struct HW3Handler : public CarManagerBase
 
     const uint32_t *filterIds() const override
     {
-        // RXF0~1 → RXB0, RXF2~5 → RXB1. 여섯 번째 필터는 Summon 세션
-        // 속도 유효성 검증용 DI_speed(0x257)를 수신한다.
-        static constexpr uint32_t ids[] = {1021, 280, 921, 1016, 390, 599};
+        // RXF0~1 → RXB0, RXF2~5 → RXB1. 다섯 ID만 전달하면 드라이버가
+        // 남는 RXF5를 ids[0](0x3FD)으로 채워 핵심 mux 프레임을 두 수신
+        // 버퍼에서 받을 수 있다. 고주기 DI_speed(0x257)는 수신하지 않는다.
+        static constexpr uint32_t ids[] = {1021, 280, 921, 1016, 390};
         return ids;
     }
-    uint8_t filterIdCount() const override { return 6; }
+    uint8_t filterIdCount() const override { return 5; }
 
     void handleMessage(CanFrame &frame, CanDriver &driver) override
     {
@@ -101,13 +102,6 @@ struct HW3Handler : public CarManagerBase
             return;
         }
 
-        if (frame.id == 599) {
-            summonHandle599(frame, nowMs);
-            trackSummoningState(nowMs, driver);
-            trackSummonPolicyState(nowMs);
-            return;
-        }
-
         if (frame.id == 921) {
             aChannelDiag.frames921++;
             summonHandle921(frame, nowMs);
@@ -126,8 +120,8 @@ struct HW3Handler : public CarManagerBase
         }
 
         if (frame.id != 1021) return;
-        // 1021만 계속 들어오는 구간에서도 500ms 신선도 만료를 즉시 반영해
-        // 오래된 Summon 후보의 대기 TX가 남지 않게 한다.
+        // 1021만 계속 들어오는 구간에서도 주차 fallback과 세션 종료 상태를
+        // 반영해 오래된 Summon 대기 TX가 남지 않게 한다.
         summonGateMaintain(nowMs);
         trackSummoningState(nowMs, driver);
         trackSummonPolicyState(nowMs);
@@ -328,7 +322,7 @@ private:
             summoningStartTxFail_ = txFail;
             summoningStartBlocked_ = blocked;
         } else {
-            // 실제 Summon 다중 검증이 닫히는 순간, 오래된 mux 1이 뒤늦게
+            // 실제 ACA+SPR 세션이 닫히는 순간, 오래된 mux 1이 뒤늦게
             // 전송되지 않도록 하드웨어 대기 TX와 단발 재시도를 함께 폐기한다.
             driver.cancelPendingTransmit(CanTxSource::Summon);
             eventLogPush(EV_SUMMON_TX_SESSION,

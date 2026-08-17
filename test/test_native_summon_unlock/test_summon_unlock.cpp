@@ -65,10 +65,6 @@ static CanFrame frame280(uint8_t gear, bool aca)
 
 static void primeSummonValidationContext()
 {
-    CanFrame speed = {.id = 599, .dlc = 8};
-    speed.data[1] = static_cast<uint8_t>((kSummonSpeedStationaryRaw & 0x0FU) << 4);
-    speed.data[2] = static_cast<uint8_t>(kSummonSpeedStationaryRaw >> 4);
-    handler.handleMessage(speed, mock);
     CanFrame ap = {.id = 921, .dlc = 8};
     ap.data[0] = 0;
     handler.handleMessage(ap, mock);
@@ -95,18 +91,20 @@ void setUp()
 
 void tearDown() {}
 
-void test_filter_contains_validated_gate_ids_and_no_659()
+void test_filter_restores_five_ids_without_257_or_659()
 {
     const uint32_t *ids = handler.filterIds();
     const uint8_t count = handler.filterIdCount();
-    TEST_ASSERT_EQUAL_UINT8(6, count);
+    TEST_ASSERT_EQUAL_UINT8(5, count);
     TEST_ASSERT_EQUAL_UINT32(1021, ids[0]);
     TEST_ASSERT_EQUAL_UINT32(280, ids[1]);
     TEST_ASSERT_EQUAL_UINT32(921, ids[2]);
     TEST_ASSERT_EQUAL_UINT32(1016, ids[3]);
     TEST_ASSERT_EQUAL_UINT32(390, ids[4]);
-    TEST_ASSERT_EQUAL_UINT32(599, ids[5]);
-    for (uint8_t i = 0; i < count; ++i) TEST_ASSERT_NOT_EQUAL(659, ids[i]);
+    for (uint8_t i = 0; i < count; ++i) {
+        TEST_ASSERT_NOT_EQUAL(599, ids[i]);
+        TEST_ASSERT_NOT_EQUAL(659, ids[i]);
+    }
 }
 
 void test_boot_parked_gate_injects_hw3_bit46_only()
@@ -313,11 +311,8 @@ void test_summon_retry_policy_requires_actual_summoning_and_safety_gates()
     TEST_ASSERT_FALSE(summonRetryPolicyAllowed(1000));
 }
 
-void test_summon_candidate_fails_closed_without_fresh_speed()
+void test_summon_candidate_uses_aca_plus_spr_without_speed_filter()
 {
-    CanFrame ap = {.id = 921, .dlc = 8};
-    ap.data[0] = 0;
-    handler.handleMessage(ap, mock);
     CanFrame driveAca = frame280(4, true);
     handler.handleMessage(driveAca, mock);
     CanFrame spr = {.id = 1016, .dlc = 8};
@@ -325,13 +320,16 @@ void test_summon_candidate_fails_closed_without_fresh_speed()
     handler.handleMessage(spr, mock);
 
     TEST_ASSERT_TRUE((bool)summonGateDiag.sprSeen);
-    TEST_ASSERT_FALSE((bool)summonGateDiag.summoning);
-    TEST_ASSERT_EQUAL_UINT8(SUMMON_SESSION_SPEED_MISSING,
+    TEST_ASSERT_TRUE((bool)summonGateDiag.summoning);
+    TEST_ASSERT_EQUAL_UINT8(SUMMON_SESSION_ALLOWED,
                             (uint8_t)summonGateDiag.sessionReason);
-    TEST_ASSERT_FALSE(summonGateOpen(0));
+    TEST_ASSERT_TRUE(summonGateOpen(0));
+    TEST_ASSERT_EQUAL_UINT32(0, (uint32_t)summonGateDiag.frames599);
+    TEST_ASSERT_EQUAL_UINT16(kSummonSpeedSnaRaw,
+                             (uint16_t)summonGateDiag.vehicleSpeedRaw);
 }
 
-void test_summon_candidate_rejects_active_ap_but_ap_path_stays_separate()
+void test_active_ap_does_not_override_aca_spr_summoning_session()
 {
     primeSummonValidationContext();
     CanFrame driveAca = frame280(4, true);
@@ -344,15 +342,30 @@ void test_summon_candidate_rejects_active_ap_but_ap_path_stays_separate()
     CanFrame ap = {.id = 921, .dlc = 8};
     ap.data[0] = 3;
     handler.handleMessage(ap, mock);
-    const uint32_t apNow = (uint32_t)summonGateDiag.last921Ms;
-    TEST_ASSERT_FALSE((bool)summonGateDiag.summoning);
-    TEST_ASSERT_EQUAL_UINT8(SUMMON_SESSION_AP_ACTIVE,
+    TEST_ASSERT_TRUE((bool)summonGateDiag.summoning);
+    TEST_ASSERT_EQUAL_UINT8(SUMMON_SESSION_ALLOWED,
                             (uint8_t)summonGateDiag.sessionReason);
-    TEST_ASSERT_FALSE(summonGateOpen(apNow + kSummonApStableRequiredMs));
+    TEST_ASSERT_TRUE(summonGateOpen((uint32_t)summonGateDiag.last921Ms));
+}
 
-    summonGateDiag.sprSeen = false;
-    summonRecompute(apNow + kSummonApStableRequiredMs);
-    TEST_ASSERT_TRUE(summonGateOpen(apNow + kSummonApStableRequiredMs));
+void test_spr_cancel_closes_session_and_cancels_pending_summon_tx()
+{
+    CanFrame driveAca = frame280(4, true);
+    handler.handleMessage(driveAca, mock);
+    CanFrame spr = {.id = 1016, .dlc = 8};
+    spr.data[3] = 0x40;
+    handler.handleMessage(spr, mock);
+    TEST_ASSERT_TRUE((bool)summonGateDiag.summoning);
+    TEST_ASSERT_EQUAL(0, mock.canceledSources.size());
+
+    CanFrame cancel = {.id = 1016, .dlc = 8};
+    cancel.data[3] = 0x30;
+    handler.handleMessage(cancel, mock);
+
+    TEST_ASSERT_FALSE((bool)summonGateDiag.summoning);
+    TEST_ASSERT_EQUAL(1, mock.canceledSources.size());
+    TEST_ASSERT_EQUAL_UINT8((uint8_t)CanTxSource::Summon,
+                            (uint8_t)mock.canceledSources[0]);
 }
 
 void test_a_channel_tx_master_blocks_tsllc_and_summon()
@@ -383,7 +396,7 @@ void test_ota_quiesce_blocks_new_a_channel_modification_tx()
 int main()
 {
     UNITY_BEGIN();
-    RUN_TEST(test_filter_contains_validated_gate_ids_and_no_659);
+    RUN_TEST(test_filter_restores_five_ids_without_257_or_659);
     RUN_TEST(test_boot_parked_gate_injects_hw3_bit46_only);
     RUN_TEST(test_disabled_toggle_blocks_even_when_parked);
     RUN_TEST(test_drive_without_summon_blocks_mux1_injection);
@@ -398,8 +411,9 @@ int main()
     RUN_TEST(test_tsllc_mux0_is_held_while_actual_summoning);
     RUN_TEST(test_tsllc_mux0_resumes_after_summoning_ends);
     RUN_TEST(test_summon_retry_policy_requires_actual_summoning_and_safety_gates);
-    RUN_TEST(test_summon_candidate_fails_closed_without_fresh_speed);
-    RUN_TEST(test_summon_candidate_rejects_active_ap_but_ap_path_stays_separate);
+    RUN_TEST(test_summon_candidate_uses_aca_plus_spr_without_speed_filter);
+    RUN_TEST(test_active_ap_does_not_override_aca_spr_summoning_session);
+    RUN_TEST(test_spr_cancel_closes_session_and_cancels_pending_summon_tx);
     RUN_TEST(test_a_channel_tx_master_blocks_tsllc_and_summon);
     RUN_TEST(test_ota_quiesce_blocks_new_a_channel_modification_tx);
     return UNITY_END();

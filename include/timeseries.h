@@ -483,10 +483,12 @@ static void timeseriesTaskFn(void*) {
         s.summonDiGear = (uint8_t)summonGateDiag.diGear;
         s.summonSecondaryGear = (uint8_t)summonGateDiag.secondaryGear;
         s.summonSelfParkRequest = (uint8_t)summonGateDiag.selfParkRequest;
-        s.summonVehicleSpeedRaw = (uint16_t)summonGateDiag.vehicleSpeedRaw;
+        // CSV v6 열 수는 유지하되 1.3.17부터 0x257 속도 검증은 사용하지 않는다.
+        // 원시 속도와 경과시간은 각각 DBC SNA/uint16 SNA로 고정한다.
+        s.summonVehicleSpeedRaw = kSummonSpeedSnaRaw;
         s.summonAge280Ms = tsElapsed16(s.t_ms, (uint32_t)summonGateDiag.last280Ms);
         s.summonAge390Ms = tsElapsed16(s.t_ms, (uint32_t)summonGateDiag.last390Ms);
-        s.summonAge599Ms = tsElapsed16(s.t_ms, (uint32_t)summonGateDiag.last599Ms);
+        s.summonAge599Ms = kSummonSignalAgeSnaMs;
         s.summonAge921Ms = tsElapsed16(s.t_ms, (uint32_t)summonGateDiag.last921Ms);
         s.summonAge1016Ms = tsElapsed16(s.t_ms, (uint32_t)summonGateDiag.last1016Ms);
         s.summonGateReason = summonGateReasonCode(s.t_ms);

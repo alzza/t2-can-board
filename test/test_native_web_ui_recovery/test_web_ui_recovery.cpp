@@ -84,8 +84,9 @@ void test_main_ui_keeps_can_nag_tsllc_and_summon_status_together()
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"s-main-busoff\""));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"s-main-summon\""));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "Nag Killer"));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "TSLLC / EAP"));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "ECE R79 / Summon 제한 해제 (HW3)"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "EAP / EU Unlock / Summon (HW3)"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "<span class=\"label\">TSLLC</span>"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "TSLLC / EAP"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "/api/summon-unlock"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "A 채널 (MCP2515 · Summon/TSLLC)"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "B 채널 (TWAI · Nag Killer)"));
@@ -151,8 +152,10 @@ void test_status_view_removes_duplicate_switches_and_keeps_control_switches()
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"tSummon\""));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"tTsllc\""));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"tNag\""));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "ECE R79 / Summon 제한 해제"));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "TSLLC / EAP"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "EAP / EU Unlock / Summon (HW3)"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "<span class=\"label\">TSLLC</span>"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "TSLLC / EAP"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "Policy '+(su.policy_mode||'ACA_SPR_1315')"));
 }
 
 void test_main_ui_exposes_authoritative_channel_health_and_csv_diagnostics()

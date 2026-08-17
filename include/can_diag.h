@@ -51,14 +51,14 @@ static void canDiagTaskFn(void* /*pv*/) {
         nagOk ? "OK" : "ERROR");
     L(buf);
     snprintf(buf, sizeof(buf),
-        "  Summon검증:%s(%s) ACA/SPR=%u/%u Gear=%u/%u SpeedRaw=%u",
+        "  Summon정책:%s %s(%s) ACA/SPR=%u/%u Gear=%u/%u Speed=미사용",
+        kSummonPolicyName,
         (bool)summonGateDiag.sessionAllowed ? "ALLOW" : "BLOCK",
         summonSessionReasonName((uint8_t)summonGateDiag.sessionReason),
         (unsigned)(bool)summonGateDiag.acaActive,
         (unsigned)(bool)summonGateDiag.sprSeen,
         (unsigned)(uint8_t)summonGateDiag.diGear,
-        (unsigned)(uint8_t)summonGateDiag.secondaryGear,
-        (unsigned)(uint16_t)summonGateDiag.vehicleSpeedRaw);
+        (unsigned)(uint8_t)summonGateDiag.secondaryGear);
     L(buf);
     if (!aInit || aLoopAge > 2000 || sc == 0 || !nagOk) {
         L("  \u274c \ub4dc\ub77c\uc774\ubc84/\ud0dc\uc2a4\ud06c \ubbf8\ucd08\uae30\ud654 \u2192 \uc804\uc6d0\xb7\ubc30\uc120 \ud655\uc778 \ud6c4 \uc7ac\ubd80\ud305");

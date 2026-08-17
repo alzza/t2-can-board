@@ -561,7 +561,7 @@ CSV 앞에 열 수가 다른 `#` 메타행을 두지 않는다. 첫 행부터 �
 | 34 | `SUMMON_TX_SESSION` | A | 실제 Summoning 종료 시 세션의 완료·MLOA·ABTF·TX 오류 결과 |
 | 35 | `SUMMON_RETRY_SESSION` | A | 실제 Summoning의 MLOA 단발 재시도 예약·완료·재MLOA·폐기 결과 |
 | 36 | `SUMMON_TX_TIMING` | A | 실제 Summoning의 최대 연속 MLOA, 완료 송신 최대 공백, TSLLC 보류 횟수 |
-| 37 | `SUMMON_POLICY_STATE` | A | 실제 Summon 다중 검증의 허용·차단 사유, ACA/SPR, 주·보조 기어, 속도 원시값 전이 |
+| 37 | `SUMMON_POLICY_STATE` | A | 실제 Summon `ACA+SPR` 정책의 허용·종료 전이와 주·보조 기어 문맥 |
 
 `ARB_LOST`는 다른 프레임에 우선권을 양보했다는 뜻이다. TEC/REC, BUS_ERR, TX_FAIL, BUS-OFF가 모두 0이면 이것만으로 물리 통신 오류로 판단하지 않는다.
 
@@ -571,9 +571,9 @@ CSV 앞에 열 수가 다른 `#` 메타행을 두지 않는다. 첫 행부터 �
 
 통합 로그의 B채널 `Try/Queue/SelfRx`는 각각 송신 시도, TWAI 송신 큐 등록 성공, 보드가 자신의 송신 프레임을 다시 수신해 확인한 횟수다. 일반 TWAI 모드에서 `SelfRx=0`만으로 송신 실패를 뜻하지 않는다. 실제 통신 오류는 `TxFail/TxFailed`, TEC/REC, `BUS_ERR`, BUS-OFF를 함께 확인한다.
 
-`SUMMONING_STATE`는 단순히 주차 상태에서 Unlock bit를 주입한 것을 Summon 실행으로 단정하지 않는다. `ACA + SPR` 후보에 기어·속도·AP·요청의 500ms 최근 수신 검증까지 통과했을 때만 `START`를 기록한다. 주차나 AP 안정 상태의 제한 해제 주입은 `SUMMON_UNLOCK_ACTIVITY`로 따로 기록한다.
+`SUMMONING_STATE`는 단순히 주차 상태에서 Unlock bit를 주입한 것을 Summon 실행으로 단정하지 않는다. 1.3.17의 `ACA_SPR_1315` 정책은 ACA와 확인된 SelfParkRequest가 함께 유지될 때만 `START`를 기록한다. 주차나 AP 안정 상태의 제한 해제 주입은 `SUMMON_UNLOCK_ACTIVITY`로 따로 기록한다.
 
-`SUMMON_POLICY_STATE`는 `ALLOWED`, `DI/SPEED/AP/UI_MISSING`, `*_STALE`, `GEAR_INVALID`, `GEAR_CONFLICT`, `SPEED_INVALID`, `PARK_MOVING`, `AP_ACTIVE`, `SPR_UNCONFIRMED` 중 하나로 실제 Summon 차단 이유를 남긴다. AP 주행의 ECE R79 경로는 이 세션 검증과 분리되어 있으므로 SPR 후보가 없으면 기존 AP 안정 게이트를 사용한다.
+`SUMMON_POLICY_STATE`는 `policy=ACA_SPR_1315`, ACA/SPR와 `ALLOWED` 또는 `IDLE` 전이를 남긴다. 1.3.16에서 사용한 `0x257` 속도 검증은 A채널 수신 부하 때문에 비활성화했으며 `speed_validation=0`, `speed_raw_sna=4095`로 표시한다. AP 주행의 ECE R79 경로는 실제 Summoning 판단과 분리되어 기존 AP 안정 게이트를 사용한다.
 
 `SUMMON_RETRY_SESSION`은 MCP2515 One-shot이 MLOA 뒤 자동 재전송하지 않는 점을 실제 Summoning에서만 보완한 결과다. 최신 mux 1을 3ms 뒤 한 번만 재시도하며 원본 수신 후 20ms가 지나거나 새 mux 1, 게이트 종료, 기능/A TX OFF, TX Guard, OTA 차단이 들어오면 폐기한다. `SUMMON_TX_TIMING`의 `max_success_gap_ms`가 재시도 적용 후 줄었는지 다음 실차 로그에서 비교한다. `tsllc_held`는 실제 Summoning 중 주행용 TSLLC mux 0을 보류한 횟수다.
 
@@ -602,7 +602,7 @@ CSV 앞에 열 수가 다른 `#` 메타행을 두지 않는다. 첫 행부터 �
 - A 송신 안전 플래그는 `a_tx_enabled`, `a_summon_enabled`, `a_tsllc_enabled`, `a_one_shot_enabled`, `a_tx_guard_enabled`에 샘플 시점 값으로 저장한다.
 - Summon 게이트는 `a_summon_gate_open`, `a_summon_gate_reason`, `a_summon_ap_state`, `a_summon_ap_active`, `a_summon_ap_stable_ms`, `a_summon_parked`, `a_summoning`으로 허용 결과와 당시 근거를 함께 저장한다.
 - 시계열 CSV 스키마 6의 `a_summon_retry_*`, `a_summon_session_mloa_streak_max`, `a_summon_session_success_gap_max_ms`, `a_tsllc_summoning_hold`로 실제 Summoning 재시도와 TSLLC 보류 결과를 확인한다.
-- `a_summon_session_allowed/reason`, 주·보조 기어, SelfParkRequest, 속도 원시값과 ID 280/390/599/921/1016 경과시간으로 다중 검증이 닫힌 원인을 한 행에서 비교한다.
+- `a_summon_session_allowed/reason`, 주·보조 기어와 SelfParkRequest로 `ACA_SPR_1315` 세션 전이를 비교한다. 기존 CSV 열 호환을 위해 `a_summon_vehicle_speed_raw=4095`, `a_summon_age_599_ms=65535`를 SNA로 유지하지만 1.3.17 정책에는 사용하지 않는다.
 - B Nag 플래그는 `b_nag_enabled`, `b_nag_mode`, `b_driver_state`에 저장한다.
 
 수동 기록을 정지하면 이후 샘플을 추가하지 않는다. 수동 기록을 시작하지 않은 상태에서는 자동 최근 20분 버퍼가 계속 갱신된다.

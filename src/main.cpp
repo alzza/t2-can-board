@@ -571,11 +571,13 @@ void nagKillerTask(void* pvParameters) {
             canActivity = appLoop<MCP2515Driver>() > 0 || canActivity;
 #endif
         // 고정 1ms 대기는 실차의 1.5~2.6ms A 폴링 공백과 RX 오버런을 만들었다.
-        // CAN 전용 Core 1에서 50~100us 짧은 대기를 사용하고, Idle/WDT 실행을 위해
-        // 20ms마다 한 번만 RTOS 1 tick을 양보한다.
+        // CAN 전용 Core 1에서 50~100us 짧은 대기를 사용한다. CAN이 활성일
+        // 때는 1 tick 양보를 50ms 간격으로 줄여 MCP2515 RX 오버런 기회를
+        // 낮추고, 비활성 상태에서는 기존 20ms 간격으로 Idle/WDT를 실행한다.
         aChannelDiag.canTaskPhase = kACanPhaseIdleWait;
         const uint32_t nowUs = micros();
-        if (nowUs - lastBlockingYieldUs >= 20000U) {
+        const uint32_t blockingYieldIntervalUs = canActivity ? 50000U : 20000U;
+        if (nowUs - lastBlockingYieldUs >= blockingYieldIntervalUs) {
             vTaskDelay(pdMS_TO_TICKS(1));
             lastBlockingYieldUs = micros();
         } else {
@@ -747,7 +749,7 @@ void setup() {
     delay(2000);
 
     Serial.println("\n\n==================================================");
-    Serial.println("  [V16-WEB LOG EDITION] Tesla CAN (Summon Unlock HW3)");
+    Serial.println("  [V17-RX STABLE] Tesla CAN (EAP/Summon HW3 + TSLLC)");
     Serial.printf("  >> Firmware %s | %s | env=%s\n", FIRMWARE_VERSION, FIRMWARE_BUILD_ID, FIRMWARE_BUILD_ENV);
     Serial.printf("  >> Built %s | git %s/%s dirty=%u source=%s\n",
                   FIRMWARE_BUILD_AT,
