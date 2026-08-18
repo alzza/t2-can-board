@@ -6,6 +6,17 @@
 
 ## [Unreleased]
 
+## [1.3.19] - 2026-08-19
+
+### A채널 fail-closed 게이트와 mux1 기능 분리
+
+- 최신 ev-open 개발판의 fail-closed 원칙을 현재 HW3 실차 구성에 맞게 이식했다. A채널 수정 송신은 `A TX OFF → OTA quiesce → RX 안전 HOLD/LATCH → TX Guard` 순서의 단일 전역 게이트를 반드시 통과한다.
+- 오래된 `0x280` 주차 상태가 다시 `Parked=true`가 되어 송신을 허용하던 fallback을 제거했다. `0x280`, `0x390`, `0x399`, `0x3F8`은 최근 500ms 이내 값만 송신 근거로 사용하며, 신호 누락·만료·불일치는 무주입으로 처리한다. 고주기 `0x257` 수신은 다시 추가하지 않는다.
+- HW3 `0x3FD mux1`의 bit19(ECE R79)와 bit46(Summon)을 기능별로 분리했다. bit19는 AP 상태 3~6이 1초 안정되고 최근 수신된 경우에만, bit46은 최근 P 또는 최근 `ACA + SPR` 실제 Summoning에서만 변경한다. 한 기능의 조건이 다른 비트를 변경하지 않는다.
+- 상태 허용에서 차단으로 바뀌면 대기 중인 MCP2515 mux1 및 TSLLC TX를 즉시 폐기한다. Summon MLOA 재시도는 실제 Summoning bit46 경로에서만 유지하며 AP/ECE R79 경로에는 적용하지 않는다.
+- 구형 `Summon 조건 제한 OFF` NVS 값은 호환을 위해 읽되 더 이상 무제한 송신을 허용하지 않는다. Web UI에서 해당 우회 토글을 제거하고, ECE R79 bit19 준비·Summon bit46 준비·A 전역 게이트 사유를 분리 표시한다.
+- A 수신은 기존 32프레임 선회수 큐, B 수신은 30프레임 상한, HTTP는 Core 0 분리 및 통합 로그 다운로드 동안 상태 폴링 보류 정책을 유지한다. 이번 변경에서 RX 필터·SPI 속도·One-shot·TX Guard 임계값은 바꾸지 않았다.
+
 ## [1.3.18] - 2026-08-17
 
 ### TSLLC 플러그인 정합과 A채널 단계 보호

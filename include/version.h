@@ -1,16 +1,16 @@
 #pragma once
 
-#define FIRMWARE_VERSION "1.3.18"
+#define FIRMWARE_VERSION "1.3.19"
 #define FIRMWARE_VERSION_MAJOR 1
 #define FIRMWARE_VERSION_MINOR 3
-#define FIRMWARE_VERSION_PATCH 18
+#define FIRMWARE_VERSION_PATCH 19
 
 // OTA/실차 테스트용 보관 bin 파일명에 사용할 당일 핵심 변경 요약.
-// 예: 1.3.18_26-08-17_tsllc-apgate-rxguard.bin
-#define FIRMWARE_ARTIFACT_NOTE "tsllc-apgate-rxguard"
+// 예: 1.3.19_26-08-19_failclosed-gates.bin
+#define FIRMWARE_ARTIFACT_NOTE "failclosed-gates"
 
 #ifndef FIRMWARE_BUILD_ID
-#define FIRMWARE_BUILD_ID "FW1318-tsllc-apgate-rxguard"
+#define FIRMWARE_BUILD_ID "FW1319-failclosed-gates"
 #endif
 
 #ifndef FIRMWARE_BUILD_AT

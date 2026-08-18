@@ -134,8 +134,10 @@ void test_main_ui_uses_verified_nag_modes_and_removes_smart_profiles()
     TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "MODE 3"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "MODE 2 · AP 전용 · 권장"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"tNagApOnly\""));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"tSummonCondition\""));
-    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "/api/summon-condition-limit"));
+    TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "id=\"tSummonCondition\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "안전 송신 게이트"));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"suEap\""));
+    TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "id=\"suBit46\""));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "/api/nag-ap-only"));
     TEST_ASSERT_TRUE(contains(WEB_UI_HTML, "/api/nag-mode?m="));
     TEST_ASSERT_FALSE(contains(WEB_UI_HTML, "/api/nag-profile"));

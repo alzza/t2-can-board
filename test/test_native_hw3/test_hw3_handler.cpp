@@ -94,6 +94,10 @@ void test_tsllc_mux0_sets_only_validated_bits()
 
 void test_summon_mux1_sets_hw3_bit46_and_clears_bit19()
 {
+    // bit46은 부팅 기본값이 아니라 신선한 P 또는 실제 Summoning에서만 허용한다.
+    CanFrame park = {.id = 280, .dlc = 8};
+    park.data[2] = 1U << 5;
+    handler.handleMessage(park, mock);
     CanFrame frame = {.id = 1021, .dlc = 8};
     frame.data[0] = 1;
     setBit(frame, 19, true);

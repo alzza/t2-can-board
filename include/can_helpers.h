@@ -83,8 +83,9 @@ inline constexpr bool kAMcpOneShotDefaultEnabled = (T2CAN_MCP2515_ONE_SHOT_DEFAU
 inline constexpr bool kATxGuardDefaultEnabled = (T2CAN_A_TX_GUARD_DEFAULT != 0);
 // Mode 1/2의 선제 주입 범위. true면 AP 상태 3~6에서만 주입한다.
 inline constexpr bool kNagApOnlyDefaultEnabled = true;
-// HW3 bit19/bit46 송신 허용 조건. ON이면 주차·Summoning·AP 안정 상태에서만
-// 두 비트를 함께 적용하며, OFF는 실험을 위해 ID 1021 mux 1을 조건 없이 수정한다.
+// 이전 펌웨어의 호환 NVS 키다. 1.3.19부터는 OFF여도 차량 상태 불명 구간의
+// 송신을 허용하지 않는다. UI에는 "안전 게이트 강제"로 표시해 과거 실험값이
+// 안전 정책을 우회하지 못하게 한다.
 inline constexpr bool kSummonConditionLimitDefaultEnabled = true;
 
 // TSLLC는 ev-open 플러그인의 ID/mux/bit 규칙을 사용하되, 현재 프로젝트의
@@ -169,8 +170,14 @@ inline void canTxQuiesceCancel()
 
 inline bool canTxQuiesceIdle() { return (uint32_t)canTxInFlight == 0; }
 
-// Validated SummonUnlock gate state (HW3).
-inline constexpr uint32_t kSummonParkedTimeoutMs = 5000;
+// HW3 mux1의 두 비트는 기능은 다르지만 같은 원본 프레임을 공유한다.
+// 별도 ID를 추가 수신하면 MCP2515 RX 부하가 늘어나므로, 이미 필터에 있는
+// 0x280/0x390/0x399/0x3F8만 500ms 이내인지 확인한다. 신호가 오래되면
+// "마지막 값이 P였다"는 사실은 화면 표시용일 뿐 송신 권한이 될 수 없다.
+inline constexpr uint32_t kSummonStateFreshnessMs = 500;
+// 기존 상태 API/CSV 호환용 이름. 더 이상 stale Parked 허용 시간이 아니며,
+// 모든 mux1 상태 신호에 적용되는 fail-closed 신선도 한계다.
+inline constexpr uint32_t kSummonParkedTimeoutMs = kSummonStateFreshnessMs;
 inline constexpr uint32_t kSummonApStableRequiredMs = 1000;
 inline constexpr uint16_t kSummonSpeedSnaRaw = 4095;
 inline constexpr uint16_t kSummonSignalAgeSnaMs = 65535;
@@ -201,7 +208,9 @@ struct SummonGateDiagnostics {
     Shared<uint8_t> apState{0};
     Shared<uint32_t> last921Ms{0};
     Shared<uint32_t> apActiveSinceMs{0};
-    Shared<bool> parked{true};
+    // 부팅 직후에는 주차 여부를 알 수 없다. "주차"로 추정하면 오래된 상태로
+    // mux1 주입을 허용할 수 있으므로, 유효한 차량 상태 프레임 전까지는 차단한다.
+    Shared<bool> parked{false};
     Shared<bool> summoning{false};
     Shared<bool> acaActive{false};
     Shared<bool> sprSeen{false};
@@ -295,43 +304,80 @@ inline bool summonApStable(uint32_t nowMs) {
            summonApStableMs(nowMs) >= kSummonApStableRequiredMs;
 }
 
+inline bool summonStateFresh(uint32_t timestampMs, uint32_t nowMs) {
+    return timestampMs != 0U && nowMs - timestampMs <= kSummonStateFreshnessMs;
+}
+
+// bit19(ECE R79)은 AP가 실제로 안정화된 구간에서만 변경한다. bit46(Summon)은
+// 신선한 P 또는 실제 ACA+SPR 세션에서만 변경한다. 한쪽 조건이 실패해도 다른
+// 비트를 임의로 따라 바꾸지 않는다.
+inline bool eapStateReady(uint32_t nowMs) {
+    return (bool)summonGateDiag.apActive &&
+           summonStateFresh((uint32_t)summonGateDiag.last921Ms, nowMs) &&
+           summonApStable(nowMs);
+}
+
+inline bool summonParkedStateReady(uint32_t nowMs) {
+    const bool diFresh = summonStateFresh((uint32_t)summonGateDiag.last280Ms, nowMs);
+    const bool secondaryFresh = summonStateFresh((uint32_t)summonGateDiag.last390Ms, nowMs);
+    const bool diParked = diFresh && (uint8_t)summonGateDiag.diGear == 1U;
+    const bool secondaryParked = secondaryFresh &&
+                                (uint8_t)summonGateDiag.secondaryGear == 1U;
+
+    // 두 기어 신호가 같은 시점에 유효하면 반드시 P로 일치해야 한다.
+    if (diFresh && secondaryFresh)
+        return diParked && secondaryParked;
+    return diParked || secondaryParked;
+}
+
+inline bool summonActiveStateReady(uint32_t nowMs) {
+    return (bool)summonGateDiag.summoning &&
+           (bool)summonGateDiag.acaActive &&
+           (bool)summonGateDiag.sprSeen &&
+           summonStateFresh((uint32_t)summonGateDiag.last280Ms, nowMs) &&
+           summonStateFresh((uint32_t)summonGateDiag.last1016Ms, nowMs);
+}
+
+// A채널 전역 차단 진단은 AChannelDiagnostics 선언 뒤에 정의한다.
+inline uint8_t aTxGlobalBlockReason(uint32_t nowMs);
+inline const char *aTxGlobalBlockReasonName(uint8_t reason);
+inline bool aTxGlobalAllowed(uint32_t nowMs);
+inline bool eapInjectionAllowed(uint32_t nowMs);
+inline bool summonBit46InjectionAllowed(uint32_t nowMs);
+
 inline bool summonGateOpen(uint32_t nowMs = 0) {
-    if (!(bool)summonConditionLimitRuntime) return true;
     if (nowMs == 0) {
 #ifndef NATIVE_BUILD
         nowMs = millis();
 #endif
     }
-    if ((bool)summonGateDiag.parked) return true;
-    if ((bool)summonGateDiag.summoning) return true;
-    return summonApStable(nowMs);
+    // 기존 상태 API/CSV의 "gate_open"은 mux1에서 적어도 하나의 검증 비트가
+    // 송신 가능한지를 뜻한다. 구형 조건 제한 토글은 더 이상 안전 우회가 아니다.
+    return eapInjectionAllowed(nowMs) || summonBit46InjectionAllowed(nowMs);
 }
 
 inline const char *summonGateReasonName(uint32_t nowMs) {
-    if (!(bool)summonConditionLimitRuntime) return "UNRESTRICTED";
-    if ((bool)summonGateDiag.summoning) return "SUMMONING";
-    if ((bool)summonGateDiag.parked) return "PARKED";
-    if (!(bool)summonGateDiag.apActive) return "AP_INACTIVE";
-    return summonApStable(nowMs) ? "AP_STABLE" : "AP_STABILIZING";
+    if (!aTxGlobalAllowed(nowMs)) return aTxGlobalBlockReasonName(aTxGlobalBlockReason(nowMs));
+    if (summonActiveStateReady(nowMs)) return "SUMMONING";
+    if (summonParkedStateReady(nowMs)) return "PARKED";
+    if (eapStateReady(nowMs)) return "AP_STABLE";
+    return "STATE_UNKNOWN";
 }
 
 inline uint8_t summonGateReasonCode(uint32_t nowMs) {
-    if (!(bool)summonConditionLimitRuntime) return 0; // UNRESTRICTED
-    if ((bool)summonGateDiag.summoning) return 1;
-    if ((bool)summonGateDiag.parked) return 2;
-    if (!(bool)summonGateDiag.apActive) return 3;
-    return summonApStable(nowMs) ? 4 : 5;
+    if (summonActiveStateReady(nowMs)) return 1;
+    if (summonParkedStateReady(nowMs)) return 2;
+    if (eapStateReady(nowMs)) return 4;
+    return 6; // STATE_UNKNOWN / 전역 차단
 }
 
 inline const char *summonGateReasonNameFromCode(uint8_t code) {
     switch (code) {
-    case 0: return "UNRESTRICTED";
     case 1: return "SUMMONING";
     case 2: return "PARKED";
     case 4: return "AP_STABLE";
-    case 5: return "AP_STABILIZING";
-    case 6: return "SUMMON_BLOCKED";
-    default: return "AP_INACTIVE";
+    case 6: return "STATE_UNKNOWN";
+    default: return "BLOCKED";
     }
 }
 
@@ -375,7 +421,7 @@ inline void summonHandle390(const CanFrame &frame, uint32_t nowMs) {
     const int8_t gearState = summonGearState(gear);
     if (gearState < 0) return;
     const uint32_t last280Ms = (uint32_t)summonGateDiag.last280Ms;
-    if (last280Ms == 0 || nowMs - last280Ms > kSummonParkedTimeoutMs) {
+    if (last280Ms == 0 || nowMs - last280Ms > kSummonStateFreshnessMs) {
         summonGateDiag.parked = (gearState == 1);
         summonClearOnParkIfAcaInactive(gear);
     }
@@ -413,9 +459,10 @@ inline void summonHandle1016(const CanFrame &frame, uint32_t nowMs) {
 
 inline void summonGateMaintain(uint32_t nowMs) {
     const uint32_t last280Ms = (uint32_t)summonGateDiag.last280Ms;
-    if (last280Ms > 0 && nowMs - last280Ms > kSummonParkedTimeoutMs) {
-        summonGateDiag.parked = true;
-    }
+    if (last280Ms > 0 && nowMs - last280Ms > kSummonStateFreshnessMs)
+        summonGateDiag.parked = false;
+    // 이전에는 0x280가 끊기면 Parked=true로 되돌렸다. 이 fallback은 수신이
+    // 낮은 구간에서 오래된 P 상태로 mux1을 계속 주입할 수 있으므로 제거한다.
     summonRecompute(nowMs);
 }
 
@@ -1010,6 +1057,56 @@ inline bool aSafetyTryRecover(uint32_t nowMs)
     return true;
 }
 
+enum ATxGlobalBlockReason : uint8_t {
+    A_TX_READY = 0,
+    A_TX_BLOCK_MASTER_OFF,
+    A_TX_BLOCK_OTA,
+    A_TX_BLOCK_SAFETY_HOLD,
+    A_TX_BLOCK_SAFETY_LATCH,
+    A_TX_BLOCK_GUARD,
+};
+
+inline uint8_t aTxGlobalBlockReason(uint32_t nowMs)
+{
+    // 모든 A 수정 송신은 이 순서 하나만 공유한다. 기능별 핸들러가 OTA,
+    // Guard, RX-overrun을 제각각 해석하면 한 경로만 남는 누락이 생긴다.
+    if (!(bool)aChannelTxRuntime) return A_TX_BLOCK_MASTER_OFF;
+    if ((bool)canTxQuiescing) return A_TX_BLOCK_OTA;
+    if ((bool)aChannelDiag.aSafetyLatched) return A_TX_BLOCK_SAFETY_LATCH;
+    if ((bool)aChannelDiag.aSafetyHold) return A_TX_BLOCK_SAFETY_HOLD;
+    if (aTxGuardActive(nowMs)) return A_TX_BLOCK_GUARD;
+    return A_TX_READY;
+}
+
+inline const char *aTxGlobalBlockReasonName(uint8_t reason)
+{
+    switch (reason) {
+    case A_TX_READY: return "READY";
+    case A_TX_BLOCK_MASTER_OFF: return "A_TX_OFF";
+    case A_TX_BLOCK_OTA: return "OTA_QUIESCE";
+    case A_TX_BLOCK_SAFETY_HOLD: return "A_SAFETY_HOLD";
+    case A_TX_BLOCK_SAFETY_LATCH: return "A_SAFETY_LATCH";
+    case A_TX_BLOCK_GUARD: return "TX_GUARD";
+    default: return "UNKNOWN";
+    }
+}
+
+inline bool aTxGlobalAllowed(uint32_t nowMs)
+{
+    return aTxGlobalBlockReason(nowMs) == A_TX_READY;
+}
+
+inline bool eapInjectionAllowed(uint32_t nowMs)
+{
+    return (bool)summonUnlockRuntime && aTxGlobalAllowed(nowMs) && eapStateReady(nowMs);
+}
+
+inline bool summonBit46InjectionAllowed(uint32_t nowMs)
+{
+    return (bool)summonUnlockRuntime && aTxGlobalAllowed(nowMs) &&
+           (summonParkedStateReady(nowMs) || summonActiveStateReady(nowMs));
+}
+
 inline uint32_t tsllcStartupElapsedMs(uint32_t nowMs)
 {
     const uint32_t startedMs = (uint32_t)aCanStartedMs;
@@ -1193,13 +1290,8 @@ inline const char* summonRetryCancelReasonName(uint8_t reason)
 inline bool summonRetryPolicyAllowed(uint32_t nowMs)
 {
     return (bool)aMcpOneShotRuntime &&
-           (bool)aChannelTxRuntime &&
-           (bool)summonUnlockRuntime &&
-           (bool)summonGateDiag.summoning &&
-           summonGateOpen(nowMs) &&
-           !aTxGuardActive(nowMs) &&
-           !aSafetyTxBlocked() &&
-           !(bool)canTxQuiescing;
+           summonActiveStateReady(nowMs) &&
+           summonBit46InjectionAllowed(nowMs);
 }
 
 inline void resetSummonTxSessionDiagnostics(uint32_t nowMs)

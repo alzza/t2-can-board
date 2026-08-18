@@ -1094,6 +1094,7 @@ static esp_err_t statusHandler(httpd_req_t *req)
     bool tsllcEnabled = kWebSupportsTsllc ? (bool)tsllcRuntime : false;
     bool nagApOnly = (bool)nagApOnlyRuntime;
     bool aGuardActiveNow = aTxGuardActive(handlerStartMs);
+    const uint8_t aTxGlobalReason = aTxGlobalBlockReason(handlerStartMs);
     const uint8_t tsllcBlockReason = tsllcInjectionBlockReason(handlerStartMs);
     const bool tsllcActive = tsllcBlockReason == TSLLC_BLOCK_READY;
     cJSON *root = cJSON_CreateObject();
@@ -1109,6 +1110,8 @@ static esp_err_t statusHandler(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "nag_killer", nagKiller);
     cJSON_AddBoolToObject(root, "nag_ap_only", nagApOnly);
     cJSON_AddBoolToObject(root, "a_channel_tx", aChannelTx);
+    cJSON_AddStringToObject(root, "a_tx_global_gate",
+                            aTxGlobalBlockReasonName(aTxGlobalReason));
     cJSON_AddBoolToObject(root, "tsllc_enabled", tsllcEnabled);
     cJSON_AddBoolToObject(root, "tsllc_active", tsllcActive);
     cJSON_AddStringToObject(root, "tsllc_block_reason",
@@ -1136,20 +1139,22 @@ static esp_err_t statusHandler(httpd_req_t *req)
     if (summon) {
         const bool summonEnabled = summonUnlockEnabled;
         const bool gateOpen = summonGateOpen(handlerStartMs);
-        const bool summonUnlockActive =
-            summonEnabled && aChannelTx && gateOpen && !aGuardActiveNow &&
-            !aSafetyTxBlocked();
+        const bool eapReady = eapInjectionAllowed(handlerStartMs);
+        const bool summonReady = summonBit46InjectionAllowed(handlerStartMs);
+        const bool summonUnlockActive = eapReady || summonReady;
         const uint32_t last280Ms = (uint32_t)summonGateDiag.last280Ms;
         const uint32_t last280AgeMs = last280Ms ? handlerStartMs - last280Ms : 0;
         cJSON_AddBoolToObject(summon, "enabled", summonEnabled);
         cJSON_AddBoolToObject(summon, "active", summonUnlockActive);
+        cJSON_AddBoolToObject(summon, "eap_inject_ready", eapReady);
+        cJSON_AddBoolToObject(summon, "summon_inject_ready", summonReady);
+        cJSON_AddStringToObject(summon, "a_tx_global_gate",
+                                aTxGlobalBlockReasonName(aTxGlobalReason));
         cJSON_AddBoolToObject(summon, "tx_master", aChannelTx);
         cJSON_AddBoolToObject(summon, "gate", gateOpen);
         cJSON_AddBoolToObject(summon, "condition_limit", summonConditionLimit);
         cJSON_AddBoolToObject(summon, "guard", aGuardActiveNow);
-        cJSON_AddBoolToObject(summon, "inject_ready",
-                              summonEnabled && aChannelTx && gateOpen && !aGuardActiveNow &&
-                              !aSafetyTxBlocked());
+        cJSON_AddBoolToObject(summon, "inject_ready", summonUnlockActive);
         cJSON_AddBoolToObject(summon, "ap", (bool)summonGateDiag.apActive);
         cJSON_AddNumberToObject(summon, "ap_state", (uint8_t)summonGateDiag.apState);
         cJSON_AddNumberToObject(summon, "ap_stable_ms", summonApStableMs(handlerStartMs));
@@ -1175,13 +1180,13 @@ static esp_err_t statusHandler(httpd_req_t *req)
         cJSON_AddNumberToObject(summon, "vehicle_speed_raw", kSummonSpeedSnaRaw);
         cJSON_AddStringToObject(summon, "block_reason",
                                 !summonEnabled ? "DISABLED" :
-                                !aChannelTx ? "A_TX_OFF" :
-                                (bool)aChannelDiag.aSafetyLatched ? "A_SAFETY_LATCH" :
-                                (bool)aChannelDiag.aSafetyHold ? "A_SAFETY_HOLD" :
-                                aGuardActiveNow ? "TX_GUARD" :
-                                gateOpen ? "NONE" : summonGateReasonName(handlerStartMs));
+                                aTxGlobalReason != A_TX_READY ?
+                                    aTxGlobalBlockReasonName(aTxGlobalReason) :
+                                summonUnlockActive ? "NONE" : "STATE_UNKNOWN");
         cJSON_AddNumberToObject(summon, "last_280_age_ms", last280AgeMs);
-        cJSON_AddNumberToObject(summon, "parked_timeout_ms", kSummonParkedTimeoutMs);
+        cJSON_AddNumberToObject(summon, "state_freshness_ms", kSummonStateFreshnessMs);
+        // 구형 UI/CSV 소비자 호환: 이름만 남기고 동일한 500ms fail-closed 값이다.
+        cJSON_AddNumberToObject(summon, "parked_timeout_ms", kSummonStateFreshnessMs);
         cJSON_AddNumberToObject(summon, "rx280", (uint32_t)summonGateDiag.frames280);
         cJSON_AddNumberToObject(summon, "rx390", (uint32_t)summonGateDiag.frames390);
         cJSON_AddNumberToObject(summon, "rx599", 0);

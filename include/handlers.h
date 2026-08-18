@@ -45,41 +45,25 @@ struct HW3Handler : public CarManagerBase
     bool shouldSkipATx(const char *featureName)
     {
         uint32_t nowMs = millis();
-        if (!aChannelTxRuntime) {
-            static unsigned long lastAOffLog = 0;
-            if (nowMs - lastAOffLog > 5000) {
-                char buf[80];
-                snprintf(buf, sizeof(buf), "[A-CH] %s 주입 보류: A TX OFF", featureName);
-                logRing.push(buf, nowMs);
-                lastAOffLog = nowMs;
-            }
-            return true;
-        }
-        if (aSafetyTxBlocked()) {
+        const uint8_t reason = aTxGlobalBlockReason(nowMs);
+        if (reason == A_TX_READY) return false;
+
+        // Summon/EAP와 TSLLC가 OTA·Guard·RX-overrun을 서로 다르게 해석하지
+        // 않도록, 실제 송신 직전에도 한 개의 전역 판정만 사용한다.
+        if (reason == A_TX_BLOCK_SAFETY_HOLD || reason == A_TX_BLOCK_SAFETY_LATCH) {
             aChannelDiag.aSafetySkipCount =
                 (uint32_t)aChannelDiag.aSafetySkipCount + 1U;
-            static unsigned long lastSafetySkipLog = 0;
-            if (nowMs - lastSafetySkipLog > 5000U) {
-                char buf[104];
-                snprintf(buf, sizeof(buf),
-                         "[A-CH] %s 주입 보류: RX 안전 %s",
-                         featureName,
-                         (bool)aChannelDiag.aSafetyLatched ? "LATCH" : "HOLD");
-                logRing.push(buf, nowMs);
-                lastSafetySkipLog = nowMs;
-            }
-            return true;
         }
-        if (!aTxGuardActive(nowMs)) return false;
+        if (reason == A_TX_BLOCK_GUARD)
+            aChannelDiag.aTxGuardSkipCount = (uint32_t)aChannelDiag.aTxGuardSkipCount + 1U;
 
-        aChannelDiag.aTxGuardSkipCount = (uint32_t)aChannelDiag.aTxGuardSkipCount + 1;
-        static unsigned long lastGuardSkipLog = 0;
-        if (nowMs - lastGuardSkipLog > 5000) {
-            char buf[96];
-            snprintf(buf, sizeof(buf), "🛡️ [A-CH] %s 주입 보류: TX guard active (%s)",
-                     featureName, aTxGuardReasonName((uint8_t)aChannelDiag.aTxGuardLastReason));
+        static unsigned long lastGlobalSkipLog = 0;
+        if (nowMs - lastGlobalSkipLog > 5000U) {
+            char buf[112];
+            snprintf(buf, sizeof(buf), "[A-CH] %s 주입 보류: 전역 게이트=%s",
+                     featureName, aTxGlobalBlockReasonName(reason));
             logRing.push(buf, nowMs);
-            lastGuardSkipLog = nowMs;
+            lastGlobalSkipLog = nowMs;
         }
         return true;
     }
@@ -106,6 +90,7 @@ struct HW3Handler : public CarManagerBase
             summonHandle280(frame, nowMs);
             trackSummoningState(nowMs, driver);
             trackSummonPolicyState(nowMs);
+            trackATxGateTransitions(nowMs, driver);
             return;
         }
 
@@ -114,6 +99,7 @@ struct HW3Handler : public CarManagerBase
             summonHandle390(frame, nowMs);
             trackSummoningState(nowMs, driver);
             trackSummonPolicyState(nowMs);
+            trackATxGateTransitions(nowMs, driver);
             return;
         }
 
@@ -123,6 +109,7 @@ struct HW3Handler : public CarManagerBase
             summonRecompute(nowMs);
             trackSummoningState(nowMs, driver);
             trackSummonPolicyState(nowMs);
+            trackATxGateTransitions(nowMs, driver);
             return;
         }
 
@@ -131,6 +118,7 @@ struct HW3Handler : public CarManagerBase
             summonHandle1016(frame, nowMs);
             trackSummoningState(nowMs, driver);
             trackSummonPolicyState(nowMs);
+            trackATxGateTransitions(nowMs, driver);
             return;
         }
 
@@ -140,6 +128,7 @@ struct HW3Handler : public CarManagerBase
         summonGateMaintain(nowMs);
         trackSummoningState(nowMs, driver);
         trackSummonPolicyState(nowMs);
+        trackATxGateTransitions(nowMs, driver);
         aChannelDiag.frames1021++;
         if (frame.dlc < 8) return;
 
@@ -211,24 +200,31 @@ struct HW3Handler : public CarManagerBase
 
         if (readMuxID(frame) == 1) {
 #if defined(SUMMON_UNLOCK)
-            const bool summonEnabled = (bool)summonUnlockRuntime;
-            const bool gateOpen = summonGateOpen(nowMs);
-            const bool summonInject = summonEnabled && gateOpen;
+            const bool featureEnabled = (bool)summonUnlockRuntime;
+            const bool eapReady = eapInjectionAllowed(nowMs);
+            const bool summonReady = summonBit46InjectionAllowed(nowMs);
+            const bool mux1Inject = eapReady || summonReady;
 
-            if (summonEnabled && !gateOpen) {
+            if (featureEnabled && !mux1Inject) {
                 summonGateDiag.blocked = (uint32_t)summonGateDiag.blocked + 1;
                 summonGateDiag.lastBlockedMs = nowMs;
             }
 
-            if (summonInject) {
+            if (mux1Inject) {
                 summonGateDiag.mux1Received = (uint32_t)summonGateDiag.mux1Received + 1;
-                if (shouldSkipATx("SummonUnlock")) return;
+                if (shouldSkipATx("EAP/Summon")) return;
                 if (!canTxPermitBegin()) return;
-                setBit(frame, 19, false);  // UI_applyEceR79=0 (ECE R79 적용 해제)
+                // 기능별 분리: AP 안정 신호가 있을 때만 bit19를, 신선한 P 또는
+                // ACA+SPR 실제 Summoning일 때만 bit46을 건드린다. 어느 조건도
+                // 오래된 상태값으로 추정하지 않는다.
+                if (eapReady)
+                    setBit(frame, 19, false);  // UI_applyEceR79=0
 #if defined(HW3)
-                setBit(frame, 46, true); // 검증된 HW3 Summon 제한 해제 비트
+                if (summonReady)
+                    setBit(frame, 46, true); // HW3 Summon 제한 해제
 #elif defined(HW4)
-                setBit(frame, 47, true); // HW4 빌드 호환 경로
+                if (summonReady)
+                    setBit(frame, 47, true); // HW4 빌드 호환 경로
 #endif
                 aChannelDiag.summonUnlockModifiedCount++;
                 framesSent++;
@@ -261,7 +257,11 @@ struct HW3Handler : public CarManagerBase
 
                 static unsigned long lastAAction = 0;
                 if (millis() - lastAAction > 5000) {
-                    logRing.push("🔵⚡ [A-CH] Summon Unlock 주입 완료: HW3 bit46", millis());
+                    char buf[112];
+                    snprintf(buf, sizeof(buf),
+                             "[A-CH] mux1 주입 완료: EAP(bit19)=%u Summon(bit46)=%u",
+                             eapReady ? 1U : 0U, summonReady ? 1U : 0U);
+                    logRing.push(buf, millis());
                     lastAAction = millis();
                 }
             }
@@ -271,6 +271,33 @@ struct HW3Handler : public CarManagerBase
 
 private:
     static constexpr uint32_t kSummonUnlockActivityIdleMs = 1500;
+
+    void trackATxGateTransitions(uint32_t nowMs, CanDriver &driver)
+    {
+        const bool mux1Allowed = eapInjectionAllowed(nowMs) ||
+                                 summonBit46InjectionAllowed(nowMs);
+        const bool tsllcAllowed = tsllcInjectionAllowed(nowMs);
+        if (!aTxGateStateSeen_) {
+            aTxGateStateSeen_ = true;
+            lastMux1Allowed_ = mux1Allowed;
+            lastTsllcAllowed_ = tsllcAllowed;
+            return;
+        }
+
+        // 상태가 허용→차단으로 바뀌면 이미 MCP2515 TX 버퍼에 들어간 프레임도
+        // 즉시 취소한다. 이후 새 프레임만 막는 방식은 stale 상태에서 큐에 남은
+        // bit19/46 또는 bit38/39가 뒤늦게 차량으로 나갈 여지를 남긴다.
+        if (lastMux1Allowed_ && !mux1Allowed) {
+            driver.cancelPendingTransmit(CanTxSource::Summon);
+            logRing.push("[A-CH] mux1 게이트 닫힘: 대기 EAP/Summon TX 폐기", nowMs);
+        }
+        if (lastTsllcAllowed_ && !tsllcAllowed) {
+            driver.cancelPendingTransmit(CanTxSource::Tsllc);
+            logRing.push("[A-CH] TSLLC 게이트 닫힘: 대기 TX 폐기", nowMs);
+        }
+        lastMux1Allowed_ = mux1Allowed;
+        lastTsllcAllowed_ = tsllcAllowed;
+    }
 
     void trackTsllcGateState(uint8_t reason)
     {
@@ -370,9 +397,9 @@ private:
             summoningStartTxFail_ = txFail;
             summoningStartBlocked_ = blocked;
         } else {
-            // 실제 ACA+SPR 세션이 닫히는 순간, 오래된 mux 1이 뒤늦게
-            // 전송되지 않도록 하드웨어 대기 TX와 단발 재시도를 함께 폐기한다.
-            driver.cancelPendingTransmit(CanTxSource::Summon);
+            // 실제 ACA+SPR 세션 종료 뒤 TX 폐기는 trackATxGateTransitions()
+            // 한 곳에서 수행한다. 여기서도 취소하면 같은 전환에 두 번 ABAT를
+            // 보내고 로그/진단의 abort 횟수가 부풀 수 있다.
             eventLogPush(EV_SUMMON_TX_SESSION,
                          (uint16_t)(uint8_t)aChannelDiag.aTec,
                          (uint16_t)(uint8_t)aChannelDiag.aRec,
@@ -438,6 +465,9 @@ private:
     uint8_t lastSummonPolicyReason_ = SUMMON_SESSION_IDLE;
     bool tsllcGateReasonSeen_ = false;
     uint8_t lastTsllcGateReason_ = TSLLC_BLOCK_DISABLED;
+    bool aTxGateStateSeen_ = false;
+    bool lastMux1Allowed_ = false;
+    bool lastTsllcAllowed_ = false;
 };
  
 

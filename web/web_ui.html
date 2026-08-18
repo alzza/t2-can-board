@@ -700,10 +700,9 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
   </div>
   <div class="row child-row">
     <div class="labelWrap">
-      <span class="label">EAP / Summon 송신 허용 조건</span>
-      <span class="meta">ON(권장): 주차·ACA+SPR 차량 호출·AP 상태 3~6 안정 1초에서만 두 비트 적용 · OFF: mux 1 수신마다 실험 적용</span>
+      <span class="label">안전 송신 게이트</span>
+      <span class="meta">강제 적용: ECE R79(bit19)는 AP 3~6 안정 1초·최근 수신일 때만, Summon(bit46)은 최근 P 또는 ACA+SPR 차량 호출일 때만 적용. 상태가 오래되거나 불명이면 송신하지 않음.</span>
     </div>
-    <label class="sw"><input type="checkbox" id="tSummonCondition" onchange="togSwitch('/api/summon-condition-limit',this)"><span class="sl"></span></label>
   </div>
   <div class="row child-row">
     <div style="width:100%">
@@ -711,6 +710,8 @@ input:disabled+.sl{opacity:.45;cursor:not-allowed}
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:6px;margin-top:8px">
         <div class="stat"><div class="k">기능 설정</div><div class="v" id="suEnabled">--</div></div>
         <div class="stat"><div class="k">실제 동작</div><div class="v" id="suActive">--</div></div>
+        <div class="stat"><div class="k">ECE R79 bit19</div><div class="v" id="suEap">--</div></div>
+        <div class="stat"><div class="k">Summon bit46</div><div class="v" id="suBit46">--</div></div>
         <div class="stat"><div class="k">주입 게이트</div><div class="v" id="suGate">--</div></div>
         <div class="stat"><div class="k">주차 상태</div><div class="v" id="suParked">--</div></div>
         <div class="stat"><div class="k">차량 호출 중</div><div class="v" id="suSummoning">--</div></div>
@@ -1678,7 +1679,6 @@ async function poll(){
     var elNag=document.getElementById('nag');
     if(elNag){elNag.textContent=d.nag_killer?'활성':'비활성';elNag.className='val '+(d.nag_killer?'on':'off');}
     var tSummon=document.getElementById('tSummon');if(tSummon)tSummon.checked=!!d.summon_unlock_enabled;
-    var tSummonCondition=document.getElementById('tSummonCondition');if(tSummonCondition)tSummonCondition.checked=!!d.summon_condition_limit;
     var mSummon=document.getElementById('mSummon');if(mSummon)mSummon.checked=!!d.summon_unlock_enabled;
     var su=d.summon_unlock||{};
     var suMainText=!su.enabled?'OFF':!su.tx_master?'TX OFF':su.guard?'GUARD':su.gate?'OPEN':'BLOCKED';
@@ -1686,6 +1686,8 @@ async function poll(){
     function suBool(id,v){setTxt(id,v?'ON':'OFF','v '+(v?'on':'off'));}
     suBool('suEnabled',!!su.enabled);
     suBool('suActive',!!su.active);
+    suBool('suEap',!!su.eap_inject_ready);
+    suBool('suBit46',!!su.summon_inject_ready);
     suBool('suGate',!!su.gate);
     suBool('suParked',!!su.parked);
     suBool('suSummoning',!!su.summon);
@@ -1699,15 +1701,15 @@ async function poll(){
     setTxt('su280Age',su.last_280_age_ms?n(su.last_280_age_ms)+' ms':'--','v');
     setTxt('suWakeDelay',su.wake_waiting_tx?'측정 중':n(su.wake_count)?n(su.wake_to_tx_ms)+' ms':'--','v '+(su.wake_waiting_tx?'warn':''));
     setTxt('s-main-summon-state',su.summon?'SUMMONING':su.parked?'PARKED':'DRIVING','stat-val '+(su.summon||su.parked?'v-ok':'v-warn'));
-    setTxt('s-main-ece',su.condition_limit?'ON':'OFF','stat-val '+(su.condition_limit?'v-ok':'v-warn'));
+    setTxt('s-main-ece',su.eap_inject_ready?'READY':'BLOCKED','stat-val '+(su.eap_inject_ready?'v-ok':'v-warn'));
     setTxt('s-main-summon-tx',n(su.txOk)+' / '+n(su.txBusy)+' / '+n(su.txFail),'stat-val '+(n(su.txFail)?'v-err':'v-acc'));
     setTxt('aSummonGearRx',n(su.rx280)+' / '+n(su.rx390),'val');
     setTxt('aSummonGateRx',n(su.rx921)+' / '+n(su.rx1016),'val');
     setTxt('aSummonMuxBlocked',n(su.rxMux1)+' / '+n(su.blocked),'val');
     setTxt('aSummonTx',n(su.txOk)+' / '+n(su.txBusy)+' / '+n(su.txFail),'val '+(n(su.txFail)?'off':'on'));
     var suReason=document.getElementById('summonGateReason');
-    var suPath=su.summon||su.parked?'SUMMON':su.gate_reason==='AP_STABLE'?'EAP':su.gate?'UNRESTRICTED':'BLOCKED';
-    if(suReason)suReason.textContent='Path '+suPath+' · Gate '+(su.gate?'OPEN':'BLOCKED')+' · '+(su.gate_reason||su.block_reason||'--')+' · Policy '+(su.policy_mode||'ACA_SPR_1315')+' / '+(su.session_reason||'--')+' · AP '+n(su.ap_state)+' / '+n(su.ap_stable_ms)+'ms · HW3 bit19=0 / bit46=1';
+    var suPath=su.eap_inject_ready?'EAP':su.summon_inject_ready?'SUMMON':'BLOCKED';
+    if(suReason)suReason.textContent='Path '+suPath+' · Global '+(su.a_tx_global_gate||'--')+' · Gate '+(su.gate?'OPEN':'BLOCKED')+' · '+(su.gate_reason||su.block_reason||'--')+' · Policy '+(su.policy_mode||'ACA_SPR_1315')+' / '+(su.session_reason||'--')+' · AP '+n(su.ap_state)+' / '+n(su.ap_stable_ms)+'ms · HW3 bit19=0 / bit46=1';
     var tTsllc=document.getElementById('tTsllc');if(tTsllc)tTsllc.checked=!!d.tsllc_enabled;
     var mTsllc=document.getElementById('mTsllc');if(mTsllc)mTsllc.checked=!!d.tsllc_enabled;
     var ts=d.tsllc||{};

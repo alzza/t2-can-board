@@ -313,7 +313,9 @@ private:
         if (!(bool)aMcpOneShotRuntime || !(bool)aChannelTxRuntime ||
             !(bool)summonUnlockRuntime)
             return kSummonRetryCancelDisabled;
-        if (!(bool)summonGateDiag.summoning || !summonGateOpen(nowMs))
+        // 재시도는 EAP(bit19) 경로가 아니라 실제 Summon bit46 경로에만
+        // 속한다. AP 안정만으로 열리는 ECE R79 상태에서 재전송하지 않는다.
+        if (!summonActiveStateReady(nowMs) || !summonBit46InjectionAllowed(nowMs))
             return kSummonRetryCancelGate;
         if (aTxGuardActive(nowMs)) return kSummonRetryCancelGuard;
         return kSummonRetryCancelNone;

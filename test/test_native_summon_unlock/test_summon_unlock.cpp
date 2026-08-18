@@ -124,13 +124,21 @@ void test_filter_restores_five_ids_without_257_or_659()
     }
 }
 
-void test_boot_parked_gate_injects_hw3_bit46_only()
+void test_unknown_boot_state_blocks_mux1_until_park_is_received()
 {
     CanFrame frame = mux1Frame();
     handler.handleMessage(frame, mock);
 
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+
+    CanFrame park = frame280(1, false);
+    handler.handleMessage(park, mock);
+    handler.handleMessage(frame, mock);
+
     TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_FALSE((mock.sent[0].data[2] >> 3) & 0x01U);
+    // 신선한 P만 있는 경우에는 Summon bit46만 바꾸며, AP 근거가 없는
+    // bit19(ECE R79)는 원본값을 그대로 보존한다.
+    TEST_ASSERT_TRUE((mock.sent[0].data[2] >> 3) & 0x01U);
     TEST_ASSERT_TRUE((mock.sent[0].data[5] >> 6) & 0x01U);
     TEST_ASSERT_FALSE((mock.sent[0].data[5] >> 7) & 0x01U);
     TEST_ASSERT_EQUAL_UINT32(1, summonGateDiag.txOk);
@@ -199,9 +207,10 @@ void test_aca_falling_edge_clears_spr_and_closes_drive_gate()
 void test_ap_requires_one_second_stability_before_opening_gate()
 {
     summonGateDiag.parked = false;
-    CanFrame ap = {.id = 921, .dlc = 8};
-    ap.data[0] = 3;
-    summonHandle921(ap, 100);
+    summonGateDiag.apState = 3;
+    summonGateDiag.apActive = true;
+    summonGateDiag.apActiveSinceMs = 100;
+    summonGateDiag.last921Ms = 1099;
     TEST_ASSERT_TRUE(summonGateDiag.apActive);
     TEST_ASSERT_FALSE(summonGateOpen(1099));
     TEST_ASSERT_TRUE(summonGateOpen(1100));
@@ -218,17 +227,17 @@ void test_ap_state_two_is_available_not_active()
     TEST_ASSERT_FALSE(summonGateOpen(5000));
 }
 
-void test_condition_limit_off_allows_drive_experiment()
+void test_condition_limit_off_cannot_bypass_fail_closed_gate()
 {
     summonGateDiag.parked = false;
     summonConditionLimitRuntime = false;
     CanFrame frame = mux1Frame();
     handler.handleMessage(frame, mock);
-    TEST_ASSERT_EQUAL(1, mock.sent.size());
-    TEST_ASSERT_EQUAL_STRING("UNRESTRICTED", summonGateReasonName(100));
+    TEST_ASSERT_EQUAL(0, mock.sent.size());
+    TEST_ASSERT_EQUAL_STRING("STATE_UNKNOWN", summonGateReasonName(100));
 }
 
-void test_390_fallback_and_280_watchdog_match_ino()
+void test_390_is_used_only_while_fresh_and_stale_state_is_cleared()
 {
     summonGateDiag.parked = false;
     summonGateDiag.last280Ms = 100;
@@ -237,11 +246,11 @@ void test_390_fallback_and_280_watchdog_match_ino()
     summonHandle390(park390, 200);
     TEST_ASSERT_FALSE(summonGateDiag.parked);
 
-    summonHandle390(park390, 5201);
+    summonHandle390(park390, 601);
     TEST_ASSERT_TRUE(summonGateDiag.parked);
     summonGateDiag.parked = false;
-    summonGateMaintain(5201);
-    TEST_ASSERT_TRUE(summonGateDiag.parked);
+    summonGateMaintain(602);
+    TEST_ASSERT_FALSE(summonGateDiag.parked);
 }
 
 void test_removed_id_659_is_ignored()
@@ -336,11 +345,14 @@ void test_tsllc_mux0_resumes_after_summoning_ends()
 
 void test_summon_retry_policy_requires_actual_summoning_and_safety_gates()
 {
-    summonGateDiag.parked = true;
     summonGateDiag.summoning = false;
     TEST_ASSERT_FALSE(summonRetryPolicyAllowed(1000));
 
     summonGateDiag.summoning = true;
+    summonGateDiag.acaActive = true;
+    summonGateDiag.sprSeen = true;
+    summonGateDiag.last280Ms = 1000;
+    summonGateDiag.last1016Ms = 1000;
     TEST_ASSERT_TRUE(summonRetryPolicyAllowed(1000));
 
     aTxGuardRuntime = true;
@@ -415,7 +427,7 @@ void test_summon_candidate_uses_aca_plus_spr_without_speed_filter()
     TEST_ASSERT_TRUE((bool)summonGateDiag.summoning);
     TEST_ASSERT_EQUAL_UINT8(SUMMON_SESSION_ALLOWED,
                             (uint8_t)summonGateDiag.sessionReason);
-    TEST_ASSERT_TRUE(summonGateOpen(0));
+    TEST_ASSERT_TRUE(summonGateOpen(millis()));
     TEST_ASSERT_EQUAL_UINT32(0, (uint32_t)summonGateDiag.frames599);
     TEST_ASSERT_EQUAL_UINT16(kSummonSpeedSnaRaw,
                              (uint16_t)summonGateDiag.vehicleSpeedRaw);
@@ -469,7 +481,7 @@ void test_a_channel_tx_master_blocks_tsllc_and_summon()
     handler.handleMessage(summon, mock);
 
     TEST_ASSERT_EQUAL(0, mock.sent.size());
-    TEST_ASSERT_EQUAL_UINT32(1, summonGateDiag.mux1Received);
+    TEST_ASSERT_EQUAL_UINT32(0, summonGateDiag.mux1Received);
     TEST_ASSERT_EQUAL_UINT32(0, summonGateDiag.txOk);
 }
 
@@ -489,15 +501,15 @@ int main()
 {
     UNITY_BEGIN();
     RUN_TEST(test_filter_restores_five_ids_without_257_or_659);
-    RUN_TEST(test_boot_parked_gate_injects_hw3_bit46_only);
+    RUN_TEST(test_unknown_boot_state_blocks_mux1_until_park_is_received);
     RUN_TEST(test_disabled_toggle_blocks_even_when_parked);
     RUN_TEST(test_drive_without_summon_blocks_mux1_injection);
     RUN_TEST(test_aca_plus_spr_opens_summoning_gate_while_in_drive);
     RUN_TEST(test_aca_falling_edge_clears_spr_and_closes_drive_gate);
     RUN_TEST(test_ap_requires_one_second_stability_before_opening_gate);
     RUN_TEST(test_ap_state_two_is_available_not_active);
-    RUN_TEST(test_condition_limit_off_allows_drive_experiment);
-    RUN_TEST(test_390_fallback_and_280_watchdog_match_ino);
+    RUN_TEST(test_condition_limit_off_cannot_bypass_fail_closed_gate);
+    RUN_TEST(test_390_is_used_only_while_fresh_and_stale_state_is_cleared);
     RUN_TEST(test_removed_id_659_is_ignored);
     RUN_TEST(test_tsllc_mux0_is_blocked_when_ap_is_inactive);
     RUN_TEST(test_tsllc_mux0_transmits_only_after_ap_and_startup_gates);
